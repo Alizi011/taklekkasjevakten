@@ -1,0 +1,85 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 10%;
+    --primary: 43 100% 48%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 43 90% 96%;
+    --secondary-foreground: 0 0% 10%;
+    --muted: 43 30% 96%;
+    --muted-foreground: 0 0% 42%;
+    --accent: 43 90% 96%;
+    --accent-foreground: 0 0% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 43 30% 88%;
+    --input: 43 30% 88%;
+    --ring: 43 100% 48%;
+    --radius: 0.75rem;
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 43 100% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 43 90% 96%;
+    --sidebar-accent-foreground: 0 0% 10%;
+    --sidebar-border: 43 30% 88%;
+    --sidebar-ring: 43 100% 48%;
+  }
+
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer components {
+  .gold-gradient {
+    background: linear-gradient(135deg, #FCD34D 0%, #F5B800 50%, #E8A800 100%);
+  }
+  .gold-gradient-light {
+    background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 50%, #FCD34D 100%);
+  }
+  .gold-gradient-dark {
+    background: linear-gradient(135deg, #F5B800 0%, #D97706 100%);
+  }
+  .glass-card {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+  }
+  .section-padding {
+    @apply py-16 md:py-24 px-4 md:px-8;
+  }
+  .container-modern {
+    @apply max-w-7xl mx-auto;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+}
