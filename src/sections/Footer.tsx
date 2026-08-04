@@ -3,7 +3,10 @@ import FadeIn from "../components/FadeIn";
 
 export default function Footer() {
   return (
-    <footer id="om-oss" className="bg-gray-900 text-white relative overflow-hidden">
+    <footer
+      id="om-oss"
+      className="bg-gray-900 text-white relative overflow-hidden"
+    >
       {/* Decorative top gradient */}
       <div className="absolute top-0 left-0 right-0 h-1 gold-gradient" />
 
@@ -12,19 +15,12 @@ export default function Footer() {
           {/* Brand */}
           <FadeIn>
             <div>
-              <div className="flex items-center gap-3 mb-4">
-                <img
-                  src="/logo-icon.jpg"
-                  alt="Taklekkasjevakten"
-                  className="h-10 w-auto rounded-lg"
-                />
-                <div>
-                  <h4 className="font-bold text-lg bg-gradient-to-r from-[#FCD34D] to-[#F5B800] bg-clip-text text-transparent">
-                    Taklekkasjevakten.no
-                  </h4>
-                  <p className="text-xs text-gray-400">En del av Perun AS</p>
-                </div>
+              <div className="mb-5">
+                <p className="mt-2 text-xs text-gray-400">
+                  En del av Perun AS
+                </p>
               </div>
+
               <p className="text-gray-400 text-sm leading-relaxed">
                 Eksperter på taklekkasjer i Oslo og Akershus. Vi finner lekkasjen
                 andre bare leter etter.
@@ -38,6 +34,7 @@ export default function Footer() {
               <h5 className="font-semibold text-sm text-gray-300 uppercase tracking-wider mb-4">
                 Navigasjon
               </h5>
+
               <ul className="space-y-2.5">
                 {[
                   { label: "Forside", href: "#forside" },
@@ -65,6 +62,7 @@ export default function Footer() {
               <h5 className="font-semibold text-sm text-gray-300 uppercase tracking-wider mb-4">
                 Kontakt
               </h5>
+
               <ul className="space-y-3">
                 <li>
                   <a
@@ -75,6 +73,7 @@ export default function Footer() {
                     92 02 90 90
                   </a>
                 </li>
+
                 <li>
                   <a
                     href="mailto:post@taklekkasjevakten.no"
@@ -84,6 +83,7 @@ export default function Footer() {
                     post@taklekkasjevakten.no
                   </a>
                 </li>
+
                 <li className="flex items-center gap-2.5 text-gray-400 text-sm">
                   <MapPin className="w-4 h-4 text-[#F5B800] flex-shrink-0" />
                   Oslo og Akershus
@@ -98,8 +98,10 @@ export default function Footer() {
           <p className="text-sm text-gray-500">
             &copy; {new Date().getFullYear()} Perun AS. All rights reserved.
           </p>
+
           <p className="text-sm text-gray-500">
-            Designet av <span className="text-[#F5B800] font-medium">@ll-easy</span> design
+            Designet av{" "}
+            <span className="text-[#F5B800] font-medium">@ll-easy</span> design
           </p>
         </div>
       </div>

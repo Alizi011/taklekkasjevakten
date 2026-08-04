@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { ChevronLeft, ChevronRight, Star, Phone } from "lucide-react";
+import { ChevronLeft, ChevronRight, Phone } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const slides = [
@@ -21,12 +21,6 @@ const slides = [
   },
 ];
 
-const stats = [
-  { value: "15+", label: "Års erfaring" },
-  { value: "2,000+", label: "Fornøyde kunder" },
-  { value: "5,000+", label: "Lekkasjer funnet" },
-  { value: "100%", label: "Norsk eid selskap" },
-];
 
 export default function HeroSection() {
   const [current, setCurrent] = useState(0);
@@ -77,22 +71,7 @@ export default function HeroSection() {
       {/* Hero Content */}
       <div className="relative z-10 flex-1 flex flex-col justify-end pb-10 md:pb-20 pt-32">
         <div className="container-modern px-4 md:px-8">
-          {/* Trust badges */}
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3, duration: 0.6 }}
-            className="flex flex-wrap items-center gap-3 mb-8"
-          >
-            <span className="inline-flex items-center gap-1.5 px-4 py-2 bg-white/15 backdrop-blur-md text-white text-sm font-semibold rounded-full border border-white/20">
-              <Star className="w-4 h-4 text-[#F5B800] fill-[#F5B800]" />
-              4.9/5 fra 200+ kunder
-            </span>
-            <span className="inline-flex items-center gap-1.5 px-4 py-2 bg-white/15 backdrop-blur-md text-white text-sm font-semibold rounded-full border border-white/20">
-              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-              Tilgjengelig na — Oslo & Akershus
-            </span>
-          </motion.div>
+        
 
           {/* Main headline */}
           <div className="max-w-3xl">
@@ -190,32 +169,24 @@ export default function HeroSection() {
           </div>
         </div>
 
-        {/* Stats Bar */}
-        <motion.div
-          initial={{ opacity: 0, y: 40 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.8, duration: 0.7 }}
-          className="container-modern px-4 md:px-8 mt-10"
-        >
-          <div className="bg-white/10 backdrop-blur-lg rounded-3xl border border-white/20 p-6 md:p-8">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-              {stats.map((stat, index) => (
-                <motion.div
-                  key={index}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 1 + index * 0.1, duration: 0.5 }}
-                  className="text-center"
-                >
-                  <div className="text-3xl md:text-4xl font-bold text-[#F5B800] mb-1">
-                    {stat.value}
-                  </div>
-                  <div className="text-sm text-white/70">{stat.label}</div>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-        </motion.div>
+        {/* Kvalitetsløfte */}
+<motion.div
+  initial={{ opacity: 0, y: 40 }}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ delay: 0.8, duration: 0.7 }}
+  className="container-modern px-4 md:px-8 mt-10"
+>
+  <div className="bg-white/10 backdrop-blur-lg rounded-3xl border border-white/20 px-8 py-6 text-center">
+    <h3 className="text-2xl md:text-3xl font-bold text-white mb-3">
+      Vi finner årsaken – ikke bare symptomene.
+    </h3>
+
+    <p className="text-white/80 text-sm md:text-base leading-relaxed">
+      Byggingeniør på hvert lekkasjesøk • Faglærte taktekkere •
+      Dokumenterte funn • Varige løsninger
+    </p>
+  </div>
+</motion.div>
       </div>
     </section>
   );
