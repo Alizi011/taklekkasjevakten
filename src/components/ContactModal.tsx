@@ -76,16 +76,61 @@ export default function ContactModal({ isOpen, onClose }: ContactModalProps) {
     setSelectedTime(dates[0].time);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (intent !== "befaring" && !acceptedTerms) return;
 
-    setSubmitted(true);
-    setTimeout(() => {
-      setSubmitted(false);
-      setStep(1);
-      onClose();
-    }, 3500);
+    const customerName = contactType === "foretak" && formData.firmavn
+      ? `${formData.firmavn} (v/ ${formData.fornavn} ${formData.etternavn})`
+      : `${formData.fornavn} ${formData.etternavn}`.trim();
+
+    const fullAddress = `${formData.adresse}, ${formData.postnr} ${formData.poststed}`.trim();
+
+    const combinedNotes = [
+      `Bygning: ${buildingType}`,
+      `Taktype: ${roofType}`,
+      `Skadested: ${leakLocation}`,
+      `Bilder/Dokumentasjon: ${hasImages ? "Ja" : "Nei"}`,
+      `Valgt dato/tid: ${selectedDay} (${selectedTime})`,
+      formData.orgnr ? `Org.nr: ${formData.orgnr}` : null,
+      formData.henvendelse ? `Beskrivelse: ${formData.henvendelse}` : null,
+    ].filter(Boolean).join("\n");
+
+    const payload = {
+      inquiry_type: intent === "akutt" ? "akutt" : contactType === "foretak" ? "b2b" : "standard",
+      customer_name: customerName,
+      phone: formData.telefon,
+      email: formData.epost,
+      address: fullAddress,
+      city: formData.poststed || "Ukjent",
+      roof_type: `${roofType} (${buildingType})`,
+      estimated_price: intent === "akutt" ? "3 920,- / t" : intent === "digital" ? "1 490,-" : "1 960,- / t",
+      notes: combinedNotes,
+    };
+
+    try {
+      const response = await fetch("/api/inquiries.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setSubmitted(true);
+        setTimeout(() => {
+          setSubmitted(false);
+          setStep(1);
+          onClose();
+        }, 3500);
+      } else {
+        alert("Det oppstod en feil ved lagring. Vennligst ring oss direkte på 92 02 90 90.");
+      }
+    } catch (err) {
+      console.error("Feil ved innsending til database:", err);
+      alert("Kunne ikke koble til serveren. Vennligst ring oss på 92 02 90 90.");
+    }
   };
 
   const inputClasses =

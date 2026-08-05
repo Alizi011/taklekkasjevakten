@@ -43,6 +43,7 @@ export default function LeakCalculator() {
   const [selectedSymptom, setSelectedSymptom] = useState<string>("");
   const [selectedBuilding, setSelectedBuilding] = useState<string>("");
   const [isContactOpen, setIsContactOpen] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
   const isAkutt = selectedSymptom === "akutt";
 
@@ -54,6 +55,38 @@ export default function LeakCalculator() {
     if (step > 1) setStep(step - 1);
   };
 
+  // Knytt kalkulatorvalgene mot MySQL-databasen på One.com
+  const handleOpenModal = async () => {
+    setIsSaving(true);
+    const locLabel = locationOptions.find((l) => l.id === selectedLocation)?.label || selectedLocation;
+    const symLabel = symptomOptions.find((s) => s.id === selectedSymptom)?.label || selectedSymptom;
+    const buiLabel = buildingOptions.find((b) => b.id === selectedBuilding)?.label || selectedBuilding;
+
+    const payload = {
+      inquiry_type: isAkutt ? "akutt" : selectedBuilding === "borettslag" || selectedBuilding === "naering" ? "b2b" : "standard",
+      customer_name: "Kalkulator-bruker (Ikke oppgitt ennå)",
+      phone: "Trenger oppfølging",
+      email: "",
+      address: "Må avklares i modal",
+      city: "Oslo / Akershus",
+      roof_type: locLabel,
+      estimated_price: isAkutt ? "3 920,- / t (Akutt)" : "1 960,- / t (Lekkasjesøk)",
+      notes: `Diagnose fra Kalkulator:\n- Plassering: ${locLabel}\n- Symptom: ${symLabel}\n- Bygningstype: ${buiLabel}`,
+    };
+
+    try {
+      await fetch("/api/inquiries.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      console.error("Feil ved lagring av kalkulatordiagnose:", err);
+    } finally {
+      setIsSaving(false);
+      setIsContactOpen(true);
+    }
+  };
 
   return (
     <section className="py-20 bg-[#0b0f17] text-white relative overflow-hidden">
@@ -278,10 +311,11 @@ export default function LeakCalculator() {
                   ) : (
                     <button
                       type="button"
-                      onClick={() => setIsContactOpen(true)}
-                      className="w-full md:w-auto bg-[#F5B800] hover:bg-[#e0a800] text-slate-950 font-black px-6 py-3.5 rounded-xl text-xs transition-all shadow-lg cursor-pointer"
+                      disabled={isSaving}
+                      onClick={handleOpenModal}
+                      className="w-full md:w-auto bg-[#F5B800] hover:bg-[#e0a800] text-slate-950 font-black px-6 py-3.5 rounded-xl text-xs transition-all shadow-lg cursor-pointer disabled:opacity-50"
                     >
-                      Bestill Lekkasjesøk Nå
+                      {isSaving ? "Registrerer..." : "Bestill Lekkasjesøk Nå"}
                     </button>
                   )}
                 </div>
