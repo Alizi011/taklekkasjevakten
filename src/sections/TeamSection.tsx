@@ -1,43 +1,49 @@
-import { ShieldCheck, Users, PiggyBank, FileText } from "lucide-react";
+import { Users, PiggyBank, FileText, CheckCircle2, HeartHandshake } from "lucide-react";
 import { motion } from "framer-motion";
 import FadeIn from "../components/FadeIn";
 
 const teamMembers = [
   {
     image: "/IMG-8606.jpeg", // Nøyaktig slik filen heter i public-mappen
-    title: "Daglig leder & Ingeniør",
+    subtitle: "Norsk Ingeniørkompetanse",
+    title: "Ingeniør på kontoret & ledelse",
     description:
-      "Over 15 års erfaring innen teknisk feilsøking på tak. Kjent for sin nøyaktighet og evne til å finne lekkasjer andre har oversett.",
+      "Norsk ingeniørutdanning og over 20 års erfaring fra norske bygg, standarder og nordisk klima. Sørger for presise analyser, faglige vurderinger og sømløs prosjektoppfølging.",
+    highlights: ["Norsk utdannelse", "20+ år erfaring", "Norsk standard"],
   },
   {
     image: "/IMG_7861.jpeg",
-    title: "Takspesialister",
+    subtitle: "Teknisk Feltanalyse",
+    title: "Ingeniør i feltet & feilsøking",
     description:
-      "Vårt dedikerte team utfører oppdrag over hele Oslo og Akershus. Vi kombinerer ingeniørfaglig innsikt med praktisk erfaring på takflaten.",
+      "Spesialist på fysisk lekkasjesøk og feilsøking direkte på takflaten. Kombinerer teoretisk ingeniørinnsikt med over 20 års praktisk erfaring på norske tak under krevende værforhold.",
+    highlights: ["Feilsøk i felt", "Norsk klima-ekspert", "Ingeniøranalyse"],
   },
   {
     image: "/hero-3.jpg",
-    title: "Lekkasjesøk-eksperter",
+    subtitle: "Internasjonal Ekspertise",
+    title: "Takspesialist (USA, Australia & Norge)",
     description:
-      "Vi benytter målrettede metoder for å finne den reelle årsaken til lekkasjen. Ingen antakelser — kun fakta og dokumenterte funn.",
+      "Over 20 års erfaring med krevende takkonstruksjoner og taktekking fra USA og Australia. Bringer unike praktiske håndverksløsninger og spisskompetanse direkte inn på ditt tak.",
+    highlights: ["20+ år USA & Australia", "Ekte håndverk", "Spesialist-teknikk"],
   },
 ];
 
 const trustBadges = [
   {
-    icon: PiggyBank,
-    title: "Visjon om å bevare",
-    desc: "I de tilfellene det er teknisk mulig, tilstreber vi å utbedre framfor å skifte ut taket.",
+    icon: HeartHandshake,
+    title: "Direkte ansvar — Ingen mellomledd",
+    desc: "Vi selger aldri oppdrag videre til andre. Perun AS tar direkte ansvar for hele prosessen, slik at du får ekte fagkvalitet, trygghet og verdi i din bolig.",
   },
   {
-    icon: ShieldCheck,
-    title: "Ingeniørkompetanse",
-    desc: "Grundig feilsøking utføres direkte av våre fagfolk uten fordyrende mellomledd.",
+    icon: PiggyBank,
+    title: "Visjon om å bevare",
+    desc: "I de tilfellene det er teknisk mulig, tilstreber vi å utbedre framfor å skifte ut taket. Ekte håndverk og ingeniøranalyse framfor uforholdsmessige utskiftninger.",
   },
   {
     icon: FileText,
     title: "Dokumentert rapport",
-    desc: "Rapporter med faglig tyngde for forsikringssaker, eierskifte og eiendomstvister.",
+    desc: "Rapporter med faglig tyngde for forsikringssaker, eierskifte, boligsalg og eiendomstvister utført direkte av våre egne ingeniører.",
   },
 ];
 
@@ -62,17 +68,17 @@ export default function TeamSection() {
           <FadeIn>
             <span className="inline-flex items-center gap-2 px-4 py-1.5 bg-gold-100 text-[#B45309] text-sm font-semibold rounded-full mb-4 shadow-sm">
               <Users className="w-4 h-4" />
-              Møt Taklekkasjevakten
+              Etablert 2016 — Perun AS
             </span>
           </FadeIn>
           <FadeIn delay={0.1}>
-            <h3 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4 tracking-tight">
+            <h3 className="text-3xl md:text-5xl font-extrabold text-gray-900 mb-4 tracking-tight">
               Vi er teamet du kan stole på
             </h3>
           </FadeIn>
           <FadeIn delay={0.2}>
-            <p className="text-gray-600 text-base md:text-lg leading-relaxed">
-              I de tilfellene det lar seg gjøre, er vår visjon å bevare taket slik det er. Ved å finne den faktiske årsaken kan man i mange tilfeller unngå uforholdsmessige utskiftninger, ekstra avfall og unødvendige riggkostnader.
+            <p className="text-gray-600 text-base md:text-lg leading-relaxed font-normal">
+              Da vi startet Perun AS og tjenesten taklekkasjevakten  var visjonen vår klar: Å tilby <strong>ekte håndverk</strong> i stedet for å bare selge produkter. En stor del av vår suksess er at <strong>Perun AS aldri benytter mellomledd eller selger oppdrag videre</strong>. Vi tar direkte ansvar og utfører alt arbeidet selv. Bak tjenesten står <strong>to norske ingeniører</strong> (én på kontoret og én i feltet) med over 20 års erfaring fra norske forhold, samt en <strong>takspesialist med over 20 års erfaring fra USA og Australia</strong>. Det gir våre kunder ekte varer, trygghet og langvarig verdi i sine boliger og bygg.
             </p>
           </FadeIn>
         </div>
@@ -95,18 +101,38 @@ export default function TeamSection() {
                     alt={member.title}
                     className="w-full h-full object-cover"
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-80 group-hover:opacity-60 transition-opacity" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent opacity-90 group-hover:opacity-75 transition-opacity" />
+                  
+                  {/* Badge nede på bildet */}
+                  <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between">
+                    <span className="bg-black/80 text-[#F5B800] border border-amber-500/40 text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wider backdrop-blur-md">
+                      {member.subtitle}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Content */}
                 <div className="p-6 flex-1 flex flex-col justify-between">
                   <div>
-                    <p className="text-sm text-[#B45309] font-bold mb-2 uppercase tracking-wider">
+                    <p className="text-sm text-[#B45309] font-extrabold mb-2 uppercase tracking-wider">
                       {member.title}
                     </p>
-                    <p className="text-gray-600 text-xs md:text-sm leading-relaxed">
+                    <p className="text-gray-600 text-xs md:text-sm leading-relaxed mb-4">
                       {member.description}
                     </p>
+                  </div>
+
+                  {/* Highlights list */}
+                  <div className="pt-4 border-t border-gray-100 flex flex-wrap gap-1.5">
+                    {member.highlights.map((item, i) => (
+                      <span
+                        key={i}
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-700 bg-amber-50/80 px-2.5 py-1 rounded-md border border-amber-100"
+                      >
+                        <CheckCircle2 className="w-3 h-3 text-[#B45309]" />
+                        {item}
+                      </span>
+                    ))}
                   </div>
                 </div>
               </motion.div>
@@ -116,7 +142,7 @@ export default function TeamSection() {
 
         {/* Trust Badges */}
         <FadeIn delay={0.3}>
-          <div className="bg-gradient-to-b from-amber-50/30 via-gray-50 to-white rounded-3xl border border-gray-200 p-8 md:p-10 shadow-sm">
+          <div className="bg-gradient-to-b from-amber-50/40 via-gray-50 to-white rounded-3xl border border-gray-200 p-8 md:p-10 shadow-sm">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               {trustBadges.map((badge, index) => (
                 <motion.div

@@ -2,9 +2,11 @@ import { useState } from "react";
 import HeroSection from "../sections/HeroSection";
 import ValuePropositionSection from "../sections/ValuePropositionSection";
 import TeamSection from "../sections/TeamSection";
+import LeakCalculator from "../components/LeakCalculator";
 import InfoSection from "../sections/InfoSection";
 import ProcessSection from "../sections/ProcessSection";
 import ServicesSection from "../sections/ServicesSection";
+import B2bSection from "../sections/B2bSection";
 import ContactSection from "../sections/ContactSection";
 import ContactModal from "../components/ContactModal";
 
@@ -22,14 +24,20 @@ export default function Forside() {
       {/* 3. Teamet */}
       <TeamSection />
 
-      {/* 4. Informasjon & Prosess */}
+      {/* 4. Interaktiv Lekkasje-Kalkulator */}
+      <LeakCalculator />
+
+      {/* 5. Informasjon & Prosess */}
       <InfoSection />
       <ProcessSection />
 
-      {/* 5. Tjenester */}
+      {/* 6. Tjenester */}
       <ServicesSection />
 
-      {/* 6. Kontakt-seksjon */}
+      {/* 7. Borettslag & Næringsbygg (B2B) */}
+      <B2bSection />
+
+      {/* 8. Kontakt-seksjon */}
       <ContactSection />
 
       {/* Bestillingsskjema (modal) */}
