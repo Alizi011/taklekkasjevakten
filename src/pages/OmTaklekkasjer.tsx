@@ -1,5 +1,5 @@
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { Link } from "react-router-dom";
 import {
   CloudLightning,
   Wrench,
@@ -12,220 +12,249 @@ import {
   CalendarCheck,
   FileSearch,
   ArrowRight,
+  AlertTriangle,
+  ShieldAlert,
 } from "lucide-react";
 import FadeIn from "../components/FadeIn";
+import ContactModal from "../components/ContactModal";
 
 const causes = [
   {
     icon: CloudLightning,
-    title: "Skader på taktekking eller beslag",
+    title: "Skader på taktekking & beslag",
+    tag: "Ytre Påvirkning",
     description:
-      "Stormskader, frost, snø eller fysiske påvirkninger kan føre til brudd i takets beskyttende lag, som gir vann en vei inn.",
+      "Stormskader, frost, snø eller fysiske slitasjer kan føre til brudd i takets beskyttende belegg og beslag, noe som åpner veien for vanninnsig.",
   },
   {
     icon: Wrench,
-    title: "Feilmontering eller byggefeil",
+    title: "Feilmontering & byggefeil",
+    tag: "Konstruksjon",
     description:
-      "Mangelfullt utført arbeid, feil materialvalg eller manglende tetting kan skape svake punkter i taket der vann trenger inn.",
+      "Mangelfullt utført håndverk, feil materialvalg eller feilmontert membran skaper svake punkter i takflaten der vann gradvis trenger inn.",
   },
   {
     icon: Droplets,
-    title: "Tette takrenner og avløp",
+    title: "Tette takrenner & avløp",
+    tag: "Drenering",
     description:
-      "Dårlig drenering kan føre til oppsamling av vann, som over tid trenger inn i konstruksjonen og skaper fuktskader.",
+      "Dårlig drenering fører til oppsamling av stående vann, som over tid presser seg gjennom skjøter og inn i bakenforliggende konstruksjon.",
   },
   {
     icon: Clock,
-    title: "Slitasje og aldring",
+    title: "Materialtretthet & aldring",
+    tag: "Slitasje",
     description:
-      "Over tid kan materialer svekkes og miste sin beskyttende funksjon, noe som gjør taket mer utsatt for lekkasjer.",
+      "Over tid mister takpapp, takstein og tettebånd sine beskyttende egenskaper, noe som gjør taket betydelig mer sårbart for lekkasjer.",
   },
   {
     icon: Building2,
-    title: "Skjulte tekniske feil",
+    title: "Skjulte tekniske svikt",
+    tag: "Inneklima",
     description:
-      "Feil i konstruksjonen, utilstrekkelig ventilasjon eller feilplasserte gjennomføringer kan føre til lekkasjer som utvikler seg gradvis og blir synlige først når skadene er omfattende.",
+      "Ulike ventilasjonsfeil, kondensproblemer eller usynlige sprekker i gjennomføringer kan føre til skjulte skader som opdages først sent.",
   },
   {
     icon: Search,
-    title: "Manglende vedlikehold",
+    title: "Manglende periodisk ettersyn",
+    tag: "Vedlikehold",
     description:
-      "Små skader som ikke oppdages og utbedres i tide, kan utvikle seg til større lekkasjer. Regelmessig inspeksjon og vedlikehold er derfor avgjørende for å unngå alvorlige skader.",
+      "Små feil som ikke oppdages og utbedres i tide, utvikler seg ofte til store og kostbare følgeskader. Regelmessig ettersyn forhindrer dette.",
   },
 ];
 
 const steps = [
   {
     icon: Phone,
-    title: "Ta kontakt så tidlig som mulig!",
+    step: "Steg 01",
+    title: "Ta kontakt tidlig",
     description:
-      "Ikke vent til problemet forverrer seg, eller til det meldes store mengder nedbør før du tar kontakt. Ved kraftig regnvær kan mange oppleve lekkasjer samtidig, noe som kan gjøre det utfordrende å tilby rask nok service.",
+      "Ikke vent til nedbøren øker eller skaden blir synlig innvendig. Ved kraftig regnvær oppstår det ofte kø – ved å melde fra tidlig sikrer du rask hjelp.",
   },
   {
     icon: ClipboardList,
-    title: "1. Fyll ut kontaktskjemaet",
+    step: "Steg 02",
+    title: "Send inn beskrivelse",
     description:
-      "Husk å gi oss informasjon og beskrivelse av situasjonen. Hvilken taktype det gjelder, når lekkasjen ble oppdaget, eventuelle andre observasjoner. Vi svarer deg med våre vilkår, priser og forslag til tidspunkt for lekkasjesøk.",
+      "Fyll ut vårt skjema med taktype og observasjoner. Du får raskt oversendt klare vilkår, priser og forslag til tidspunkt for lekkasjesøket.",
   },
   {
     icon: CalendarCheck,
-    title: "2. Bekreft tidspunkt for lekkasjesøk",
+    step: "Steg 03",
+    title: "Bekreft avtale",
     description:
-      "Når vi har sendt deg et forslag til tid, ber vi deg om å bekrefte om tidspunktet passer og akseptere lekkasjesøket. Dette sikrer at vi kan planlegge og prioritere ditt oppdrag så raskt som mulig.",
+      "Når du bekrefter tidspunktet, rykker vårt serviceteam ut til avtalt tid med nødvendig utstyr for både søk og eventuell midlertidig tetting.",
   },
   {
     icon: FileSearch,
-    title: "3. Utførelse av lekkasjesøk og vurdering av tiltak",
+    step: "Steg 04",
+    title: "Søk & Tiltak",
     description:
-      "Vårt team vil deretter utføre et nøyaktig lekkasjesøk, og vi vil dokumentere problemet med både bilder og tekst og levere en rapport med detaljerte funn. Basert på inspeksjonen vil vi enten utføre en midlertidig løsning for å begrense skadeomfanget eller tilby en varig utbedring for å sikre takets levetid.",
+      "Ingeniøren gjennomfører et fysisk søk, sikrer midlertidig strakstiltak dersom mulig, og leverer en komplett tilstandsrapport med bilder.",
   },
 ];
 
 export default function OmTaklekkasjer() {
+  const [isContactOpen, setIsContactOpen] = useState(false);
+
   return (
-    <div className="bg-white">
-      {/* Hero */}
-      <section className="relative pt-16 pb-20 px-4 md:px-8 overflow-hidden">
-        <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-gold-50 rounded-full blur-3xl pointer-events-none" />
+    <div className="bg-[#0b0f17] text-white min-h-screen relative overflow-hidden">
+      {/* Bakgrunnsglød */}
+      <div className="absolute top-0 right-1/4 w-[600px] h-[600px] bg-amber-500/10 rounded-full blur-[160px] pointer-events-none" />
+      <div className="absolute bottom-1/3 left-10 w-[500px] h-[500px] bg-amber-600/10 rounded-full blur-[140px] pointer-events-none" />
+
+      {/* Hero Section */}
+      <section className="relative pt-24 pb-16 px-4 md:px-8">
         <div className="max-w-4xl mx-auto text-center relative z-10">
           <FadeIn>
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4 leading-tight">
-              Mistenker du en lekkasje? Ikke vent! Stopp lekkasjen før den
-              utvikler seg
-            </h2>
-            <p className="text-xl text-[#F5B800] font-semibold mb-6">
-              Ikke vent på følgeskadene.
-            </p>
-            <p className="text-gray-500 max-w-2xl mx-auto leading-relaxed mb-8">
-              En taklekkasje kan raskt føre til omfattende og kostbare skader på
-              bygningsmassen. Kontakt oss for en profesjonell inspeksjon nå. Vi
-              identifiserer kilden før problemet utvikler seg videre.
-            </p>
-            <Link
-              to="/"
-              onClick={() =>
-                setTimeout(
-                  () =>
-                    document
-                      .getElementById("kontakt")
-                      ?.scrollIntoView({ behavior: "smooth" }),
-                  100
-                )
-              }
-            >
-              <motion.button
-                whileHover={{ scale: 1.03 }}
-                whileTap={{ scale: 0.98 }}
-                className="gold-gradient text-white font-bold px-8 py-4 rounded-2xl shadow-gold-lg"
-              >
-                Kontakt oss nå
-              </motion.button>
-            </Link>
+            <span className="inline-flex items-center gap-2 px-4 py-1.5 bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold uppercase tracking-wider rounded-full mb-6 backdrop-blur-md">
+              <ShieldAlert className="w-3.5 h-3.5 text-red-400" />
+              Akutt & Forebyggende Skadebegrensning
+            </span>
           </FadeIn>
-        </div>
-      </section>
 
-      {/* Årsaker */}
-      <section className="py-16 px-4 md:px-8 bg-gradient-to-b from-gray-50 to-white relative overflow-hidden">
-        <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-gold-50 rounded-full blur-3xl pointer-events-none" />
-        <div className="max-w-6xl mx-auto relative z-10">
-          <FadeIn>
-            <div className="text-center mb-12">
-              <span className="inline-block px-4 py-1.5 bg-gold-100 text-[#B45309] text-sm font-semibold rounded-full mb-4">
-                Vanlige årsaker
+          <FadeIn delay={0.1}>
+            <h1 className="text-3xl md:text-5xl font-extrabold text-white mb-6 leading-tight tracking-tight">
+              Mistenker du en lekkasje? <br className="hidden sm:inline" />
+              <span className="bg-gradient-to-r from-[#FCD34D] via-[#F5B800] to-[#B45309] bg-clip-text text-transparent">
+                Stopp vannet før følgeskadene øker
               </span>
-              <h3 className="text-2xl md:text-3xl font-bold text-gray-900">
-                Årsaker til at taklekkasjer oppstår:
-              </h3>
-            </div>
+            </h1>
           </FadeIn>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {causes.map((cause, index) => (
-              <FadeIn key={index} delay={0.08 * index}>
-                <motion.div
-                  whileHover={{ y: -4 }}
-                  className="bg-white rounded-2xl p-6 shadow-soft border border-gray-100 hover:shadow-soft-lg hover:border-gold-200 transition-all h-full"
-                >
-                  <div className="w-12 h-12 rounded-xl gold-gradient flex items-center justify-center mb-4 shadow-gold">
-                    <cause.icon className="w-6 h-6 text-white" />
-                  </div>
-                  <h4 className="text-lg font-bold text-gray-900 mb-2">
-                    {cause.title}
-                  </h4>
-                  <p className="text-gray-500 text-sm leading-relaxed">
-                    {cause.description}
-                  </p>
-                </motion.div>
-              </FadeIn>
-            ))}
-          </div>
+          <FadeIn delay={0.2}>
+            <p className="text-base md:text-lg text-slate-300 max-w-2xl mx-auto mb-8 leading-relaxed font-normal">
+              En ubehandlet taklekkasje kan raskt føre til omfattende fuktskader i bærende konstruksjon. Kontakt våre ingeniører for en presis inspeksjon og umiddelbar avklaring.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setIsContactOpen(true)}
+              className="inline-flex items-center gap-2 bg-[#F5B800] hover:bg-[#e0a800] text-gray-950 font-extrabold px-8 py-4 rounded-2xl text-sm transition-all shadow-lg active:scale-95 cursor-pointer"
+            >
+              Bestill Lekkasjesøk / Befaring
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </FadeIn>
         </div>
       </section>
 
-      {/* Slik handler du */}
-      <section className="py-16 px-4 md:px-8 bg-white">
+      {/* Årsaker Section */}
+      <section className="py-16 px-4 md:px-8 bg-slate-900/40 border-y border-slate-800/80">
         <div className="max-w-6xl mx-auto">
           <FadeIn>
-            <div className="text-center mb-12">
-              <span className="inline-block px-4 py-1.5 bg-gold-100 text-[#B45309] text-sm font-semibold rounded-full mb-4">
-                Steg for steg
+            <div className="text-center max-w-3xl mx-auto mb-14">
+              <span className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-amber-500/20 text-[#F5B800] border border-amber-500/30 text-xs font-bold uppercase tracking-wider rounded-full mb-4">
+                <AlertTriangle className="w-3.5 h-3.5" /> Vanlige Årsaker
               </span>
-              <h3 className="text-2xl md:text-3xl font-bold text-gray-900 mb-3">
-                Slik handler du ved en taklekkasje
-              </h3>
-              <p className="text-gray-500">
-                Oppdaget en lekkasje? Ikke vent – kontakt oss umiddelbart
+              <h2 className="text-3xl md:text-4xl font-extrabold text-white mb-3">
+                Hvorfor oppstår taklekkasjer?
+              </h2>
+              <p className="text-slate-400 text-sm md:text-base">
+                Oversikt over de hyppigste faktorene som fører til at vann finner veien inn i bygget.
               </p>
             </div>
           </FadeIn>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {steps.map((step, index) => (
-              <FadeIn key={index} delay={0.1 * index}>
-                <motion.div
-                  whileHover={{ y: -6 }}
-                  className="bg-gradient-to-b from-[#FEF3C7] via-[#FDE68A] to-[#F5B800] rounded-2xl border-[3px] border-black p-6 h-full"
-                >
-                  <step.icon className="w-8 h-8 text-gray-900 mb-4" />
-                  <h4 className="text-base font-bold text-gray-900 mb-3 leading-tight">
-                    {step.title}
-                  </h4>
-                  <p className="text-sm text-gray-800 leading-relaxed">
-                    {step.description}
-                  </p>
-                </motion.div>
-              </FadeIn>
-            ))}
-          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {causes.map((cause, index) => {
+              const Icon = cause.icon;
+              return (
+                <FadeIn key={index} delay={0.08 * index}>
+                  <motion.div
+                    whileHover={{ y: -6 }}
+                    className="bg-slate-900 border border-slate-800 hover:border-amber-500/40 rounded-3xl p-6 transition-all h-full flex flex-col justify-between group backdrop-blur-md shadow-xl"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-5">
+                        <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-[#F5B800] group-hover:scale-110 transition-transform">
+                          <Icon className="w-6 h-6" />
+                        </div>
+                        <span className="bg-slate-800 text-slate-400 text-[10px] font-bold px-2.5 py-1 rounded-md border border-slate-700">
+                          {cause.tag}
+                        </span>
+                      </div>
 
-          <FadeIn delay={0.4}>
-            <div className="text-center mt-10">
-              <Link
-                to="/"
-                onClick={() =>
-                  setTimeout(
-                    () =>
-                      document
-                        .getElementById("kontakt")
-                        ?.scrollIntoView({ behavior: "smooth" }),
-                    100
-                  )
-                }
-              >
-                <motion.button
-                  whileHover={{ scale: 1.03 }}
-                  whileTap={{ scale: 0.98 }}
-                  className="inline-flex items-center gap-2 gold-gradient text-white font-bold px-8 py-4 rounded-2xl shadow-gold-lg"
-                >
-                  Gå til kontaktskjema
-                  <ArrowRight className="w-5 h-5" />
-                </motion.button>
-              </Link>
-            </div>
-          </FadeIn>
+                      <h3 className="text-lg font-bold text-white mb-2 group-hover:text-[#F5B800] transition-colors">
+                        {cause.title}
+                      </h3>
+                      <p className="text-slate-400 text-xs md:text-sm leading-relaxed">
+                        {cause.description}
+                      </p>
+                    </div>
+                  </motion.div>
+                </FadeIn>
+              );
+            })}
+          </div>
         </div>
       </section>
+
+      {/* Slik Handler Du (4-Steg) */}
+      <section className="py-20 px-4 md:px-8 max-w-6xl mx-auto">
+        <FadeIn>
+          <div className="text-center max-w-2xl mx-auto mb-14">
+            <span className="text-xs font-bold text-amber-500 uppercase tracking-widest block mb-2">
+              Handlingsplan
+            </span>
+            <h2 className="text-3xl md:text-4xl font-extrabold text-white mb-3">
+              Slik går du fram ved en taklekkasje
+            </h2>
+            <p className="text-slate-400 text-sm">
+              Enkel prosess fra første henvendelse til løst oppdrag.
+            </p>
+          </div>
+        </FadeIn>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {steps.map((step, index) => {
+            const Icon = step.icon;
+            return (
+              <FadeIn key={index} delay={0.1 * index}>
+                <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 relative group hover:border-amber-500/40 transition-all h-full flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-6">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-[#F5B800]">
+                        <Icon className="w-5 h-5" />
+                      </div>
+                      <span className="text-xs font-bold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-md border border-amber-500/20">
+                        {step.step}
+                      </span>
+                    </div>
+
+                    <h3 className="text-base font-bold text-white mb-2">
+                      {step.title}
+                    </h3>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      {step.description}
+                    </p>
+                  </div>
+                </div>
+              </FadeIn>
+            );
+          })}
+        </div>
+
+        {/* Handlingsknapp i bunnen */}
+        <FadeIn delay={0.4}>
+          <div className="text-center mt-14">
+            <button
+              type="button"
+              onClick={() => setIsContactOpen(true)}
+              className="inline-flex items-center gap-2 bg-[#F5B800] hover:bg-[#e0a800] text-gray-950 font-extrabold px-8 py-4 rounded-2xl text-sm transition-all shadow-lg active:scale-95 cursor-pointer"
+            >
+              Start Registrering i Bestillingsskjema
+              <ArrowRight className="w-5 h-5" />
+            </button>
+          </div>
+        </FadeIn>
+      </section>
+
+      {/* Bestillingsskjema Modal */}
+      <ContactModal
+        isOpen={isContactOpen}
+        onClose={() => setIsContactOpen(false)}
+      />
     </div>
   );
 }

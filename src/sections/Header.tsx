@@ -26,15 +26,15 @@ export default function Header() {
           : "bg-transparent py-4"
       }`}
     >
-      <div className="max-w-7xl mx-auto px-4 md:px-8 flex items-center justify-between">
-        {/* Logo */}
-        <div className="flex items-center">
-          <img
-            src="/logo.png"
-            alt="Taklekkasjevakten"
-            className="h-14 w-auto"
-          />
-        </div>
+   <div className="max-w-7xl mx-auto px-4 md:px-8 flex items-center justify-between">
+  {/* Logo */}
+  <div className="flex items-center">
+    <img
+      src="/logo.png"
+      alt="Taklekkasjevakten"
+      className="h-24 md:h-32 w-auto object-contain"
+    />
+  </div>
 
         {/* Kontaktinformasjon */}
         <div className="flex items-center gap-4 md:gap-6">

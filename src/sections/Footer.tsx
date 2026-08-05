@@ -16,7 +16,13 @@ export default function Footer() {
           <FadeIn>
             <div>
               <div className="mb-5">
-                <p className="mt-2 text-xs text-gray-400">
+                <img
+                  src="/logo.png"
+                  alt="Taklekkasjevakten"
+                  className="h-28 md:h-36 w-auto object-contain max-w-full"
+                />
+
+                <p className="text-xs text-gray-400 mt-2">
                   En del av Perun AS
                 </p>
               </div>

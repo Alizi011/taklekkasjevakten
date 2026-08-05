@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
 import { Phone, Mail, Menu, X, ArrowUp } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import ContactModal from "./ContactModal";
 
 const navItems = [
   { label: "Forside", href: "/" },
@@ -15,6 +16,7 @@ export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const [isContactOpen, setIsContactOpen] = useState(false);
 
   const location = useLocation();
   const isHome = location.pathname === "/";
@@ -57,6 +59,52 @@ export default function Layout() {
             : "bg-transparent"
         }`}
       >
+{/* Akutt Vakt Banner */}
+<div className="bg-red-950 text-white text-xs md:text-sm py-2.5 px-4 relative z-50 border-b border-red-800/60 shadow-lg">
+  <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-3">
+    
+    {/* Pulserende vakt-tittel og betingelser */}
+    <div className="flex flex-wrap items-center gap-2 text-center md:text-left justify-center md:justify-start">
+      <span className="relative flex h-2.5 w-2.5">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+      </span>
+
+      <span className="font-bold tracking-wide text-red-100 uppercase">
+        Døgnåpen Akuttvakt:
+      </span>
+
+      <span className="text-red-200 font-medium">
+        Akutt utrykning (2 mann): <strong>kr 3 920,- eks. mva / t</strong> (+ kr 340,- bil/drift)
+      </span>
+
+      <span className="hidden lg:inline text-red-300/80"></span>
+
+  
+    </div>
+
+    {/* Ringeknapp og viktig info */}
+    <div className="flex items-center gap-3">
+      <a
+        href="tel:92029090"
+        className="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 text-white font-bold px-4 py-1.5 rounded-full text-xs transition-colors shadow-md whitespace-nowrap"
+      >
+        <Phone className="w-3.5 h-3.5" />
+        <span>Ring Akuttvakt: 92 02 90 90</span>
+      </a>
+    </div>
+
+  </div>
+
+  {/* Oppfordring / Advarsel om når akuttvakt bør benyttes */}
+  <div className="max-w-7xl mx-auto mt-2 pt-2 border-t border-red-900/50 text-[11px] md:text-xs text-red-200/90 text-center md:text-left flex items-center justify-center md:justify-start gap-1.5">
+    <span className="font-bold text-red-400">Viktig informasjon:</span>
+    <span>
+      Benytt kun akutt utrykning dersom vannet fosser inn og det er et nødtilfelle. Ved fuktmerker eller mindre drypplekkasjer anbefaler vi å fylle ut kontaktskjemaet for ordinær oppdragstid.
+    </span>
+  </div>
+</div>
+
         {/* Øverste rad med logo og kontaktinformasjon */}
         <div
           className={`transition-all duration-500 ${
@@ -168,6 +216,15 @@ export default function Layout() {
                     />
                   </Link>
                 ))}
+
+                {/* KNAPP DESKTOP */}
+                <button
+                  type="button"
+                  onClick={() => setIsContactOpen(true)}
+                  className="ml-4 px-5 py-2 bg-[#F5B800] hover:bg-[#e0a800] text-gray-900 font-bold rounded-full text-sm transition-all shadow-md active:scale-95"
+                >
+                  Kontakt oss
+                </button>
               </div>
 
               <button
@@ -211,6 +268,18 @@ export default function Layout() {
                     {item.label}
                   </Link>
                 ))}
+
+                {/* KNAPP MOBIL */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    setIsContactOpen(true);
+                  }}
+                  className="w-full text-left px-6 py-3 text-sm font-bold text-gray-900 bg-[#F5B800] hover:bg-[#e0a800] transition-colors"
+                >
+                  Kontakt oss
+                </button>
               </motion.div>
             )}
           </AnimatePresence>
@@ -229,22 +298,20 @@ export default function Layout() {
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-12 md:py-16">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-10 mb-10">
             <div>
-              <div className="flex items-center gap-3 mb-4">
+              <div className="mb-4">
                 <img
-                  src="/logo-icon.jpg"
+                  src="/logo.png"
                   alt="Taklekkasjevakten"
-                  className="h-10 w-auto rounded-lg"
+                  className="h-28 md:h-36 w-auto object-contain max-w-full block mb-3"
                 />
 
-                <div>
-                  <h4 className="font-bold text-lg bg-gradient-to-r from-[#FCD34D] to-[#F5B800] bg-clip-text text-transparent">
-                    Taklekkasjevakten.no
-                  </h4>
+                <h4 className="font-bold text-lg bg-gradient-to-r from-[#FCD34D] to-[#F5B800] bg-clip-text text-transparent">
+                  Taklekkasjevakten.no
+                </h4>
 
-                  <p className="text-xs text-gray-400">
-                    En del av Perun AS
-                  </p>
-                </div>
+                <p className="text-xs text-[#F5B800] mt-1">
+                  En del av Perun AS
+                </p>
               </div>
 
               <p className="text-gray-400 text-sm leading-relaxed">
@@ -329,6 +396,12 @@ export default function Layout() {
           </motion.button>
         )}
       </AnimatePresence>
+
+      {/* Modal */}
+      <ContactModal
+        isOpen={isContactOpen}
+        onClose={() => setIsContactOpen(false)}
+      />
     </div>
   );
 }
