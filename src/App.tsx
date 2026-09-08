@@ -10,6 +10,9 @@ import Faq from "./pages/Faq";
 import LocalAreaPage from "./pages/LocalAreaPage";
 import AdminLogin from "./pages/AdminLogin";
 import AdminDashboard from "./pages/AdminDashboard";
+import CustomerDashboard from "./pages/CustomerDashboard";
+import BusinessCustomerDashboard from "./pages/BusinessCustomerDashboard";
+import ProjectManagerPortal from "./pages/ProjectManagerPortal";
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -24,10 +27,24 @@ function App() {
         <Route path="/vart-arbeid" element={<VartArbeid />} />
         <Route path="/om-oss" element={<OmOss />} />
         <Route path="/faq" element={<Faq />} />
-        
+
+        {/* Kundeportal */}
+        <Route path="/min-side" element={<CustomerDashboard />} />
+        <Route path="/kundeportal" element={<CustomerDashboard />} />
+        <Route
+          path="/bedriftsportal"
+          element={<BusinessCustomerDashboard />}
+        />
+
         {/* Lokale SEO-landingssider */}
         <Route path="/taklekkasje-:areaSlug" element={<LocalAreaPage />} />
       </Route>
+
+      {/* Prosjektportal */}
+      <Route
+        path="/prosjektportal"
+        element={<ProjectManagerPortal />}
+      />
 
       {/* Beskyttet Admin Rute */}
       <Route

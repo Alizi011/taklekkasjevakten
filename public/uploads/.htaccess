@@ -1,0 +1,8 @@
+# Hindre kjøring av skadelige skripter i uploads-mappen
+<FilesMatch "\.(php|php5|phtml|exe|pl|py|cgi)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Sørg for at kun bilder og lydfiler kan åpnes
+Options -Indexes

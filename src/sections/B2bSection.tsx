@@ -6,7 +6,6 @@ import {
   Wrench,
   CheckCircle2,
   ArrowRight,
-  Sparkles,
   ClipboardList,
 } from "lucide-react";
 import FadeIn from "../components/FadeIn";
@@ -101,8 +100,8 @@ export default function B2bSection() {
           <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-amber-950/40 border border-amber-500/30 rounded-3xl p-8 md:p-12 relative overflow-hidden shadow-2xl">
             <div className="flex flex-col lg:flex-row items-center justify-between gap-8 relative z-10">
               <div className="max-w-2xl text-center lg:text-left">
-                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#F5B800] uppercase tracking-wider mb-2">
-                  <Sparkles className="w-3.5 h-3.5" /> Skreddersydd for Styret & Forvalter
+                <span className="inline-flex items-center text-xs font-bold text-[#F5B800] uppercase tracking-wider mb-2">
+                  Skreddersydd for Styret & Forvalter
                 </span>
                 <h3 className="text-2xl md:text-3xl font-extrabold text-white mb-3">
                   Trenger dere en uavhengig vurdering eller rammeavtale?

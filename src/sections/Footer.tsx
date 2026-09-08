@@ -11,7 +11,7 @@ export default function Footer() {
       <div className="absolute top-0 left-0 right-0 h-1 gold-gradient" />
 
       <div className="container-modern py-12 md:py-16">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-10 mb-10">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-10">
           {/* Brand */}
           <FadeIn>
             <div>
@@ -59,6 +59,57 @@ export default function Footer() {
                   </li>
                 ))}
               </ul>
+            </div>
+          </FadeIn>
+
+          {/* Lokal Feilsøking & Dekning */}
+          <FadeIn delay={0.15}>
+            <div>
+              <h5 className="font-semibold text-sm text-[#F5B800] uppercase tracking-wider mb-4">
+                Lokal Feilsøking & Utrykning
+              </h5>
+
+              <ul className="grid grid-cols-2 gap-x-2 gap-y-2.5 text-xs text-gray-400 mb-4">
+                <li className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer">
+                  <MapPin className="w-3.5 h-3.5 text-[#F5B800] shrink-0" />
+                  <span>Oslo</span>
+                </li>
+                <li className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer">
+                  <MapPin className="w-3.5 h-3.5 text-[#F5B800] shrink-0" />
+                  <span>Bærum & Asker</span>
+                </li>
+                <li className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer">
+                  <MapPin className="w-3.5 h-3.5 text-[#F5B800] shrink-0" />
+                  <span>Lillestrøm</span>
+                </li>
+                <li className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer">
+                  <MapPin className="w-3.5 h-3.5 text-[#F5B800] shrink-0" />
+                  <span>Lørenskog</span>
+                </li>
+                <li className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer">
+                  <MapPin className="w-3.5 h-3.5 text-[#F5B800] shrink-0" />
+                  <span>Nordre Follo</span>
+                </li>
+                <li className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer">
+                  <MapPin className="w-3.5 h-3.5 text-[#F5B800] shrink-0" />
+                  <span>Ullensaker</span>
+                </li>
+                <li className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer">
+                  <MapPin className="w-3.5 h-3.5 text-[#F5B800] shrink-0" />
+                  <span>Nesodden & Ås</span>
+                </li>
+                <li className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer">
+                  <MapPin className="w-3.5 h-3.5 text-[#F5B800] shrink-0" />
+                  <span>Nittedal</span>
+                </li>
+              </ul>
+
+              <div className="inline-flex items-center gap-2 bg-gray-800/80 border border-gray-700 rounded-lg px-3 py-2 w-full">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                <span className="text-[11px] font-semibold text-gray-300">
+                  Rykker ut til <span className="text-white">alle kommuner</span> i Oslo & Akershus
+                </span>
+              </div>
             </div>
           </FadeIn>
 
