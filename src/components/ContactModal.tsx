@@ -4,9 +4,10 @@ import { Link } from "react-router-dom";
 import { 
   X, CalendarCheck, Zap,
   ChevronRight, ChevronLeft, Check, Upload, Video, 
-  ShieldCheck, Wrench, Info, Eye, Sparkles, ArrowRight, AlertCircle 
+  ShieldCheck, Wrench, Info, Sparkles, ArrowRight, AlertCircle, Compass 
 } from "lucide-react";
 import { apiUrl } from "../lib/api";
+import LeakCalculator from "../components/LeakCalculator";
 type ContactType = "privat" | "foretak";
 type OrganizationType = "B2B" | "Borettslag/Sameie";
 type IntentType = "lekkasjesok" | "takkontroll" | "service" | "akutt" | "digital" | "befaring";
@@ -51,6 +52,7 @@ export default function ContactModal({ isOpen, onClose }: ContactModalProps) {
   const [leakLocation, setLeakLocation] = useState<LeakLocation>("ukjent");
   const [hasImages, setHasImages] = useState<boolean>(false);
   const [activeInfo, setActiveInfo] = useState<string | null>(null);
+  const [showLeakGuide, setShowLeakGuide] = useState(false);
 
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [formData, setFormData] = useState({
@@ -624,40 +626,28 @@ export default function ContactModal({ isOpen, onClose }: ContactModalProps) {
                             )}
                           </div>
 
-                          {/* 6. Gratis Digital Befaring */}
+                          {/* 6. Diagnoseveiviser */}
                           <div className="relative">
                             <button
                               type="button"
-                              onClick={() => handleSelectIntent("befaring")}
-                              className={`w-full p-3.5 rounded-2xl text-left border text-xs font-medium transition-all flex items-center justify-between ${
-                                intent === "befaring"
-                                  ? "border-green-500 bg-green-50/60 text-green-950 ring-2 ring-green-500/20"
-                                  : "border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                              }`}
+                              onClick={() => setShowLeakGuide(true)}
+                              className="w-full p-3.5 rounded-2xl text-left border border-cyan-300 bg-cyan-50/70 hover:bg-cyan-50 text-gray-800 text-xs font-medium transition-all flex items-center justify-between"
                             >
                               <div className="flex items-center gap-3">
-                                <Eye className="w-5 h-5 text-green-600 shrink-0" />
+                                <div className="w-9 h-9 rounded-xl bg-cyan-100 border border-cyan-200 flex items-center justify-center shrink-0">
+                                  <Compass className="w-5 h-5 text-cyan-700" />
+                                </div>
                                 <div>
-                                  <div className="font-bold text-sm text-gray-900">Gratis Digital Befaring (Maks 15 min)</div>
-                                  <div className="text-green-800 font-bold text-[11px] mt-0.5">
-                                    Kostnadsfri innledende prat & kortsjekk over video
+                                  <div className="font-bold text-sm text-gray-900">
+                                    Usikker på hvilken tjeneste du trenger?
+                                  </div>
+                                  <div className="text-cyan-800 font-bold text-[11px] mt-0.5">
+                                    Start diagnoseveiviseren og få hjelp til å velge riktig neste steg
                                   </div>
                                 </div>
                               </div>
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); setActiveInfo(activeInfo === "befaring" ? null : "befaring"); }}
-                                className="p-1.5 text-gray-400 hover:text-gray-900 hover:bg-white rounded-full transition-colors"
-                              >
-                                <Info className="w-4 h-4 text-green-600" />
-                              </button>
+                              <ArrowRight className="w-4 h-4 text-cyan-700 shrink-0" />
                             </button>
-                            {activeInfo === "befaring" && (
-                              <div className="mt-2 p-3.5 bg-slate-900 text-white text-xs rounded-xl shadow-lg leading-relaxed border-l-4 border-green-500">
-                                <strong className="text-green-400 block mb-1">Hva er en gratis digital befaring?</strong>
-                                Et kort uforpliktende videomøte (15 min) for å se på situasjonen sammen, avklare om det trengs et fysisk lekkasjesøk eller service, og gi deg retning videre før du bestiller.
-                              </div>
-                            )}
                           </div>
                         </div>
 
@@ -1230,6 +1220,32 @@ export default function ContactModal({ isOpen, onClose }: ContactModalProps) {
               )}
             </div>
           </motion.div>
+          {showLeakGuide && (
+            <div
+              className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/80 px-3 py-5 backdrop-blur-sm md:px-6 md:py-8"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Diagnoseveiviser for taklekkasje"
+              onClick={() => setShowLeakGuide(false)}
+            >
+              <div
+                className="relative w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-800 bg-[#0b0f17] shadow-2xl"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={() => setShowLeakGuide(false)}
+                  className="absolute right-4 top-4 z-20 grid h-10 w-10 place-items-center rounded-full border border-slate-700 bg-slate-950/90 text-slate-300 transition hover:border-slate-600 hover:text-white"
+                  aria-label="Lukk diagnoseveiviser"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+
+                <LeakCalculator />
+              </div>
+            </div>
+          )}
+
         </>
       )}
     </AnimatePresence>

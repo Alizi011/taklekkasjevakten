@@ -1,6 +1,13 @@
 import { useState, useEffect } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
-import { Phone, Mail, Menu, X, ArrowUp, MapPin } from "lucide-react";
+import {
+  Phone,
+  Mail,
+  Menu,
+  X,
+  ArrowUp,
+  MapPin,
+} from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import ContactModal from "./ContactModal";
 
@@ -36,6 +43,7 @@ export default function Layout() {
     };
 
     window.addEventListener("scroll", handleScroll);
+
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
@@ -53,7 +61,7 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-[#0b0f17] text-white">
-      {/* Header og navigasjon samlet */}
+      {/* Header */}
       <motion.header
         initial={{ y: -80 }}
         animate={{ y: 0 }}
@@ -64,19 +72,22 @@ export default function Layout() {
             : "bg-gradient-to-b from-black/95 via-black/70 to-transparent"
         }`}
       >
-        {/* Compact Akutt Vakt Banner */}
+        {/* Akuttvakt */}
         <div className="bg-red-950/90 text-white text-xs py-1.5 px-4 border-b border-red-800/60 backdrop-blur-md">
           <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-1 md:gap-3">
             <div className="flex flex-wrap items-center gap-2 text-center md:text-left justify-center md:justify-start">
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
               </span>
+
               <span className="font-bold tracking-wide text-red-100 uppercase text-[11px]">
                 Døgnåpen Akuttvakt:
               </span>
+
               <span className="text-red-200 text-[11px]">
-                Utrykning (2 mann): <strong>kr 3 920,- eks. mva / t</strong> (+ kr 340,- bil/drift)
+                Utrykning (2 mann):{" "}
+                <strong>kr 3 920,- eks. mva / t</strong> (+ kr 340,- bil/drift)
               </span>
             </div>
 
@@ -92,10 +103,9 @@ export default function Layout() {
           </div>
         </div>
 
-        {/* Én felles Hovedlinje: Stor, Ren Logo + Meny + Kontakt */}
+        {/* Hovedlinje */}
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-2 md:py-3 flex items-center justify-between">
-          
-          {/* REN OG STOR LOGO */}
+          {/* Logo */}
           <Link to="/" className="flex items-center">
             <img
               src="/logo.png"
@@ -104,7 +114,7 @@ export default function Layout() {
             />
           </Link>
 
-          {/* Navigasjon i midten */}
+          {/* Desktop navigasjon */}
           <nav className="hidden lg:flex items-center gap-1">
             {navItems.map((item) => (
               <Link
@@ -117,6 +127,7 @@ export default function Layout() {
                 }`}
               >
                 {item.label}
+
                 <span
                   className={`absolute bottom-0 left-1/2 -translate-x-1/2 h-0.5 rounded-full transition-all duration-300 ${
                     location.pathname === item.href
@@ -128,7 +139,7 @@ export default function Layout() {
             ))}
           </nav>
 
-          {/* Ringeknapp & Bestilling til høyre */}
+          {/* Telefon + bestilling */}
           <div className="hidden sm:flex items-center gap-3">
             <a
               href="tel:92029090"
@@ -147,18 +158,22 @@ export default function Layout() {
             </button>
           </div>
 
-          {/* Mobilmeny Knapp */}
+          {/* Mobilmeny */}
           <button
             type="button"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label={mobileOpen ? "Lukk meny" : "Åpne meny"}
             className="lg:hidden p-2 rounded-xl transition-colors text-slate-200 hover:bg-slate-800 border border-slate-700/60"
           >
-            {mobileOpen ? <X className="w-5 h-5 text-[#F5B800]" /> : <Menu className="w-5 h-5" />}
+            {mobileOpen ? (
+              <X className="w-5 h-5 text-[#F5B800]" />
+            ) : (
+              <Menu className="w-5 h-5" />
+            )}
           </button>
         </div>
 
-        {/* Mobilmeny Dropdown */}
+        {/* Mobilmeny */}
         <AnimatePresence>
           {mobileOpen && (
             <motion.div
@@ -183,6 +198,7 @@ export default function Layout() {
                     {item.label}
                   </Link>
                 ))}
+
                 <button
                   type="button"
                   onClick={() => {
@@ -199,106 +215,213 @@ export default function Layout() {
         </AnimatePresence>
       </motion.header>
 
-      {/* Main content */}
+      {/* Innhold */}
       <main className="pt-[125px] md:pt-[140px]">
         <Outlet />
       </main>
 
-      {/* Footer */}
-      <footer className="bg-slate-950 text-white relative overflow-hidden border-t border-slate-800">
-        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500/20 via-[#F5B800] to-amber-500/20" />
-        <div className="max-w-7xl mx-auto px-4 md:px-8 py-12 md:py-16">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10 mb-10">
-            {/* Om oss */}
-            <div>
-              <div className="mb-4">
+      {/* =========================================================
+          FOOTER
+      ========================================================== */}
+      <footer className="relative bg-[#020713] text-white border-t border-white/[0.06] overflow-hidden">
+        {/* Gullinje */}
+        <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#F5B800]/65 to-transparent" />
+
+        {/* Bakgrunnsglød */}
+        <div className="pointer-events-none absolute inset-0">
+          <div className="absolute -top-32 -left-24 w-96 h-96 rounded-full bg-[#F5B800]/[0.025] blur-[110px]" />
+        </div>
+
+        <div className="relative max-w-7xl mx-auto px-5 md:px-8">
+          {/* Hoveddel */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-y-10 lg:gap-x-16 py-11 md:py-12">
+
+            {/* Brand */}
+            <div className="md:col-span-2 lg:col-span-5">
+              <Link
+                to="/"
+                className="inline-block transition-transform duration-300 hover:scale-[1.015]"
+              >
                 <img
                   src="/logo.png"
                   alt="Taklekkasjevakten"
-                  className="h-24 md:h-32 w-auto object-contain max-w-full block mb-3 filter drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)]"
+                  className="h-[82px] md:h-[92px] w-auto object-contain drop-shadow-[0_4px_14px_rgba(0,0,0,0.55)]"
                 />
-                <h4 className="font-extrabold text-lg bg-gradient-to-r from-[#FCD34D] to-[#F5B800] bg-clip-text text-transparent">
-                  Taklekkasjevakten.no
+              </Link>
+
+              <div className="mt-4">
+                <h4 className="text-[21px] md:text-[23px] leading-tight font-extrabold tracking-[-0.02em] text-white">
+                  Taklekkasjevakten
+                  <span className="text-[#F5B800]">.no</span>
                 </h4>
-                <p className="text-xs text-[#F5B800] mt-1 font-semibold">
+
+                <p className="mt-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-[#F5B800]">
                   En del av Perun AS
                 </p>
               </div>
-              <p className="text-slate-400 text-xs md:text-sm leading-relaxed">
-                Eksperter på taklekkasjer i Oslo og Akershus. Vi finner kilden til lekkasjen basert på ingeniørfaglige metoder.
+
+              <p className="mt-5 max-w-[390px] text-[14px] leading-6 text-slate-400">
+                Spesialister på lekkasjesøk og byggtekniske feil. Vi finner
+                årsaken – ikke bare symptomet.
               </p>
+
+              <div className="mt-5 text-[12px] leading-5 text-slate-500">
+                <p>Org.nr. 917 779 236</p>
+                <p>Haavard Martinsens vei 9, 0978 Oslo</p>
+              </div>
             </div>
 
-            {/* Navigasjon */}
-            <div>
-              <h5 className="font-bold text-xs text-amber-500 uppercase tracking-widest mb-4">
-                Navigasjon
+            {/* Dekningsområde */}
+            <div className="lg:col-span-3">
+              <h5 className="text-[11px] font-extrabold uppercase tracking-[0.19em] text-[#F5B800]">
+                Dekningsområde
               </h5>
-              <ul className="space-y-2.5">
-                {navItems.map((item) => (
-                  <li key={item.href}>
-                    <Link
-                      to={item.href}
-                      className="text-slate-400 hover:text-[#F5B800] text-sm transition-colors"
-                    >
-                      {item.label}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
 
-            {/* Lokale SEO-lenker */}
-            <div>
-              <h5 className="font-bold text-xs text-amber-500 uppercase tracking-widest mb-4">
-                Lokal Feilsøking
-              </h5>
-              <ul className="space-y-2.5">
-                {localSeoLinks.map((link) => (
-                  <li key={link.href}>
-                    <Link
-                      to={link.href}
-                      className="text-slate-400 hover:text-[#F5B800] text-sm transition-colors flex items-center gap-1.5"
-                    >
-                      <MapPin className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                      <span>{link.label}</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+              <div className="mt-5 h-px w-8 bg-[#F5B800]/50" />
+
+              <div className="mt-5">
+                <div className="flex gap-3 pb-5 border-b border-white/[0.06]">
+                  <MapPin className="w-[17px] h-[17px] mt-0.5 shrink-0 text-[#F5B800]" />
+
+                  <div>
+                    <p className="text-[14px] font-bold text-slate-100">
+                      Oslo
+                    </p>
+
+                    <p className="mt-1 text-[12px] leading-5 text-slate-500">
+                      Lekkasjesøk, takkontroll, service og akutt utbedring
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 py-5">
+                  <MapPin className="w-[17px] h-[17px] mt-0.5 shrink-0 text-[#F5B800]" />
+
+                  <div>
+                    <p className="text-[14px] font-bold text-slate-100">
+                      Hele Akershus
+                    </p>
+
+                    <p className="mt-1 text-[12px] leading-5 text-slate-500">
+                      Vi rykker ut til alle kommuner i Akershus
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-[11px] leading-5 text-slate-600">
+                  Bolig · borettslag · sameie · næringsbygg
+                </p>
+              </div>
             </div>
 
             {/* Kontakt */}
-            <div>
-              <h5 className="font-bold text-xs text-amber-500 uppercase tracking-widest mb-4">
+            <div className="lg:col-span-4">
+              <h5 className="text-[11px] font-extrabold uppercase tracking-[0.19em] text-[#F5B800]">
                 Kontakt
               </h5>
-              <ul className="space-y-3">
-                <li>
-                  <a
-                    href="tel:92029090"
-                    className="flex items-center gap-2.5 text-slate-300 hover:text-[#F5B800] text-sm transition-colors"
-                  >
-                    <Phone className="w-4 h-4 text-[#F5B800]" />
-                    92 02 90 90
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="mailto:post@taklekkasjevakten.no"
-                    className="flex items-center gap-2.5 text-slate-300 hover:text-[#F5B800] text-sm transition-colors"
-                  >
-                    <Mail className="w-4 h-4 text-[#F5B800]" />
-                    post@taklekkasjevakten.no
-                  </a>
-                </li>
-              </ul>
+
+              <div className="mt-5 h-px w-8 bg-[#F5B800]/50" />
+
+              <div className="mt-5 space-y-5">
+                <a
+                  href="tel:92029090"
+                  className="group flex items-start gap-3"
+                >
+                  <Phone className="w-[17px] h-[17px] mt-0.5 shrink-0 text-[#F5B800]" />
+
+                  <div>
+                    <span className="block text-[10px] uppercase tracking-[0.14em] text-slate-600">
+                      Telefon
+                    </span>
+
+                    <span className="mt-0.5 block text-[14px] font-semibold text-slate-200 transition-colors group-hover:text-[#F5B800]">
+                      92 02 90 90
+                    </span>
+                  </div>
+                </a>
+
+                <a
+                  href="mailto:post@taklekkasjevakten.no"
+                  className="group flex items-start gap-3"
+                >
+                  <Mail className="w-[17px] h-[17px] mt-0.5 shrink-0 text-[#F5B800]" />
+
+                  <div className="min-w-0">
+                    <span className="block text-[10px] uppercase tracking-[0.14em] text-slate-600">
+                      E-post
+                    </span>
+
+                    <span className="mt-0.5 block text-[14px] font-semibold text-slate-200 transition-colors group-hover:text-[#F5B800] break-all">
+                      post@taklekkasjevakten.no
+                    </span>
+                  </div>
+                </a>
+
+                <div className="flex items-start gap-3">
+                  <MapPin className="w-[17px] h-[17px] mt-0.5 shrink-0 text-[#F5B800]" />
+
+                  <div>
+                    <span className="block text-[10px] uppercase tracking-[0.14em] text-slate-600">
+                      Adresse
+                    </span>
+
+                    <span className="mt-0.5 block text-[14px] leading-5 text-slate-400">
+                      Haavard Martinsens vei 9
+                      <br />
+                      0978 Oslo
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="border-t border-slate-800/80 pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
-            <p>&copy; {new Date().getFullYear()} Perun AS. All rights reserved.</p>
-            <p>Designet for <span className="text-[#F5B800] font-bold">Taklekkasjevakten</span></p>
+          {/* =====================================================
+              SEO-LOKASJONSLENKER
+          ====================================================== */}
+          <div className="border-t border-white/[0.07] py-5">
+            <div className="flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-6">
+              <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-600">
+                Lokale tjenester
+              </span>
+
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                {localSeoLinks.map((item) => (
+                  <Link
+                    key={item.href}
+                    to={item.href}
+                    className="text-[12px] text-slate-500 hover:text-[#F5B800] transition-colors"
+                  >
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom bar */}
+          <div className="border-t border-white/[0.07] py-5">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <p className="text-[11px] text-slate-600">
+                © {new Date().getFullYear()} Perun AS. Alle rettigheter
+                reservert.
+              </p>
+
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                <span>Taklekkasjevakten.no</span>
+
+                <span className="text-slate-800">
+                  •
+                </span>
+
+                <span>
+                  En tjeneste fra{" "}
+                  <span className="font-semibold text-slate-400">
+                    Perun AS
+                  </span>
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </footer>
@@ -311,6 +434,7 @@ export default function Layout() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.8 }}
             onClick={scrollToTop}
+            aria-label="Til toppen"
             className="fixed bottom-6 right-6 z-50 p-3 bg-slate-900 border border-amber-500/40 hover:bg-slate-800 text-[#F5B800] rounded-full shadow-2xl transition-all active:scale-95 cursor-pointer"
           >
             <ArrowUp className="w-5 h-5" />

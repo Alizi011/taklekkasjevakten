@@ -46,6 +46,11 @@ import ProjectManagerCustomers from "../components/project-manager/ProjectManage
 import ServiceCompletionWorkspace from "../components/project-manager/ServiceCompletionWorkspace";
 import PropertyAndBuildingCase from "./PropertyAndBuildingCase";
 import { API_BASE, apiAssetUrl, apiUrl } from "../lib/api";
+import {
+  buildStandardOfferPayload,
+  getStandardServiceOfferTemplate,
+  type StandardService,
+} from "../config/serviceOfferTemplates";
 type View = "oversikt" | "felt" | "eiendom" | "meldinger" | "kunder" | "rapporter" | "sjekklister" | "dokumenter" | "team";
 
 interface PreviewEmployee {
@@ -111,6 +116,9 @@ interface Inquiry {
   roof_type?: string;
   roofType?: string;
   building_type?: string;
+  roof_area_sqm?: number | string | null;
+  leak_severity?: string | null;
+  estimated_price?: string | number | null;
   inquiry_type?: string;
   type?: string;
   status?: string;
@@ -213,6 +221,19 @@ interface FieldSchedule {
   customer_proposed_time?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+interface BookingSlot {
+  id: number;
+  service: string;
+  slot_date: string;
+  start_time: string;
+  end_time?: string | null;
+  capacity?: number;
+  booked_count?: number;
+  available_count?: number;
+  available?: boolean;
+  note?: string | null;
 }
 
 interface DigitalInspectionSlot {
@@ -505,11 +526,193 @@ function serviceLabel(value?: string | null): string {
       return "Service";
     case "takkontroll":
       return "Takkontroll";
+    case "akutt":
+      return "Akutt utbedring";
+    case "digital":
+      return "Digital konsultasjon";
     case "digital_befaring":
       return "Digital befaring";
     default:
       return "Feltkontroll";
   }
+}
+
+function fieldServiceForInquiry(
+  inquiry?: Inquiry | null
+): OfferService | null {
+  if (!inquiry) return null;
+
+  const value = String(
+    inquiry.recommended_service ||
+    inquiry.inquiry_type ||
+    ""
+  ).toLowerCase();
+
+  if (
+    value === "lekkasjesok" ||
+    value === "takkontroll" ||
+    value === "service"
+  ) {
+    return value as OfferService;
+  }
+
+  return null;
+}
+
+
+function standardServiceForInquiry(
+  inquiry?: Inquiry | null
+): StandardService | null {
+  if (!inquiry) return null;
+
+  const value = String(
+    inquiry.recommended_service ||
+      inquiry.inquiry_type ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (
+    value === "lekkasjesok" ||
+    value === "takkontroll" ||
+    value === "service" ||
+    value === "akutt" ||
+    value === "digital"
+  ) {
+    return value as StandardService;
+  }
+
+  return null;
+}
+
+function formatKr(value?: number | null): string {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return "—";
+  }
+
+  return new Intl.NumberFormat("nb-NO", {
+    maximumFractionDigits: 0,
+  }).format(Number(value));
+}
+
+
+function inquiryTypeLabel(value?: string | null): string {
+  switch (String(value || "").toLowerCase()) {
+    case "lekkasjesok":
+      return "Lekkasjesøk";
+    case "takkontroll":
+      return "Takkontroll og inspeksjon";
+    case "service":
+      return "Servicearbeid og reparasjon";
+    case "akutt":
+      return "Akutt utbedring";
+    case "digital":
+      return "Digital konsultasjon";
+    case "digital_befaring":
+      return "Digital befaring";
+    default:
+      return value || "Ikke oppgitt";
+  }
+}
+
+function humanizeOrderValue(value?: string | null): string {
+  const text = String(value || "").trim();
+  if (!text) return "Ikke oppgitt";
+
+  const normalized = text.replaceAll("_", " ");
+
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function formatOrderDateTime(value?: string | null): string {
+  if (!value) return "Ikke oppgitt";
+
+  const date = new Date(String(value).replace(" ", "T"));
+
+  if (Number.isNaN(date.getTime())) return String(value);
+
+  return date.toLocaleString("nb-NO", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function parseInquiryOrderNotes(notes?: string | null) {
+  const source = String(notes || "").trim();
+
+  const result = {
+    building: "",
+    roofType: "",
+    damageLocation: "",
+    documentation: "",
+    description: "",
+    changeLog: "",
+  };
+
+  if (!source) return result;
+
+  let section = "";
+
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+
+    let match = line.match(/^Bygning:\s*(.*)$/i);
+    if (match) {
+      result.building = match[1].trim();
+      section = "building";
+      continue;
+    }
+
+    match = line.match(/^Taktype:\s*(.*)$/i);
+    if (match) {
+      result.roofType = match[1].trim();
+      section = "roofType";
+      continue;
+    }
+
+    match = line.match(/^Skadested:\s*(.*)$/i);
+    if (match) {
+      result.damageLocation = match[1].trim();
+      section = "damageLocation";
+      continue;
+    }
+
+    match = line.match(/^Bilder\/Dokumentasjon:\s*(.*)$/i);
+    if (match) {
+      result.documentation = match[1].trim();
+      section = "documentation";
+      continue;
+    }
+
+    match = line.match(/^Beskrivelse:\s*(.*)$/i);
+    if (match) {
+      result.description = match[1].trim();
+      section = "description";
+      continue;
+    }
+
+    if (/^\[Bestillingsendring\b/i.test(line.trim())) {
+      result.changeLog = line.trim();
+      section = "changeLog";
+      continue;
+    }
+
+    if (section === "description") {
+      result.description = [result.description, line]
+        .filter(Boolean)
+        .join("\n");
+    } else if (section === "changeLog") {
+      result.changeLog = [result.changeLog, line]
+        .filter(Boolean)
+        .join("\n");
+    }
+  }
+
+  return result;
 }
 
 function reportStatusLabel(status?: ReportStatus): string {
@@ -1937,6 +2140,8 @@ export default function ProjectManagerDashboard({
   const [searchQuery, setSearchQuery] = useState("");
   const [detailInquiry, setDetailInquiry] = useState<Inquiry | null>(null);
   const [overviewDisplay, setOverviewDisplay] = useState<"liste" | "kalender">("liste");
+  const [overviewBottomTab, setOverviewBottomTab] = useState<"active" | "activity">("active");
+  const [overviewTopTab, setOverviewTopTab] = useState<"upcoming" | "actions">("upcoming");
   const [overviewStatusFilter, setOverviewStatusFilter] = useState<string | null>(null);
   const [calendarView, setCalendarView] = useState<CalendarView>("uke");
   const [calendarCursor, setCalendarCursor] = useState(new Date());
@@ -2006,6 +2211,12 @@ export default function ProjectManagerDashboard({
   const [savingFieldSchedule, setSavingFieldSchedule] = useState(false);
   const [fieldScheduleError, setFieldScheduleError] = useState("");
   const [fieldScheduleMessage, setFieldScheduleMessage] = useState("");
+  const [sendingStandardOffer, setSendingStandardOffer] = useState(false);
+  const [standardOfferError, setStandardOfferError] = useState("");
+  const [standardOfferMessage, setStandardOfferMessage] = useState("");
+  const [suggestedBookingSlots, setSuggestedBookingSlots] = useState<BookingSlot[]>([]);
+  const [loadingSuggestedBookingSlots, setLoadingSuggestedBookingSlots] = useState(false);
+  const [suggestedBookingSlotsError, setSuggestedBookingSlotsError] = useState("");
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleStartTime, setScheduleStartTime] = useState("09:00");
   const [scheduleEndTime, setScheduleEndTime] = useState("");
@@ -2076,6 +2287,8 @@ export default function ProjectManagerDashboard({
     setFollowUpOffer(null);
     setPostReportMessage("");
     setPostReportError("");
+    setStandardOfferError("");
+    setStandardOfferMessage("");
     setReportDetailsOpen(false);
     setWorkCompletionSnapshot(null);
     setCompletionReport(null);
@@ -2262,8 +2475,23 @@ export default function ProjectManagerDashboard({
     if (offerStatus === "akseptert") return "tilbud_akseptert";
     if (offerStatus === "publisert") return "tilbud_sendt";
     if (offerStatus === "avvist") return "tilbud_avvist";
+    if (offerStatus === "utlopt" && !confirmedBooking(inquiry)) return "tilbud_utlopt";
 
     return rawStatus;
+  };
+
+  // Bruk faktisk registrert tidspunkt fra saken eller eksisterende feltavtale.
+  // Et tidsforslag regnes ikke som bekreftet avtale.
+  const confirmedBooking = (inquiry: Inquiry): Date | null => {
+    const saved = parseInquiryBooking(inquiry);
+    if (saved) return saved;
+    const schedule = fieldScheduleOverview[normalizeInquiryId(inquiry.id).toString()];
+    if (!schedule?.schedule_date || !schedule.start_time) return null;
+    if (!["bekreftet", "planlagt", "låst", "locked", "akseptert"].includes(
+      String(schedule.status || "").toLowerCase()
+    )) return null;
+    const date = new Date(`${schedule.schedule_date}T${String(schedule.start_time).slice(0, 5)}:00`);
+    return Number.isNaN(date.getTime()) ? null : date;
   };
 
   const isPureDigitalWorkflow = (inquiry: Inquiry): boolean =>
@@ -2365,6 +2593,19 @@ export default function ProjectManagerDashboard({
       };
     }
 
+    if (status === "tilbud_utlopt") {
+      return { key: "expired", label: "Tilbud utløpt", subtitle: "Avventer ny forespørsel fra kunden", accent: "slate" };
+    }
+
+    if (status === "tilbud_akseptert" && confirmedBooking(inquiry)) {
+      return {
+        key: "planned",
+        label: "Planlagt",
+        subtitle: formatBooking(confirmedBooking(inquiry)),
+        accent: "emerald",
+      };
+    }
+
     if (status === "tilbud_akseptert") {
       return {
         key: "planning",
@@ -2457,6 +2698,15 @@ export default function ProjectManagerDashboard({
       if (scheduleStatus === "utsatt") {
         return "Oppfølging er utsatt – avtal nytt tidspunkt senere";
       }
+    }
+
+    if (confirmedBooking(inquiry) &&
+        ["tilbud_akseptert", "planlagt", "pagaende"].includes(effectiveWorkflowStatus(inquiry))) {
+      return `${serviceLabel(fieldServiceForInquiry(inquiry)).toLowerCase()} er planlagt · ${formatBooking(confirmedBooking(inquiry))}`;
+    }
+
+    if (effectiveWorkflowStatus(inquiry) === "tilbud_utlopt") {
+      return "Avventer forespørsel om nytt tidspunkt";
     }
 
     switch (reportForInquiry?.status) {
@@ -2700,6 +2950,10 @@ export default function ProjectManagerDashboard({
 
     const key = inquiryId.toString();
     const existingSchedule = fieldScheduleOverview[key] || null;
+    const reportForInquiry = reportOverview[key] || null;
+    const isFollowupPlanning =
+      String(reportForInquiry?.status || "").toLowerCase() === "publisert";
+
     const draft = {
       date:
         teamScheduleDrafts[key]?.date ??
@@ -2722,7 +2976,7 @@ export default function ProjectManagerDashboard({
     };
 
     if (!draft.date) {
-      setTeamError("Velg dato før du lagrer arbeidsordren.");
+      setTeamError("Velg dato før du sender tidsforslaget.");
       return;
     }
 
@@ -2753,8 +3007,17 @@ export default function ProjectManagerDashboard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           existingSchedule?.id
-            ? { id: existingSchedule.id, ...payload }
-            : payload
+            ? {
+                id: existingSchedule.id,
+                ...payload,
+                action: "project_manager_propose_time",
+              }
+            : {
+                ...payload,
+                mode: isFollowupPlanning
+                  ? "followup_proposal"
+                  : "initial_proposal",
+              }
         ),
       });
 
@@ -2762,13 +3025,14 @@ export default function ProjectManagerDashboard({
 
       if (!res.ok || !data.success) {
         throw new Error(
-          data.message || "Kunne ikke lagre planleggingen."
+          data.message || "Kunne ikke sende tidsforslaget."
         );
       }
 
       const nextSchedule = data.schedule || {
         ...(existingSchedule || {}),
         ...payload,
+        status: "foreslatt_av_prosjektleder",
       };
 
       setFieldScheduleOverview((current) => ({
@@ -2791,7 +3055,7 @@ export default function ProjectManagerDashboard({
       }));
 
       setTeamMessage(
-        `Arbeidsordren for oppdrag #${inquiryId} er planlagt og lagret.`
+        `Tidsforslaget for oppdrag #${inquiryId} er sendt til kunden.`
       );
 
       await fetchInquiries();
@@ -2799,7 +3063,7 @@ export default function ProjectManagerDashboard({
       setTeamError(
         err instanceof Error
           ? err.message
-          : "Kunne ikke lagre planleggingen."
+          : "Kunne ikke sende tidsforslaget."
       );
     } finally {
       setTeamSavingId(null);
@@ -3271,7 +3535,7 @@ export default function ProjectManagerDashboard({
     const cursor = new Date();
     cursor.setHours(12, 0, 0, 0);
 
-    // Digital befaring: tirsdag og fredag kl. 11:00.
+    // Digital befaring: tirsdag og fredag kl. 09:00.
     // Vi starter fra neste kalenderdag slik at prosjektansvarlig alltid
     // foreslår fremtidige tidspunkt.
     cursor.setDate(cursor.getDate() + 1);
@@ -3286,8 +3550,8 @@ export default function ProjectManagerDashboard({
 
         result.push({
           date: `${year}-${month}-${date}`,
-          start_time: "11:00",
-          end_time: "11:30",
+          start_time: "09:00",
+          end_time: "09:30",
           note: "",
         });
       }
@@ -3430,6 +3694,107 @@ export default function ProjectManagerDashboard({
     }
   };
 
+  const formatBookingSlotDate = (value: string): string => {
+    const date = new Date(`${value}T12:00:00`);
+
+    if (Number.isNaN(date.getTime())) return value;
+
+    return new Intl.DateTimeFormat("nb-NO", {
+      weekday: "long",
+      day: "numeric",
+      month: "short",
+    }).format(date);
+  };
+
+  const chooseSuggestedBookingSlot = (slot: BookingSlot) => {
+    setScheduleDate(slot.slot_date || "");
+    setScheduleStartTime(
+      slot.start_time ? String(slot.start_time).substring(0, 5) : "09:00"
+    );
+    setScheduleEndTime(
+      slot.end_time ? String(slot.end_time).substring(0, 5) : ""
+    );
+    setStandardOfferError("");
+    setFieldScheduleError("");
+  };
+
+  const fetchSuggestedBookingSlots = async (
+    inquiry: Inquiry | null = activeInquiry
+  ) => {
+    const service = fieldServiceForInquiry(inquiry);
+
+    // booking_slots.php har per i dag fast automatisk regel for lekkasjesøk.
+    // Takkontroll og service har ikke fast regel og beholder derfor manuell fallback.
+    if (service !== "lekkasjesok") {
+      setSuggestedBookingSlots([]);
+      setSuggestedBookingSlotsError("");
+      return;
+    }
+
+    setLoadingSuggestedBookingSlots(true);
+    setSuggestedBookingSlotsError("");
+
+    try {
+      const from = new Date();
+      from.setHours(12, 0, 0, 0);
+      from.setDate(from.getDate() + 1);
+
+      const to = new Date(from);
+      to.setDate(to.getDate() + 45);
+
+      const toIsoDate = (date: Date) =>
+        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+          date.getDate()
+        ).padStart(2, "0")}`;
+
+      const res = await fetch(
+        apiUrl(
+          `/booking_slots.php?service=${encodeURIComponent(
+            service
+          )}&date_from=${toIsoDate(from)}&date_to=${toIsoDate(to)}`
+        )
+      );
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(
+          data.message || "Kunne ikke hente automatiske tidsforslag."
+        );
+      }
+
+      const slots: BookingSlot[] = Array.isArray(data.slots)
+        ? data.slots
+            .filter(
+              (slot: BookingSlot) =>
+                slot?.slot_date &&
+                slot?.start_time &&
+                slot.available !== false
+            )
+            .slice(0, 4)
+        : [];
+
+      setSuggestedBookingSlots(slots);
+
+      // Hvis saken ikke allerede har et tidsforslag, velg første ledige tid automatisk.
+      if (
+        slots.length > 0 &&
+        !fieldSchedule?.id &&
+        !inquiry?.booking_date
+      ) {
+        chooseSuggestedBookingSlot(slots[0]);
+      }
+    } catch (err) {
+      setSuggestedBookingSlots([]);
+      setSuggestedBookingSlotsError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke hente automatiske tidsforslag."
+      );
+    } finally {
+      setLoadingSuggestedBookingSlots(false);
+    }
+  };
+
   const fetchFieldSchedule = async (inquiryId: number) => {
     setLoadingFieldSchedule(true);
     setFieldScheduleError("");
@@ -3546,7 +3911,7 @@ export default function ProjectManagerDashboard({
       const selectedService =
         fieldSchedule?.service ||
         followupOffer?.service ||
-        inquiry.recommended_service ||
+        fieldServiceForInquiry(inquiry) ||
         "service";
 
       const commonPayload = {
@@ -3564,7 +3929,7 @@ export default function ProjectManagerDashboard({
       };
 
       const request =
-        isExisting && isFollowupPlanning
+        isExisting
           ? {
               method: "PUT",
               body: {
@@ -3573,19 +3938,13 @@ export default function ProjectManagerDashboard({
                 action: "project_manager_propose_time",
               },
             }
-          : isExisting
-          ? {
-              method: "PUT",
-              body: {
-                id: fieldSchedule?.id,
-                ...commonPayload,
-              },
-            }
           : {
               method: "POST",
               body: {
                 ...commonPayload,
-                ...(isFollowupPlanning ? { mode: "followup_proposal" } : {}),
+                mode: isFollowupPlanning
+                  ? "followup_proposal"
+                  : "initial_proposal",
               },
             };
 
@@ -3614,12 +3973,7 @@ export default function ProjectManagerDashboard({
       }
 
       setFieldScheduleMessage(
-        data.message ||
-          (isFollowupPlanning
-            ? "Forslag til tidspunkt er sendt til kunden."
-            : isExisting
-            ? "Tidspunktet er oppdatert."
-            : "Feltoppdraget er planlagt og lagt inn i kalenderen.")
+        data.message || "Forslag til tidspunkt er sendt til kunden."
       );
 
       setEditingFieldSchedule(false);
@@ -3636,20 +3990,246 @@ export default function ProjectManagerDashboard({
     }
   };
 
-  const respondToFieldSchedule = async (
-    action:
-      | "project_manager_accept_customer_time"
-      | "project_manager_lock"
-  ) => {
-    if (!fieldSchedule?.id || !activeInquiryId) return;
+  const sendStandardOfferAndTime = async () => {
+    if (!activeInquiryId || !activeInquiry) return;
 
-    if (
-      action === "project_manager_lock" &&
-      (!scheduleDate || !scheduleStartTime)
-    ) {
-      setFieldScheduleError("Velg dato og starttid før tidspunktet låses.");
+    const inquiry = activeInquiry;
+    const service = fieldServiceForInquiry(inquiry);
+
+    if (!service) {
+      setStandardOfferError(
+        "Denne tjenesten kan ikke sendes med standard pris- og tidsflyten ennå."
+      );
       return;
     }
+
+    const template = getStandardServiceOfferTemplate(service);
+
+    if (!template) {
+      setStandardOfferError("Fant ikke standardmalen for valgt tjeneste.");
+      return;
+    }
+
+    if (!scheduleDate || !scheduleStartTime) {
+      setStandardOfferError("Velg dato og starttid før du sender til kunden.");
+      return;
+    }
+
+    setSendingStandardOffer(true);
+    setStandardOfferError("");
+    setStandardOfferMessage("");
+    setFieldScheduleError("");
+    setFieldScheduleMessage("");
+
+    try {
+      let publishedOffer: any = null;
+      let publishedNow = false;
+
+      const allOffersRes = await fetch(
+        apiUrl(`/offers.php?inquiry_id=${activeInquiryId}&all=1`)
+      );
+      const allOffersData = await allOffersRes.json();
+
+      const offerRows: any[] =
+        allOffersRes.ok && allOffersData?.success && Array.isArray(allOffersData.offers)
+          ? allOffersData.offers
+          : [];
+
+      const existingInitialOffer =
+        [...offerRows]
+          .filter(
+            (item) =>
+              String(item?.offer_context || "initial").toLowerCase() !== "followup" &&
+              String(item?.service || "").toLowerCase() === service
+          )
+          .sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0))[0] || null;
+
+      if (
+        existingInitialOffer &&
+        ["publisert", "akseptert"].includes(
+          String(existingInitialOffer.status || "").toLowerCase()
+        )
+      ) {
+        publishedOffer = existingInitialOffer;
+      } else if (
+        existingInitialOffer &&
+        String(existingInitialOffer.status || "").toLowerCase() === "utkast"
+      ) {
+        const publishRes = await fetch(apiUrl("/offers.php"), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: existingInitialOffer.id,
+            ...buildStandardOfferPayload(
+              activeInquiryId,
+              service,
+              previewEmployee?.name || inquiry.assigned_to || "Prosjektansvarlig",
+              false
+            ),
+            publish: true,
+          }),
+        });
+
+        const publishData = await publishRes.json();
+
+        if (!publishRes.ok || !publishData.success || !publishData.offer) {
+          throw new Error(
+            publishData.message || "Kunne ikke publisere standardtilbudet."
+          );
+        }
+
+        publishedOffer = publishData.offer;
+        publishedNow = true;
+      } else {
+        const createRes = await fetch(apiUrl("/offers.php"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            buildStandardOfferPayload(
+              activeInquiryId,
+              service,
+              previewEmployee?.name || inquiry.assigned_to || "Prosjektansvarlig",
+              true
+            )
+          ),
+        });
+
+        const createData = await createRes.json();
+
+        if (!createRes.ok || !createData.success || !createData.offer) {
+          throw new Error(
+            createData.message || "Kunne ikke opprette standardtilbudet."
+          );
+        }
+
+        publishedOffer = createData.offer;
+        publishedNow = true;
+      }
+
+      const inquiryRes = await fetch(apiUrl("/inquiries.php"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: activeInquiryId,
+          recommended_service: service,
+          stage: "utfonring_felt",
+          ...(String(inquiry.status || "").toLowerCase() !== "tilbud_akseptert"
+            ? { status: "tilbud_sendt" }
+            : {}),
+        }),
+      });
+
+      const inquiryData = await inquiryRes.json();
+
+      if (!inquiryRes.ok || !inquiryData.success) {
+        throw new Error(
+          inquiryData.message ||
+            "Tilbudet ble opprettet, men saken kunne ikke oppdateres."
+        );
+      }
+
+      const schedulePayload = {
+        inquiry_id: activeInquiryId,
+        service,
+        schedule_date: scheduleDate,
+        start_time: scheduleStartTime,
+        end_time: scheduleEndTime || null,
+        comment: scheduleComment,
+        proposed_by_employee_id: previewEmployee?.id || null,
+        proposed_by_name:
+          previewEmployee?.name ||
+          inquiry.assigned_to ||
+          null,
+      };
+
+      const scheduleRes = await fetch(apiUrl("/field_schedule.php"), {
+        method: fieldSchedule?.id ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          fieldSchedule?.id
+            ? {
+                id: fieldSchedule.id,
+                ...schedulePayload,
+                action: "project_manager_propose_time",
+              }
+            : {
+                ...schedulePayload,
+                mode: "initial_proposal",
+              }
+        ),
+      });
+
+      const scheduleData = await scheduleRes.json();
+
+      if (!scheduleRes.ok || !scheduleData.success) {
+        throw new Error(
+          scheduleData.message ||
+            "Standardtilbudet er sendt, men tidspunktet kunne ikke sendes."
+        );
+      }
+
+      if (scheduleData.schedule) {
+        setFieldSchedule(scheduleData.schedule);
+        setScheduleDate(scheduleData.schedule.schedule_date || scheduleDate);
+        setScheduleStartTime(
+          scheduleData.schedule.start_time
+            ? String(scheduleData.schedule.start_time).substring(0, 5)
+            : scheduleStartTime
+        );
+      }
+
+      let notificationWarning = "";
+
+      if (publishedNow && publishedOffer?.id) {
+        try {
+          const notifyRes = await fetch(apiUrl("/send_offer_notifications.php"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              inquiry_id: activeInquiryId,
+              offer_id: Number(publishedOffer.id),
+            }),
+          });
+
+          const notifyData = await notifyRes.json();
+
+          if (!notifyRes.ok || !notifyData.success) {
+            notificationWarning =
+              " Tilbud og tidspunkt ligger i kundeportalen, men én eller flere tilbudsvarslinger feilet.";
+          }
+        } catch {
+          notificationWarning =
+            " Tilbud og tidspunkt ligger i kundeportalen, men tilbudsvarslingen kunne ikke bekreftes.";
+        }
+      }
+
+      setStandardOfferMessage(
+        `Standardpris og foreslått tidspunkt er sendt til kunden.${notificationWarning}`
+      );
+
+      setOfferOverview((current) => ({
+        ...current,
+        [activeInquiryId.toString()]: publishedOffer,
+      }));
+
+      await fetchInquiries();
+      await fetchFieldSchedule(activeInquiryId);
+    } catch (err) {
+      setStandardOfferError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke sende standardpris og tidspunkt."
+      );
+    } finally {
+      setSendingStandardOffer(false);
+    }
+  };
+
+
+  const respondToFieldSchedule = async (
+    action: "project_manager_accept_customer_time"
+  ) => {
+    if (!fieldSchedule?.id || !activeInquiryId) return;
 
     setSavingFieldSchedule(true);
     setFieldScheduleError("");
@@ -3660,13 +4240,12 @@ export default function ProjectManagerDashboard({
         id: fieldSchedule.id,
         inquiry_id: activeInquiryId,
         action,
+        confirmed_by_employee_id: previewEmployee?.id || null,
+        confirmed_by_name:
+          previewEmployee?.name ||
+          activeInquiry?.assigned_to ||
+          null,
       };
-
-      if (action === "project_manager_lock") {
-        payload.schedule_date = scheduleDate;
-        payload.start_time = scheduleStartTime;
-        payload.locked_by_employee_id = previewEmployee?.id || null;
-      }
 
       const res = await fetch(apiUrl("/field_schedule.php"), {
         method: "PUT",
@@ -4001,6 +4580,17 @@ export default function ProjectManagerDashboard({
     fetchFieldSchedule(activeInquiryId);
     fetchFollowUpOffer(activeInquiryId);
 
+    if (
+      activeInquiry &&
+      !isPureDigitalWorkflow(activeInquiry) &&
+      fieldServiceForInquiry(activeInquiry)
+    ) {
+      fetchSuggestedBookingSlots(activeInquiry);
+    } else {
+      setSuggestedBookingSlots([]);
+      setSuggestedBookingSlotsError("");
+    }
+
     if (activeInquiry?.stage === "digital_befaring") {
       setChecklistRows([]);
       setReport(null);
@@ -4021,7 +4611,13 @@ export default function ProjectManagerDashboard({
 
     fetchReport(activeInquiryId);
     fetchCompletionReportState(activeInquiryId);
-  }, [activeInquiryId, view, activeInquiry?.stage]);
+  }, [
+    activeInquiryId,
+    view,
+    activeInquiry?.stage,
+    activeInquiry?.recommended_service,
+    activeInquiry?.inquiry_type,
+  ]);
 
   useEffect(() => {
     if (!activeInquiry || activeInquiry.stage !== "digital_befaring") {
@@ -4088,30 +4684,47 @@ export default function ProjectManagerDashboard({
   ) => {
     if (!activeInquiryId) return;
 
-    // Ved videre arbeid åpnes tilbudsgeneratoren.
-    // Ingenting publiseres automatisk til kunden.
-    if (nextService !== "avsluttet") {
-      setOfferGeneratorService(nextService);
-      setOfferGeneratorMode("initial");
-      setOfferGeneratorFollowUpType(null);
-      setFollowUpReason("");
-      setDigitalInspectionError("");
-      setDigitalInspectionMessage("");
-      setOfferGeneratorOpen(true);
-      return;
-    }
-
-    const confirmed = window.confirm(
-      "Avslutte saken etter digital befaring?"
-    );
-
-    if (!confirmed) return;
-
     setSavingDigitalInspection(true);
     setDigitalInspectionError("");
     setDigitalInspectionMessage("");
 
     try {
+      if (nextService !== "avsluttet") {
+        const res = await fetch(apiUrl("/inquiries.php"), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: activeInquiryId,
+            status: "tildelt_prosjektansvarlig",
+            stage: "utfonring_felt",
+            recommended_service: nextService,
+            digital_inspection_comment: digitalInspectionComment,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || !data.success) {
+          throw new Error(
+            data.message || "Kunne ikke klargjøre standardtilbudet."
+          );
+        }
+
+        setDigitalInspectionMessage(
+          `${serviceLabel(nextService)} er valgt som videre tjeneste. Standard pris og tidspunkt kan nå sendes til kunden.`
+        );
+
+        await fetchInquiries();
+        setFieldWorkspaceTab("oversikt");
+        return;
+      }
+
+      const confirmed = window.confirm(
+        "Avslutte saken etter digital befaring?"
+      );
+
+      if (!confirmed) return;
+
       const res = await fetch(apiUrl("/inquiries.php"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -4754,6 +5367,15 @@ export default function ProjectManagerDashboard({
     ? effectiveWorkflowStatus(overviewInquiry)
     : "";
 
+  const overviewOrderNotes = overviewInquiry
+    ? parseInquiryOrderNotes(overviewInquiry.notes)
+    : null;
+
+  const overviewStandardService = standardServiceForInquiry(overviewInquiry);
+  const overviewStandardTemplate = getStandardServiceOfferTemplate(
+    overviewStandardService
+  );
+
   return (
     <div className="min-h-screen bg-[#07101d] text-white font-sans">
       <aside
@@ -4915,7 +5537,7 @@ export default function ProjectManagerDashboard({
                 : view === "team"
                 ? "Team"
                 : activeInquiry
-                ? `${serviceLabel(activeInquiry.recommended_service)} · #${activeInquiry.id}`
+                ? `${serviceLabel(standardServiceForInquiry(activeInquiry))} · #${activeInquiry.id}`
                 : "Oppdrag"}
             </h1>
             <p className="text-[11px] text-slate-500 mt-0.5">
@@ -5007,12 +5629,23 @@ export default function ProjectManagerDashboard({
                     .filter((inquiry) => {
                       const status = effectiveWorkflowStatus(inquiry);
                       const progress = inquiryProgress(inquiry);
+                      if (status === "tilbud_utlopt") return false;
 
                       return (
                         status === "venter_pa_kundeopplysninger" ||
                         (status === "tildelt_prosjektansvarlig" &&
-                          isPureDigitalWorkflow(inquiry)) ||
-                        progress.key === "planning" ||
+                          !confirmedBooking(inquiry) &&
+                          (
+                            isPureDigitalWorkflow(inquiry) ||
+                            String(inquiry.stage || "").toLowerCase() ===
+                              "utfonring_felt"
+                          )) ||
+                        (status === "tilbud_sendt" &&
+                          !confirmedBooking(inquiry) &&
+                          !fieldScheduleOverview[
+                            normalizeInquiryId(inquiry.id).toString()
+                          ]) ||
+                        (progress.key === "planning" && !confirmedBooking(inquiry)) ||
                         progress.key === "followup_customer" ||
                         progress.key === "report_progress"
                       );
@@ -5044,6 +5677,10 @@ export default function ProjectManagerDashboard({
                   const actionLabel = (inquiry: Inquiry) => {
                     const status = effectiveWorkflowStatus(inquiry);
                     const progress = inquiryProgress(inquiry);
+                    if (confirmedBooking(inquiry) &&
+                        ["tilbud_akseptert", "planlagt", "pagaende"].includes(status)) {
+                      return "Åpne planlagt oppdrag";
+                    }
 
                     if (status === "venter_pa_kundeopplysninger") {
                       return "Kunde mangler opplysninger";
@@ -5054,6 +5691,25 @@ export default function ProjectManagerDashboard({
                       isPureDigitalWorkflow(inquiry)
                     ) {
                       return "Foreslå tidspunkt for digital befaring";
+                    }
+
+                    if (
+                      status === "tildelt_prosjektansvarlig" &&
+                      String(inquiry.stage || "").toLowerCase() ===
+                        "utfonring_felt"
+                    ) {
+                      return "Send pris og tidspunkt";
+                    }
+
+                    if (
+                      status === "tilbud_sendt" &&
+                      !fieldScheduleOverview[
+                        normalizeInquiryId(inquiry.id).toString()
+                      ]
+                    ) {
+                      return `Foreslå tidspunkt for ${serviceLabel(
+                        fieldServiceForInquiry(inquiry)
+                      ).toLowerCase()}`;
                     }
 
                     if (progress.key === "followup_customer") {
@@ -5134,9 +5790,8 @@ export default function ProjectManagerDashboard({
                           type="button"
                           onClick={() => {
                             setOverviewStatusFilter(null);
-                            document
-                              .getElementById("pm-krever-handling")
-                              ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                            setOverviewTopTab("actions");
+                            document.getElementById("pm-top-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
                           }}
                           className="group flex min-h-[108px] items-center gap-4 rounded-2xl border border-slate-800 bg-[#0b1725] p-5 text-left transition hover:border-red-500/30"
                         >
@@ -5215,26 +5870,95 @@ export default function ProjectManagerDashboard({
                         </div>
                       ) : (
                         <>
-                          <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                            <section
-                              id="pm-krever-handling"
-                              className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0b1725]"
-                            >
-                              <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
-                                <div>
-                                  <h3 className="text-sm font-black text-white">
-                                    Krever handling
-                                  </h3>
-                                  <p className="mt-1 text-[10px] text-slate-500">
-                                    Oppgaver prosjektleder bør ta tak i nå.
-                                  </p>
-                                </div>
-                                <span className="rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-1 text-[9px] font-black text-red-300">
-                                  {actionableInquiries.length}
-                                </span>
+                          <section id="pm-top-tabs" className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0b1725]">
+                            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3 sm:px-5">
+                              <div className="flex flex-wrap gap-2" role="tablist" aria-label="Oppdrag og oppfølging">
+                                <button type="button" role="tab" aria-selected={overviewTopTab === "upcoming"}
+                                  onClick={() => setOverviewTopTab("upcoming")}
+                                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${overviewTopTab === "upcoming" ? "border border-amber-500/40 bg-amber-500/10 text-[#F5B800]" : "border border-transparent text-slate-400 hover:bg-slate-900 hover:text-white"}`}>
+                                  <CalendarDays className="h-4 w-4" /> I dag / neste oppdrag
+                                  <span className="rounded-full border border-slate-700 px-2 py-0.5 text-[10px]">{upcomingItems.length}</span>
+                                </button>
+                                <button type="button" role="tab" aria-selected={overviewTopTab === "actions"}
+                                  onClick={() => setOverviewTopTab("actions")}
+                                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${overviewTopTab === "actions" ? "border border-amber-500/40 bg-amber-500/10 text-[#F5B800]" : "border border-transparent text-slate-400 hover:bg-slate-900 hover:text-white"}`}>
+                                  <AlertTriangle className="h-4 w-4" /> Krever handling
+                                  <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-300">{actionableInquiries.length}</span>
+                                </button>
                               </div>
+                              {overviewTopTab === "upcoming" && (
+                                <button type="button" onClick={() => setOverviewDisplay("kalender")}
+                                  className="inline-flex items-center gap-1.5 text-[10px] font-bold text-blue-400 hover:text-blue-300">
+                                  <CalendarDays className="h-3.5 w-3.5" /> Se kalender
+                                </button>
+                              )}
+                            </div>
+                            <div role="tabpanel" hidden={overviewTopTab !== "upcoming"}>
+                              <p className="px-5 pt-4 text-[11px] text-slate-500">Planlagte avtaler og kommende oppdrag.</p>
+<div className="divide-y divide-slate-800/80">
+                                {upcomingItems.map(({ inquiry, booking }) => {
+                                  const initials = customerName(inquiry)
+                                    .split(/\s+/)
+                                    .filter(Boolean)
+                                    .slice(0, 2)
+                                    .map((part) => part.charAt(0).toUpperCase())
+                                    .join("");
 
-                              <div className="divide-y divide-slate-800/80">
+                                  return (
+                                    <button
+                                      key={inquiry.id}
+                                      type="button"
+                                      onClick={() => openInquiry(inquiry)}
+                                      className="group flex w-full items-center gap-3 px-5 py-4 text-left transition hover:bg-slate-900/30"
+                                    >
+                                      <p className="w-12 shrink-0 text-sm font-black text-white">
+                                        {booking.toLocaleTimeString("nb-NO", {
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                        })}
+                                      </p>
+
+                                      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-blue-500/20 bg-blue-500/10 text-[10px] font-black text-blue-300">
+                                        {initials || "—"}
+                                      </div>
+
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex min-w-0 items-center gap-2">
+                                          <p className="truncate text-xs font-black text-white">
+                                            {customerName(inquiry)}
+                                          </p>
+                                          <span className="hidden rounded-md border border-slate-700 bg-slate-950/60 px-2 py-0.5 text-[9px] font-bold text-slate-400 sm:inline-flex">
+                                            {inquiry.stage === "digital_befaring"
+                                              ? "Digital befaring"
+                                              : serviceLabel(
+                                                  inquiry.recommended_service
+                                                )}
+                                          </span>
+                                        </div>
+                                        <p className="mt-1 truncate text-[10px] text-slate-500">
+                                          {fullAddress(inquiry) ||
+                                            "Adresse ikke oppgitt"}
+                                        </p>
+                                      </div>
+
+                                      <ChevronRight className="h-4 w-4 shrink-0 text-slate-700 transition group-hover:text-slate-400" />
+                                    </button>
+                                  );
+                                })}
+
+                                {upcomingItems.length === 0 && (
+                                  <div className="px-5 py-10 text-center">
+                                    <CalendarDays className="mx-auto h-7 w-7 text-slate-700" />
+                                    <p className="mt-3 text-xs text-slate-500">
+                                      Ingen kommende oppdrag.
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div role="tabpanel" hidden={overviewTopTab !== "actions"}>
+                              <p className="px-5 pt-4 text-[11px] text-slate-500">Oppgaver prosjektleder bør ta tak i nå.</p>
+<div className="divide-y divide-slate-800/80">
                                 {actionableInquiries.map((inquiry) => {
                                   const tone = actionTone(inquiry);
                                   const ActionIcon = tone.icon;
@@ -5325,112 +6049,33 @@ export default function ProjectManagerDashboard({
                                   </div>
                                 )}
                               </div>
-                            </section>
+                            </div>
+                          </section>
 
-                            <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0b1725]">
-                              <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
-                                <div>
-                                  <h3 className="text-sm font-black text-white">
-                                    {todayItems.length > 0
-                                      ? "I dag / neste oppdrag"
-                                      : "Neste oppdrag"}
-                                  </h3>
-                                  <p className="mt-1 text-[10px] text-slate-500">
-                                    Planlagte avtaler og oppdrag.
-                                  </p>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => setOverviewDisplay("kalender")}
-                                  className="flex items-center gap-1.5 text-[10px] font-bold text-blue-400 hover:text-blue-300"
-                                >
-                                  <CalendarDays className="h-3.5 w-3.5" />
-                                  Se kalender
+                          <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0b1725] shadow-[0_12px_38px_rgba(0,0,0,0.12)]">
+                            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3 sm:px-5">
+                              <div className="flex gap-2" role="tablist" aria-label="Saksoversikt">
+                                <button type="button" role="tab" aria-selected={overviewBottomTab === "active"}
+                                  onClick={() => setOverviewBottomTab("active")}
+                                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${overviewBottomTab === "active" ? "border border-amber-500/40 bg-amber-500/10 text-[#F5B800]" : "border border-transparent text-slate-400 hover:bg-slate-900 hover:text-white"}`}>
+                                  <Briefcase className="h-4 w-4" /> Aktive saker
+                                  <span className="rounded-full bg-amber-400 px-2 py-0.5 text-[10px] text-slate-950">{visibleActive.length}</span>
+                                </button>
+                                <button type="button" role="tab" aria-selected={overviewBottomTab === "activity"}
+                                  onClick={() => setOverviewBottomTab("activity")}
+                                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${overviewBottomTab === "activity" ? "border border-amber-500/40 bg-amber-500/10 text-[#F5B800]" : "border border-transparent text-slate-400 hover:bg-slate-900 hover:text-white"}`}>
+                                  <Clock3 className="h-4 w-4" /> Siste aktivitet
                                 </button>
                               </div>
+                              <button type="button" onClick={() => setOverviewStatusFilter(null)}
+                                className="text-[11px] font-bold text-blue-400 hover:text-blue-300">Se alle saker →</button>
+                            </div>
+                            <div className="px-5 py-3 text-[11px] text-slate-500">
+                              {overviewBottomTab === "active" ? "Status og neste handling på aktive oppdrag." : "Nyeste registrerte hendelser for planlagte oppdrag."}
+                            </div>
 
-                              <div className="divide-y divide-slate-800/80">
-                                {upcomingItems.map(({ inquiry, booking }) => {
-                                  const initials = customerName(inquiry)
-                                    .split(/\s+/)
-                                    .filter(Boolean)
-                                    .slice(0, 2)
-                                    .map((part) => part.charAt(0).toUpperCase())
-                                    .join("");
-
-                                  return (
-                                    <button
-                                      key={inquiry.id}
-                                      type="button"
-                                      onClick={() => openInquiry(inquiry)}
-                                      className="group flex w-full items-center gap-3 px-5 py-4 text-left transition hover:bg-slate-900/30"
-                                    >
-                                      <p className="w-12 shrink-0 text-sm font-black text-white">
-                                        {booking.toLocaleTimeString("nb-NO", {
-                                          hour: "2-digit",
-                                          minute: "2-digit",
-                                        })}
-                                      </p>
-
-                                      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-blue-500/20 bg-blue-500/10 text-[10px] font-black text-blue-300">
-                                        {initials || "—"}
-                                      </div>
-
-                                      <div className="min-w-0 flex-1">
-                                        <div className="flex min-w-0 items-center gap-2">
-                                          <p className="truncate text-xs font-black text-white">
-                                            {customerName(inquiry)}
-                                          </p>
-                                          <span className="hidden rounded-md border border-slate-700 bg-slate-950/60 px-2 py-0.5 text-[9px] font-bold text-slate-400 sm:inline-flex">
-                                            {inquiry.stage === "digital_befaring"
-                                              ? "Digital befaring"
-                                              : serviceLabel(
-                                                  inquiry.recommended_service
-                                                )}
-                                          </span>
-                                        </div>
-                                        <p className="mt-1 truncate text-[10px] text-slate-500">
-                                          {fullAddress(inquiry) ||
-                                            "Adresse ikke oppgitt"}
-                                        </p>
-                                      </div>
-
-                                      <ChevronRight className="h-4 w-4 shrink-0 text-slate-700 transition group-hover:text-slate-400" />
-                                    </button>
-                                  );
-                                })}
-
-                                {upcomingItems.length === 0 && (
-                                  <div className="px-5 py-10 text-center">
-                                    <CalendarDays className="mx-auto h-7 w-7 text-slate-700" />
-                                    <p className="mt-3 text-xs text-slate-500">
-                                      Ingen kommende oppdrag.
-                                    </p>
-                                  </div>
-                                )}
-                              </div>
-                            </section>
-                          </div>
-
-                          <div className="grid gap-4 xl:grid-cols-[1.45fr_0.55fr]">
-                            <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0b1725]">
-                              <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
-                                <div>
-                                  <h3 className="text-sm font-black text-white">
-                                    Aktive saker
-                                  </h3>
-                                  <p className="mt-1 text-[10px] text-slate-500">
-                                    Status og neste handling på aktive oppdrag.
-                                  </p>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => setOverviewStatusFilter(null)}
-                                  className="text-[10px] font-bold text-blue-400 hover:text-blue-300"
-                                >
-                                  Se alle
-                                </button>
-                              </div>
+                            {overviewBottomTab === "active" && (
+                            <div>
 
                               <div className="hidden grid-cols-[minmax(180px,1.15fr)_115px_155px_minmax(180px,1fr)_90px] border-b border-slate-800 bg-slate-950/20 px-5 py-3 text-[9px] font-black uppercase tracking-wider text-slate-600 lg:grid">
                                 <span>Kunde</span>
@@ -5549,22 +6194,11 @@ export default function ProjectManagerDashboard({
                                   Vis alle →
                                 </button>
                               </div>
-                            </section>
+                            </div>
+                            )}
 
-                            <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0b1725]">
-                              <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
-                                <div>
-                                  <h3 className="text-sm font-black text-white">
-                                    Siste aktivitet
-                                  </h3>
-                                  <p className="mt-1 text-[10px] text-slate-500">
-                                    Nyeste registrerte hendelser.
-                                  </p>
-                                </div>
-                                <span className="text-[9px] font-bold text-blue-400">
-                                  Automatisk
-                                </span>
-                              </div>
+                            {overviewBottomTab === "activity" && (
+                            <div>
 
                               <div className="divide-y divide-slate-800/80 px-3">
                                 {scheduledInquiries
@@ -5622,8 +6256,9 @@ export default function ProjectManagerDashboard({
                                   </div>
                                 )}
                               </div>
-                            </section>
-                          </div>
+                            </div>
+                            )}
+                          </section>
                         </>
                       )}
                     </>
@@ -5649,7 +6284,7 @@ export default function ProjectManagerDashboard({
                     <div>
                       <p className="text-[10px] uppercase tracking-widest text-amber-400 font-extrabold">Oppdrag #{detailInquiry.id}</p>
                       <h3 className="text-xl font-extrabold text-white mt-1">{customerName(detailInquiry)}</h3>
-                      <p className="text-xs text-slate-400 mt-1">{serviceLabel(detailInquiry.recommended_service)}</p>
+                      <p className="text-xs text-slate-400 mt-1">{serviceLabel(fieldServiceForInquiry(detailInquiry))}</p>
                     </div>
                     <button
                       type="button"
@@ -5817,7 +6452,7 @@ export default function ProjectManagerDashboard({
                         <p className="mt-2 text-xs text-slate-400">
                           {customerName(overviewInquiry)}
                           <span className="mx-2 text-slate-700">•</span>
-                          {serviceLabel(overviewInquiry.recommended_service)}
+                          {serviceLabel(fieldServiceForInquiry(overviewInquiry))}
                         </p>
 
                         <p className="mt-3 text-[11px] text-slate-500">
@@ -5847,25 +6482,21 @@ export default function ProjectManagerDashboard({
 
                       <div className="mt-4 space-y-4">
                         <div className="flex items-start gap-3">
-                          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
-                          <div>
+                          <Activity className="mt-0.5 h-4 w-4 shrink-0 text-cyan-400" />
+                          <div className="min-w-0">
                             <p className="text-xs font-black text-white">
-                              {reportStatusLabel(
-                                completionReport?.status || report?.status
-                              )}
+                              {inquiryProgress(overviewInquiry).label}
                             </p>
                             <p className="mt-0.5 text-[10px] text-slate-500">
-                              {completionReport
-                                ? "Rapport 2 – etter utbedring"
-                                : "Aktiv rapport"}
+                              {inquiryProgress(overviewInquiry).subtitle}
                             </p>
                           </div>
                         </div>
 
                         <div className="flex items-start gap-3">
                           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
-                          <div>
-                            <p className="text-xs font-black text-white">
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-black text-white">
                               {teamOverview[
                                 overviewInquiry.id.toString()
                               ]?.project_manager?.name ||
@@ -5882,8 +6513,8 @@ export default function ProjectManagerDashboard({
                         {!isDigitalInspection && (
                           <div className="flex items-start gap-3">
                             <Wrench className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
-                            <div>
-                              <p className="text-xs font-black text-white">
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-black text-white">
                                 {teamOverview[
                                   overviewInquiry.id.toString()
                                 ]?.technician?.name || "Ikke tildelt"}
@@ -5897,99 +6528,273 @@ export default function ProjectManagerDashboard({
                       </div>
                     </div>
                   </div>
+
+                  {!isDigitalInspection && (
+                    <div className="border-t border-slate-800 bg-slate-950/30 px-4 py-3 md:px-6">
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        <button
+                          type="button"
+                          onClick={() => setFieldWorkspaceTab("rapport")}
+                          className="group flex min-w-0 items-center gap-3 rounded-xl border border-blue-500/15 bg-blue-500/[0.045] px-3 py-2.5 text-left transition hover:border-blue-500/35 hover:bg-blue-500/[0.08]"
+                          title="Åpne rapport"
+                        >
+                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-blue-500/20 bg-blue-500/10 text-blue-300">
+                            <FileText className="h-3.5 w-3.5" />
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block text-[8px] font-black uppercase tracking-wider text-blue-300/80">
+                              Rapport
+                            </span>
+                            <span className="mt-0.5 block truncate text-[11px] font-black text-white">
+                              {completionReport
+                                ? "Rapport 2"
+                                : report
+                                ? "Rapport 1"
+                                : "Ikke startet"}
+                            </span>
+                            <span className="block truncate text-[8px] text-slate-600">
+                              {reportStatusLabel(
+                                completionReport?.status || report?.status
+                              )}
+                            </span>
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setFieldWorkspaceTab("kontroll")}
+                          className="group flex min-w-0 items-center gap-3 rounded-xl border border-amber-500/15 bg-amber-500/[0.045] px-3 py-2.5 text-left transition hover:border-amber-500/35 hover:bg-amber-500/[0.08]"
+                          title="Åpne teknisk kontroll"
+                        >
+                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-300">
+                            <Activity className="h-3.5 w-3.5" />
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block text-[8px] font-black uppercase tracking-wider text-amber-300/80">
+                              Feltstatus
+                            </span>
+                            <span className="mt-0.5 block truncate text-[11px] font-black text-white">
+                              {loadingChecklistSummary
+                                ? "Henter…"
+                                : checklistTotal > 0
+                                ? `${checklistDone}/${checklistTotal}`
+                                : "Ikke startet"}
+                            </span>
+                            <span className="block truncate text-[8px] text-slate-600">
+                              Kontrollpunkter
+                            </span>
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setFieldWorkspaceTab("kontroll")}
+                          className="group flex min-w-0 items-center gap-3 rounded-xl border border-red-500/15 bg-red-500/[0.04] px-3 py-2.5 text-left transition hover:border-red-500/35 hover:bg-red-500/[0.08]"
+                          title="Se registrerte avvik"
+                        >
+                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-red-500/20 bg-red-500/10 text-red-300">
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block text-[8px] font-black uppercase tracking-wider text-red-300/80">
+                              Avvik
+                            </span>
+                            <span className="mt-0.5 block truncate text-[11px] font-black text-white">
+                              {loadingChecklistSummary
+                                ? "…"
+                                : checklistDeviations}
+                            </span>
+                            <span className="block truncate text-[8px] text-slate-600">
+                              TG1–TG3
+                            </span>
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setFieldWorkspaceTab("dokumentasjon")}
+                          className="group flex min-w-0 items-center gap-3 rounded-xl border border-violet-500/15 bg-violet-500/[0.045] px-3 py-2.5 text-left transition hover:border-violet-500/35 hover:bg-violet-500/[0.08]"
+                          title="Åpne dokumentasjon"
+                        >
+                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-violet-500/20 bg-violet-500/10 text-violet-300">
+                            <Camera className="h-3.5 w-3.5" />
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block text-[8px] font-black uppercase tracking-wider text-violet-300/80">
+                              Dokumentasjon
+                            </span>
+                            <span className="mt-0.5 block truncate text-[11px] font-black text-white">
+                              {checklistRows.filter(
+                                (item) => Boolean(item.photo_url)
+                              ).length}
+                            </span>
+                            <span className="block truncate text-[8px] text-slate-600">
+                              Bilder i kontroll
+                            </span>
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </section>
 
-                <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-                  {[
-                    {
-                      label: "Kunde",
-                      value: customerName(overviewInquiry),
-                      sub: overviewInquiry.phone || overviewInquiry.email || "Kundeprofil",
-                      tone: "emerald",
-                      icon: <Users className="h-5 w-5" />,
-                    },
-                    {
-                      label: "Aktiv rapport",
-                      value: completionReport ? "2" : report ? "1" : "–",
-                      sub: completionReport
-                        ? "Rapport 2 – etter utbedring"
-                        : report
-                        ? "Rapport 1"
-                        : "Ikke startet",
-                      tone: "blue",
-                      icon: <FileText className="h-5 w-5" />,
-                    },
-                    {
-                      label: "Feltstatus",
-                      value: loadingChecklistSummary
-                        ? "..."
-                        : checklistDone,
-                      sub: "Kontrollpunkter utført",
-                      tone: "amber",
-                      icon: <Activity className="h-5 w-5" />,
-                    },
-                    {
-                      label: "Avvik",
-                      value: loadingChecklistSummary
-                        ? "..."
-                        : checklistDeviations,
-                      sub: "TG1–TG3 registrert",
-                      tone: "red",
-                      icon: <AlertTriangle className="h-5 w-5" />,
-                    },
-                    {
-                      label: "Dokumentasjon",
-                      value: checklistRows.filter(
-                        (item) => Boolean(item.photo_url)
-                      ).length,
-                      sub: "Bilder i kontrollpunkter",
-                      tone: "purple",
-                      icon: <Camera className="h-5 w-5" />,
-                    },
-                    {
-                      label: "Neste steg",
-                      value: projectProgressStep(overviewInquiry) >= 5
-                        ? "Rapport"
-                        : serviceLabel(overviewInquiry.recommended_service),
-                      sub: projectNextAction(
-                        overviewInquiry,
-                        parseInquiryBooking(overviewInquiry)
-                      ),
-                      tone: "emerald",
-                      icon: <CalendarDays className="h-5 w-5" />,
-                    },
-                  ].map((card) => {
-                    const tones: Record<string, string> = {
-                      emerald:
-                        "border-emerald-500/25 bg-emerald-500/[0.07] text-emerald-300",
-                      blue:
-                        "border-blue-500/25 bg-blue-500/[0.07] text-blue-300",
-                      amber:
-                        "border-amber-500/25 bg-amber-500/[0.07] text-amber-300",
-                      red:
-                        "border-red-500/25 bg-red-500/[0.07] text-red-300",
-                      purple:
-                        "border-purple-500/25 bg-purple-500/[0.07] text-purple-300",
-                    };
 
-                    return (
-                      <div
-                        key={card.label}
-                        className={`rounded-2xl border p-4 ${tones[card.tone]}`}
-                      >
-                        <div className="flex items-center gap-2">
-                          {card.icon}
-                          <p className="text-[10px] font-black">{card.label}</p>
-                        </div>
-                        <p className="mt-3 truncate text-lg font-black text-white">
-                          {card.value}
+                <section className="overflow-hidden rounded-[26px] border border-cyan-500/25 bg-[#0a1624]">
+                  <div className="flex flex-col gap-3 border-b border-slate-800/80 px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-6">
+                    <div>
+                      <p className="text-[9px] font-black uppercase tracking-[0.16em] text-cyan-400">
+                        Kundens bestilling
+                      </p>
+                      <h3 className="mt-1 text-base font-black text-white">
+                        Opprinnelige opplysninger fra kunden
+                      </h3>
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        Dette er informasjonen som ble sendt inn da saken ble opprettet.
+                      </p>
+                    </div>
+
+                    <span className="self-start rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1.5 text-[10px] font-black text-cyan-300">
+                      {inquiryTypeLabel(overviewInquiry.inquiry_type)}
+                    </span>
+                  </div>
+
+                  <div className="p-5 md:p-6">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                          Kundetype
                         </p>
-                        <p className="mt-1 line-clamp-2 text-[9px] leading-4 text-slate-500">
-                          {card.sub}
+                        <p className="mt-1 text-xs font-black text-slate-200">
+                          {overviewInquiry.customer_type || "Ikke oppgitt"}
                         </p>
                       </div>
-                    );
-                  })}
+
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                          Bygning
+                        </p>
+                        <p className="mt-1 text-xs font-black text-slate-200">
+                          {humanizeOrderValue(
+                            overviewOrderNotes?.building ||
+                              overviewInquiry.building_type
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                          Taktype
+                        </p>
+                        <p className="mt-1 text-xs font-black text-slate-200">
+                          {overviewOrderNotes?.roofType ||
+                            overviewInquiry.roof_type ||
+                            overviewInquiry.roofType ||
+                            "Ikke oppgitt"}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                          Skadested
+                        </p>
+                        <p className="mt-1 text-xs font-black text-slate-200">
+                          {humanizeOrderValue(
+                            overviewOrderNotes?.damageLocation
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                          Bilder / dokumentasjon
+                        </p>
+                        <p className="mt-1 text-xs font-black text-slate-200">
+                          {overviewOrderNotes?.documentation || "Ikke oppgitt"}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                          Pris oppgitt ved bestilling
+                        </p>
+                        <p className="mt-1 text-xs font-black text-amber-300">
+                          {overviewInquiry.estimated_price || "Ikke oppgitt"}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                          Telefon
+                        </p>
+                        <p className="mt-1 text-xs font-black text-slate-200">
+                          {overviewInquiry.phone || "Ikke oppgitt"}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                          Registrert
+                        </p>
+                        <p className="mt-1 text-xs font-black text-slate-200">
+                          {formatOrderDateTime(overviewInquiry.created_at)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+                      <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.035] p-5">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-amber-400">
+                          Kundens beskrivelse
+                        </p>
+
+                        <p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-slate-200">
+                          {overviewOrderNotes?.description ||
+                            overviewInquiry.notes ||
+                            "Ingen beskrivelse registrert."}
+                        </p>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="rounded-2xl border border-slate-800 bg-slate-950/45 p-4">
+                          <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                            Kontakt
+                          </p>
+                          <p className="mt-2 text-xs font-black text-white">
+                            {customerName(overviewInquiry)}
+                          </p>
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            {overviewInquiry.phone || "Telefon ikke oppgitt"}
+                          </p>
+                          <p className="mt-1 break-all text-[11px] text-slate-400">
+                            {overviewInquiry.email || "E-post ikke oppgitt"}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-slate-800 bg-slate-950/45 p-4">
+                          <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                            Adresse oppgitt i saken
+                          </p>
+                          <p className="mt-2 text-xs font-black text-white">
+                            {streetAddress(overviewInquiry) || "Ikke oppgitt"}
+                          </p>
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            {postalPlace(overviewInquiry)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {overviewOrderNotes?.changeLog && (
+                      <div className="mt-4 rounded-2xl border border-violet-500/25 bg-violet-500/[0.04] p-4">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-violet-300">
+                          Endringer registrert etter bestilling
+                        </p>
+                        <p className="mt-2 whitespace-pre-wrap text-[11px] leading-5 text-slate-300">
+                          {overviewOrderNotes.changeLog}
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </section>
 
                 <section className="rounded-2xl border border-slate-800 bg-[#0a1624] p-3">
@@ -6045,6 +6850,300 @@ export default function ProjectManagerDashboard({
               </div>
             )}
 
+                        {!isDigitalInspection &&
+              fieldWorkspaceTab === "oversikt" &&
+              String(overviewInquiry.stage || "").toLowerCase() === "utfonring_felt" &&
+              ["tildelt_prosjektansvarlig", "tilbud_sendt"].includes(
+                overviewInquiryStatus
+              ) &&
+              fieldServiceForInquiry(overviewInquiry) &&
+              overviewStandardTemplate &&
+              (overviewInquiryStatus === "tildelt_prosjektansvarlig" ||
+                !fieldSchedule) && (
+                <section className="overflow-hidden rounded-[26px] border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.07] via-[#0a1624] to-[#08111d]">
+                  <div className="border-b border-slate-800/80 p-5 md:p-6">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-amber-400">
+                          Pris og tidspunkt til kunde
+                        </p>
+                        <h3 className="mt-1 text-lg font-black text-white">
+                          {overviewStandardTemplate.shortLabel}
+                        </h3>
+                        <p className="mt-1 max-w-2xl text-[11px] leading-5 text-slate-400">
+                          Standardmalen er ferdig. Systemet henter neste ledige
+                          tidspunkt automatisk. Velg et forslag og send pris, vilkår og
+                          tidsforslag til kundeportalen i én handling.
+                        </p>
+                      </div>
+
+                      <span className="self-start rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1.5 text-[9px] font-black uppercase tracking-wider text-emerald-300">
+                        Standardmal klar
+                      </span>
+                    </div>
+
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      {overviewStandardTemplate.pricing_mode === "fixed" ? (
+                        <div className="rounded-xl border border-amber-500/20 bg-slate-950/45 p-4 sm:col-span-2">
+                          <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                            Fastpris
+                          </p>
+                          <p className="mt-1 text-base font-black text-amber-300">
+                            kr {formatKr(overviewStandardTemplate.fixed_price)},- eks. mva
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="rounded-xl border border-amber-500/20 bg-slate-950/45 p-4">
+                            <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                              Team / time
+                            </p>
+                            <p className="mt-1 text-base font-black text-white">
+                              kr {formatKr(overviewStandardTemplate.team_rate)},-
+                            </p>
+                            <p className="mt-0.5 text-[9px] text-slate-500">
+                              eks. mva / time
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
+                            <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                              Bil / drift
+                            </p>
+                            <p className="mt-1 text-base font-black text-white">
+                              kr {formatKr(overviewStandardTemplate.vehicle_rate)},-
+                            </p>
+                            <p className="mt-0.5 text-[9px] text-slate-500">
+                              eks. mva
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4 sm:col-span-2">
+                            <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                              Prisgrunnlag
+                            </p>
+                            <p className="mt-1 text-xs font-bold text-slate-300">
+                              Arbeid faktureres etter faktisk medgått tid.
+                            </p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="p-5 md:p-6">
+                    {standardOfferError && (
+                      <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-300">
+                        {standardOfferError}
+                      </div>
+                    )}
+
+                    {standardOfferMessage && (
+                      <div className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-300">
+                        {standardOfferMessage}
+                      </div>
+                    )}
+
+                    {fieldServiceForInquiry(overviewInquiry) === "lekkasjesok" ? (
+                      <div>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                              Automatiske tidsforslag
+                            </p>
+                            <p className="mt-1 text-[10px] leading-4 text-slate-600">
+                              Neste ledige lekkasjesøk hentes fra bookingkalenderen.
+                              Første ledige tid er forhåndsvalgt.
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => fetchSuggestedBookingSlots(overviewInquiry)}
+                            disabled={loadingSuggestedBookingSlots}
+                            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2.5 text-[10px] font-black text-slate-300 transition hover:border-amber-500/40 hover:text-white disabled:opacity-50"
+                          >
+                            {loadingSuggestedBookingSlots ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            )}
+                            Hent nye forslag
+                          </button>
+                        </div>
+
+                        {suggestedBookingSlotsError && (
+                          <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-300">
+                            {suggestedBookingSlotsError}
+                          </div>
+                        )}
+
+                        {loadingSuggestedBookingSlots ? (
+                          <div className="mt-4 flex items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/40 py-8 text-xs text-slate-500">
+                            <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
+                            Henter neste ledige tider...
+                          </div>
+                        ) : suggestedBookingSlots.length > 0 ? (
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                            {suggestedBookingSlots.map((slot, index) => {
+                              const startTime = String(slot.start_time || "").substring(0, 5);
+                              const endTime = slot.end_time
+                                ? String(slot.end_time).substring(0, 5)
+                                : "";
+                              const selected =
+                                scheduleDate === slot.slot_date &&
+                                scheduleStartTime === startTime;
+
+                              return (
+                                <button
+                                  key={slot.id}
+                                  type="button"
+                                  onClick={() => chooseSuggestedBookingSlot(slot)}
+                                  className={`rounded-2xl border p-4 text-left transition ${
+                                    selected
+                                      ? "border-amber-400 bg-amber-500/10 ring-1 ring-amber-400/20"
+                                      : "border-slate-800 bg-slate-950/45 hover:border-slate-700"
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                                        {index === 0 ? "Neste ledige" : `Forslag ${index + 1}`}
+                                      </p>
+                                      <p className="mt-1 text-xs font-black capitalize text-white">
+                                        {formatBookingSlotDate(slot.slot_date)}
+                                      </p>
+                                      <p className="mt-1 text-[11px] font-black text-amber-300">
+                                        kl. {startTime}
+                                        {endTime ? `–${endTime}` : ""}
+                                      </p>
+                                    </div>
+
+                                    <span
+                                      className={`rounded-lg border px-2 py-1 text-[9px] font-black ${
+                                        selected
+                                          ? "border-amber-300 bg-amber-400 text-slate-950"
+                                          : "border-slate-700 bg-slate-900 text-slate-500"
+                                      }`}
+                                    >
+                                      {selected ? "Valgt" : "Velg"}
+                                    </span>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="mt-4 rounded-2xl border border-amber-500/20 bg-amber-500/[0.05] px-4 py-4 text-[10px] leading-5 text-amber-200">
+                            Ingen ledige automatiske lekkasjesøk ble funnet de neste 45
+                            dagene. Kontroller bookingkalenderen før du sender tilbudet.
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="mb-3 rounded-xl border border-slate-800 bg-slate-950/35 px-4 py-3 text-[10px] leading-5 text-slate-500">
+                          Denne tjenesten har foreløpig ingen fast automatisk
+                          bookingregel. Velg tidspunkt manuelt.
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                          <div>
+                            <label className="mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                              Dato
+                            </label>
+                            <input
+                              type="date"
+                              value={scheduleDate}
+                              onChange={(e) => setScheduleDate(e.target.value)}
+                              onClick={(e) => e.currentTarget.showPicker?.()}
+                              className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-3 text-xs text-white outline-none focus:border-amber-500 [color-scheme:dark]"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                              Starttid
+                            </label>
+                            <input
+                              type="time"
+                              value={scheduleStartTime}
+                              onChange={(e) => setScheduleStartTime(e.target.value)}
+                              className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-3 text-xs text-white outline-none focus:border-amber-500 [color-scheme:dark]"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                              Sluttid{" "}
+                              <span className="normal-case text-slate-700">
+                                (valgfritt)
+                              </span>
+                            </label>
+                            <input
+                              type="time"
+                              value={scheduleEndTime}
+                              onChange={(e) => setScheduleEndTime(e.target.value)}
+                              className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-3 text-xs text-white outline-none focus:border-amber-500 [color-scheme:dark]"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="mt-3">
+                      <label className="mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                        Praktisk beskjed <span className="normal-case text-slate-700">(valgfritt)</span>
+                      </label>
+                      <textarea
+                        value={scheduleComment}
+                        onChange={(e) => setScheduleComment(e.target.value)}
+                        placeholder="F.eks. tilgang via balkong, ring ved ankomst eller annen praktisk informasjon."
+                        className="min-h-[76px] w-full resize-y rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs text-white outline-none focus:border-amber-500"
+                      />
+                    </div>
+
+                    <div className="mt-5 flex flex-col gap-3 border-t border-slate-800/80 pt-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="flex items-start gap-2 text-[10px] leading-5 text-slate-500">
+                        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                        <span>
+                          Kunden får standardvilkår i portalen. Tilbud og tidspunkt
+                          er forslag frem til kunden har godkjent dem.
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={sendStandardOfferAndTime}
+                        disabled={
+                          sendingStandardOffer ||
+                          !scheduleDate ||
+                          !scheduleStartTime ||
+                          (fieldServiceForInquiry(overviewInquiry) === "lekkasjesok" &&
+                            !suggestedBookingSlots.some(
+                              (slot) =>
+                                slot.slot_date === scheduleDate &&
+                                String(slot.start_time || "").substring(0, 5) ===
+                                  scheduleStartTime
+                            ))
+                        }
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-5 py-3 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {sendingStandardOffer ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                        {overviewInquiryStatus === "tilbud_sendt"
+                          ? "Send tidspunkt til kunde"
+                          : "Send pris og tidspunkt til kunde"}
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              )}
+
+
                         {overviewInquiry.recommended_service &&
               fieldWorkspaceTab === "oversikt" &&
               ["venter_pa_tilbud", "tilbud_sendt"].includes(
@@ -6061,13 +7160,17 @@ export default function ProjectManagerDashboard({
                         {overviewInquiryStatus ===
                         "venter_pa_tilbud"
                           ? "Admin utarbeider tilbudet"
-                          : "Tilbud sendt – venter på kundens svar"}
+                          : fieldSchedule
+                          ? "Pris og tidspunkt sendt – venter på kunden"
+                          : "Tilbud sendt – tidspunkt mangler"}
                       </h3>
                       <p className="mt-1 text-[10px] leading-5 text-slate-500">
                         {overviewInquiryStatus ===
                         "venter_pa_tilbud"
                           ? "Du kan følge saken, men admin har neste handling. Planlegging starter først etter at tilbudet er akseptert."
-                          : "Kunden har neste handling. Når tilbudet aksepteres, flyttes saken automatisk til «Krever handling» og du overtar planleggingen."}
+                          : fieldSchedule
+                          ? "Kunden må akseptere standardtilbudet og bekrefte tidspunktet i kundeportalen før oppdraget blir endelig."
+                          : "Standardtilbudet er publisert, men tidspunkt er ikke sendt ennå. Åpne pris- og tidskortet over og send et forslag."}
                       </p>
                     </div>
                   </div>
@@ -6092,7 +7195,7 @@ export default function ProjectManagerDashboard({
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="text-[10px] uppercase tracking-wider font-black text-emerald-400">
                               {overviewInquiryStatus ===
-                              "tilbud_akseptert"
+                              "tilbud_akseptert" && !confirmedBooking(overviewInquiry)
                                 ? "Neste handling"
                                 : "Planlagt feltoppdrag"}
                             </p>
@@ -6107,7 +7210,7 @@ export default function ProjectManagerDashboard({
 
                           <h3 className="font-black text-base text-white mt-1">
                             {overviewInquiryStatus ===
-                            "tilbud_akseptert"
+                            "tilbud_akseptert" && !confirmedBooking(overviewInquiry)
                               ? `Foreslå tidspunkt for ${serviceLabel(
                                   overviewInquiry.recommended_service
                                 ).toLowerCase()}`
@@ -6117,16 +7220,15 @@ export default function ProjectManagerDashboard({
                                 )} er planlagt`}
                           </h3>
 
-                          {overviewInquiryStatus ===
-                          "planlagt" ? (
+                          {confirmedBooking(overviewInquiry) ? (
                             <p className="text-sm font-extrabold text-slate-200 mt-1">
-                              {scheduleDate
-                                ? formatSimpleDate(scheduleDate)
+                              {confirmedBooking(overviewInquiry)
+                                ? formatSimpleDate(String(confirmedBooking(overviewInquiry)!.getFullYear()) + "-" + String(confirmedBooking(overviewInquiry)!.getMonth() + 1).padStart(2, "0") + "-" + String(confirmedBooking(overviewInquiry)!.getDate()).padStart(2, "0"))
                                 : overviewInquiry.booking_date
                                 ? formatSimpleDate(overviewInquiry.booking_date)
                                 : "Dato ikke satt"}{" "}
                               kl.{" "}
-                              {scheduleStartTime ||
+                              {confirmedBooking(overviewInquiry)?.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" }) ||
                                 String(
                                   overviewInquiry.booking_time || ""
                                 ).substring(0, 5) ||
@@ -6138,24 +7240,16 @@ export default function ProjectManagerDashboard({
                           ) : (
                             <p className="text-[11px] text-slate-400 mt-1">
                               Kunden har akseptert tilbudet. Velg dato og starttid,
-                              så legges oppdraget direkte inn i kalenderen.
+                              så sendes tidspunktet til kunden for bekreftelse.
                             </p>
                           )}
                         </div>
                       </div>
 
-                      {overviewInquiryStatus ===
-                        "planlagt" &&
+                      {confirmedBooking(overviewInquiry) &&
                         !editingFieldSchedule && (
                           <div className="flex flex-wrap items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setEditingFieldSchedule(true)}
-                              className="shrink-0 px-4 py-2.5 rounded-xl bg-slate-950/80 border border-slate-700 hover:border-emerald-500/40 text-slate-200 hover:text-white text-xs font-extrabold flex items-center justify-center gap-2 transition-colors"
-                            >
-                              <CalendarDays className="w-4 h-4" />
-                              Endre tidspunkt
-                            </button>
+
                             <button
                               type="button"
                               onClick={() => setFieldWorkspaceTab("kontroll")}
@@ -6183,7 +7277,7 @@ export default function ProjectManagerDashboard({
                       )}
                   </div>
 
-                  {fieldSchedule?.status === "foreslatt_av_kunde" && (
+                  {!confirmedBooking(overviewInquiry) && fieldSchedule?.status === "foreslatt_av_kunde" && (
                     <div className="border-t border-slate-800 bg-violet-500/[0.035] p-5 md:p-6">
                       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                         <div>
@@ -6232,15 +7326,6 @@ export default function ProjectManagerDashboard({
                             Velg annet tidspunkt
                           </button>
                         </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {Boolean(Number(fieldSchedule?.locked)) && (
-                    <div className="border-t border-amber-500/20 bg-amber-500/[0.04] px-5 py-4 md:px-6">
-                      <div className="flex items-center gap-2 text-xs font-black text-amber-200">
-                        <ShieldCheck className="w-4 h-4" />
-                        Tidspunktet er låst av prosjektleder og regnes som endelig.
                       </div>
                     </div>
                   )}
@@ -6360,27 +7445,6 @@ export default function ProjectManagerDashboard({
                               </button>
                             )}
 
-                            {fieldSchedule?.id &&
-                              !Boolean(Number(fieldSchedule.locked)) && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    respondToFieldSchedule(
-                                      "project_manager_lock"
-                                    )
-                                  }
-                                  disabled={
-                                    savingFieldSchedule ||
-                                    !scheduleDate ||
-                                    !scheduleStartTime
-                                  }
-                                  className="px-4 py-3 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs font-black text-amber-200 hover:bg-amber-500/15 disabled:opacity-50 flex items-center justify-center gap-2"
-                                >
-                                  <ShieldCheck className="w-4 h-4" />
-                                  Lås endelig tidspunkt
-                                </button>
-                              )}
-
                             <button
                               type="button"
                               onClick={async () => {
@@ -6400,8 +7464,8 @@ export default function ProjectManagerDashboard({
                                 <CalendarDays className="w-4 h-4" />
                               )}
                               {fieldSchedule
-                                ? "Lagre nytt tidspunkt"
-                                : "Planlegg oppdrag"}
+                                ? "Send nytt tidsforslag"
+                                : "Foreslå tidspunkt"}
                             </button>
                           </div>
                         </>
@@ -6523,8 +7587,8 @@ export default function ProjectManagerDashboard({
                             : checklistComplete
                             ? "Kontrollen er ferdig – opprett rapport"
                             : overviewInquiryStatus === "planlagt"
-                            ? `${serviceLabel(overviewInquiry.recommended_service)} er klar for gjennomføring`
-                            : `Fortsett ${serviceLabel(overviewInquiry.recommended_service).toLowerCase()}`}
+                            ? `${serviceLabel(fieldServiceForInquiry(overviewInquiry))} er klar for gjennomføring`
+                            : `Fortsett ${serviceLabel(fieldServiceForInquiry(overviewInquiry)).toLowerCase()}`}
                         </h3>
                         <p className="text-xs text-slate-400 mt-1">
                           Systemet viser neste relevante steg i saken.
@@ -6694,7 +7758,7 @@ export default function ProjectManagerDashboard({
                       Kontrolloppsummering
                     </p>
                     <h3 className="mt-1 text-lg font-black">
-                      {customerName(overviewInquiry)} · {serviceLabel(overviewInquiry.recommended_service)}
+                      {customerName(overviewInquiry)} · {serviceLabel(fieldServiceForInquiry(overviewInquiry))}
                     </h3>
                     <p className="mt-1 text-[11px] text-slate-500">
                       Kontroller registreringene før kontrollen avsluttes og sendes inn.
@@ -6891,7 +7955,7 @@ export default function ProjectManagerDashboard({
 
                     <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3">
                       <p className="text-[11px] text-slate-400">
-                        Faste tider: <span className="font-extrabold text-slate-200">tirsdag og fredag kl. 11:00</span>.
+                        Faste tider: <span className="font-extrabold text-slate-200">tirsdag og fredag kl. 09:00</span>.
                       </p>
                       <div className="flex flex-col sm:flex-row gap-2">
                         <button
@@ -8343,7 +9407,7 @@ export default function ProjectManagerDashboard({
                     Planlegging & tildeling
                   </h2>
                   <p className="mt-1 text-[11px] text-slate-500">
-                    Planlegg arbeidsordre og tildel tekniker på dine egne oppdrag.
+                    Tildel tekniker og foreslå tidspunkt på dine egne oppdrag. Kunden bekrefter tidspunktet i kundeportalen.
                   </p>
                 </div>
 
@@ -8600,8 +9664,8 @@ export default function ProjectManagerDashboard({
                           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                             <p className="text-[10px] text-slate-500">
                               {schedule
-                                ? `Planlagt: ${formatFieldScheduleDateTime(schedule)}`
-                                : "Ikke planlagt ennå"}
+                                ? `Tidspunkt: ${formatFieldScheduleDateTime(schedule)}`
+                                : "Ingen tidsforslag ennå"}
                             </p>
 
                             <button
@@ -8615,7 +9679,7 @@ export default function ProjectManagerDashboard({
                               ) : (
                                 <Save className="h-3.5 w-3.5" />
                               )}
-                              {schedule ? "Oppdater arbeidsordre" : "Planlegg arbeidsordre"}
+                              {schedule ? "Send nytt tidsforslag" : "Foreslå tidspunkt"}
                             </button>
                           </div>
                         </section>

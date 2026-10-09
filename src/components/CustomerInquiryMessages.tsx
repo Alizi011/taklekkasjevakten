@@ -31,12 +31,16 @@ interface CustomerInquiryMessagesProps {
   inquiryId: number;
   customerId?: number | null;
   customerName?: string | null;
+  showComposer?: boolean;
+  refreshKey?: number;
 }
 
 export default function CustomerInquiryMessages({
   inquiryId,
   customerId,
   customerName,
+  showComposer = true,
+  refreshKey = 0,
 }: CustomerInquiryMessagesProps) {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [messageText, setMessageText] = useState("");
@@ -178,7 +182,7 @@ export default function CustomerInquiryMessages({
 
   useEffect(() => {
     fetchMessages();
-  }, [inquiryId]);
+  }, [inquiryId, refreshKey]);
 
   const formatTime = (value?: string | null) => {
     if (!value) return "";
@@ -289,8 +293,9 @@ export default function CustomerInquiryMessages({
         )}
       </div>
 
-      <div className="border-t border-slate-800 bg-slate-950/40 p-5 md:p-6">
-        <div className="flex items-end gap-3">
+      {showComposer && (
+        <div className="border-t border-slate-800 bg-slate-950/40 p-5 md:p-6">
+          <div className="flex items-end gap-3">
           <textarea
             value={messageText}
             onChange={(e) => setMessageText(e.target.value)}
@@ -320,10 +325,11 @@ export default function CustomerInquiryMessages({
           </button>
         </div>
 
-        <p className="mt-2 text-[10px] text-slate-600">
-          Enter sender · Shift + Enter lager ny linje
-        </p>
-      </div>
+          <p className="mt-2 text-[10px] text-slate-600">
+            Enter sender · Shift + Enter lager ny linje
+          </p>
+        </div>
+      )}
     </section>
   );
 }

@@ -177,6 +177,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [previewCustomerInquiryId, setPreviewCustomerInquiryId] = useState<number | null>(null);
   const [previewBusinessCustomerId, setPreviewBusinessCustomerId] = useState<number | null>(null);
   const [previewEmployee, setPreviewEmployee] = useState<Employee | null>(null);
+  const [previewEmployeeFromInquiry, setPreviewEmployeeFromInquiry] = useState(false);
   const [reportStatuses, setReportStatuses] = useState<Record<string, ReportSummary | null>>({});
   const [reportArchive, setReportArchive] = useState<ReportArchiveItem[]>([]);
   const [reportArchiveCounts, setReportArchiveCounts] = useState<ReportArchiveCounts>({
@@ -641,66 +642,124 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     }
   }, [activeTab]);
 
-  const getStageBadge = (stage: Inquiry["stage"] | string, notes?: string) => {
-    const rawStage = (stage || "").toLowerCase();
-    const rawNotes = (notes || "").toLowerCase();
+  const getServiceBadge = (inq: Inquiry) => {
+    const rawInquiryType = String(
+      (inq as any).inquiry_type || (inq as any).type || ""
+    )
+      .trim()
+      .toLowerCase();
+    const rawRecommendedService = String(
+      (inq as any).recommended_service || ""
+    )
+      .trim()
+      .toLowerCase();
+    const rawStage = String(inq.stage || "")
+      .trim()
+      .toLowerCase();
 
-    if (rawStage === "garanti_5ar" || rawNotes.includes("garanti")) {
-      return (
-        <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
-          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 5 Års Garanti
-        </span>
-      );
-    }
-    if (rawStage === "tilbud_varige_tiltak") {
-      return (
-        <span className="px-3 py-1 bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
-          <Plus className="w-3.5 h-3.5 text-purple-400 shrink-0" /> Tilbud (Varige tiltak)
-        </span>
-      );
-    }
-    if (rawStage === "rapport_klar") {
-      return (
-        <span className="px-3 py-1 bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
-          <FileText className="w-3.5 h-3.5 text-cyan-400 shrink-0" /> Rapport klar
-        </span>
-      );
-    }
-    if (rawStage === "lekkasjesok" || rawNotes.includes("lekkasje")) {
+    const customerService = [rawInquiryType, rawRecommendedService].find(
+      (value) =>
+        [
+          "lekkasjesok",
+          "lekkasjesøk",
+          "takkontroll",
+          "service",
+          "akutt",
+          "digital",
+          "digital_befaring",
+        ].includes(value)
+    );
+
+    if (customerService === "lekkasjesok" || customerService === "lekkasjesøk") {
       return (
         <span className="px-3 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
-          <CalendarCheck className="w-3.5 h-3.5 text-amber-400 shrink-0" /> Taklekkasjesøk
+          <CalendarCheck className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          Lekkasjesøk
         </span>
       );
     }
-    if (rawStage === "service" || rawNotes.includes("service")) {
-      return (
-        <span className="px-3 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
-          <Wrench className="w-3.5 h-3.5 text-blue-400 shrink-0" /> Servicearbeid
-        </span>
-      );
-    }
-    if (rawStage === "takkontroll" || rawNotes.includes("kontroll")) {
+
+    if (customerService === "takkontroll") {
       return (
         <span className="px-3 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
-          <ShieldAlert className="w-3.5 h-3.5 text-indigo-400 shrink-0" /> Takkontroll
+          <ShieldAlert className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+          Takkontroll
+        </span>
+      );
+    }
+
+    if (customerService === "service") {
+      return (
+        <span className="px-3 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <Wrench className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+          Servicearbeid
+        </span>
+      );
+    }
+
+    if (customerService === "akutt") {
+      return (
+        <span className="px-3 py-1 bg-red-500/10 text-red-300 border border-red-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <AlertTriangle className="w-3.5 h-3.5 text-red-300 shrink-0" />
+          Akutt utbedring
+        </span>
+      );
+    }
+
+    if (customerService === "digital" || customerService === "digital_befaring") {
+      return (
+        <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <Video className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          Digital konsultasjon
+        </span>
+      );
+    }
+
+    if (rawStage === "tilbud_varige_tiltak" || rawStage === "varige_tiltak") {
+      return (
+        <span className="px-3 py-1 bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <Plus className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+          Varige tiltak
+        </span>
+      );
+    }
+
+    if (rawStage === "garanti_5ar") {
+      return (
+        <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          5 års garanti
         </span>
       );
     }
 
     return (
-      <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
-        <Video className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Digital befaring
+      <span className="px-3 py-1 bg-slate-500/10 text-slate-400 border border-slate-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+        <ClipboardList className="w-3.5 h-3.5 shrink-0" />
+        Ikke klassifisert
       </span>
     );
   };
 
   const getWorkflowBadge = (inq: Inquiry) => {
-    const stage = (inq.stage || "digital_befaring").toLowerCase();
-    const status = String((inq as any).status || "").toLowerCase();
+    const stage = String(inq.stage || "")
+      .trim()
+      .toLowerCase();
+    const status = String((inq as any).status || "")
+      .trim()
+      .toLowerCase();
     const reportSummary = reportStatuses[inq.id.toString()];
     const reportStatus = reportSummary?.status;
     const reportType = reportSummary?.report_type;
+
+    if (status === "venter_pa_kundeopplysninger") {
+      return (
+        <span className="px-3 py-1 bg-amber-500/10 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <UserCheck className="w-3.5 h-3.5 shrink-0" />
+          Venter på kundeopplysninger
+        </span>
+      );
+    }
 
     if (status === "kundeopplysninger_mottatt") {
       return (
@@ -711,11 +770,56 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       );
     }
 
+    if (status === "venter_pa_prosjektansvarlig") {
+      return (
+        <span className="px-3 py-1 bg-amber-500/10 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <Users className="w-3.5 h-3.5 shrink-0" />
+          Venter på prosjektansvarlig
+        </span>
+      );
+    }
+
+    if (status === "tildelt_prosjektansvarlig") {
+      return (
+        <span className="px-3 py-1 bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <Users className="w-3.5 h-3.5 shrink-0" />
+          Tildelt prosjektansvarlig
+        </span>
+      );
+    }
+
     if (status === "venter_pa_tilbud") {
       return (
         <span className="px-3 py-1 bg-purple-500/10 text-purple-300 border border-purple-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
           <CircleDollarSign className="w-3.5 h-3.5 shrink-0" />
           Venter på tilbud
+        </span>
+      );
+    }
+
+    if (status === "tilbud_sendt") {
+      return (
+        <span className="px-3 py-1 bg-purple-500/10 text-purple-300 border border-purple-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <CircleDollarSign className="w-3.5 h-3.5 shrink-0" />
+          Tilbud sendt · venter på kunde
+        </span>
+      );
+    }
+
+    if (status === "tilbud_akseptert") {
+      return (
+        <span className="px-3 py-1 bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+          Tilbud akseptert
+        </span>
+      );
+    }
+
+    if (status === "foreslatt_av_prosjektleder") {
+      return (
+        <span className="px-3 py-1 bg-amber-500/10 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <Calendar className="w-3.5 h-3.5 shrink-0" />
+          Tidspunkt foreslått
         </span>
       );
     }
@@ -733,16 +837,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       return (
         <span className="px-3 py-1 bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
           <CalendarCheck className="w-3.5 h-3.5 shrink-0" />
-          Digital befaring bekreftet
-        </span>
-      );
-    }
-
-    if (status === "tildelt_prosjektansvarlig") {
-      return (
-        <span className="px-3 py-1 bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
-          <Users className="w-3.5 h-3.5 shrink-0" />
-          Tildelt prosjektansvarlig
+          Digital konsultasjon bekreftet
         </span>
       );
     }
@@ -801,11 +896,56 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       );
     }
 
+    if (status === "planlagt") {
+      return (
+        <span className="px-3 py-1 bg-blue-500/10 text-blue-300 border border-blue-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <CalendarCheck className="w-3.5 h-3.5 shrink-0" />
+          Planlagt
+        </span>
+      );
+    }
+
+    if (status === "pagaende") {
+      return (
+        <span className="px-3 py-1 bg-blue-500/10 text-blue-300 border border-blue-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <Wrench className="w-3.5 h-3.5 shrink-0" />
+          Arbeid pågår
+        </span>
+      );
+    }
+
+    if (status === "utfort") {
+      return (
+        <span className="px-3 py-1 bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+          Utført
+        </span>
+      );
+    }
+
+    if (status === "tilbud_avvist") {
+      return (
+        <span className="px-3 py-1 bg-red-500/10 text-red-300 border border-red-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          Tilbud avvist
+        </span>
+      );
+    }
+
+    if (status === "avsluttet") {
+      return (
+        <span className="px-3 py-1 bg-slate-500/10 text-slate-300 border border-slate-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+          Avsluttet
+        </span>
+      );
+    }
+
     if (stage === "rapport_funn") {
       return (
         <span className="px-3 py-1 bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
           <FileText className="w-3.5 h-3.5 shrink-0" />
-          Rapportutkast pågår
+          Rapportarbeid
         </span>
       );
     }
@@ -814,12 +954,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       return (
         <span className="px-3 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
           <Wrench className="w-3.5 h-3.5 shrink-0" />
-          Feltarbeid pågår
+          Feltoppfølging
         </span>
       );
     }
 
-    if (stage === "varige_tiltak") {
+    if (stage === "varige_tiltak" || stage === "tilbud_varige_tiltak") {
       return (
         <span className="px-3 py-1 bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
           <Wrench className="w-3.5 h-3.5 shrink-0" />
@@ -838,9 +978,9 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     }
 
     return (
-      <span className="px-3 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
-        <CalendarCheck className="w-3.5 h-3.5 shrink-0" />
-        Venter på prosjektansvarlig
+      <span className="px-3 py-1 bg-slate-500/10 text-slate-400 border border-slate-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+        <ClipboardList className="w-3.5 h-3.5 shrink-0" />
+        Under behandling
       </span>
     );
   };
@@ -1367,13 +1507,34 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     );
   };
 
-  const activeFilteredInquiries = filteredInquiries.filter(
-    (inq) => !isCompletedInquiry(inq)
-  );
+  // Utløpte tilbud uten bekreftet avtale skal ikke vises som aktive.
+  const hasExpiredLatestOffer = (inq: Inquiry): boolean => {
+    const item = inq as Inquiry & {
+      latest_offer_status?: string | null;
+      latest_offer_expires_at?: string | null;
+    };
 
-  const activeInquiriesCount = inquiries.filter(
-    (inq) => !isCompletedInquiry(inq)
-  ).length;
+    // Eksisterende bekreftede bookinger skal beholdes.
+    if (item.booking_date && item.booking_time) return false;
+
+    const status = String(item.latest_offer_status || "").toLowerCase();
+
+    if (status === "utlopt") return true;
+    if (status !== "publisert" || !item.latest_offer_expires_at) return false;
+
+    const expiresAt = new Date(
+      item.latest_offer_expires_at.replace(" ", "T")
+    ).getTime();
+
+    return Number.isFinite(expiresAt) && Date.now() >= expiresAt;
+  };
+
+  const isActiveInquiry = (inq: Inquiry): boolean =>
+    !isCompletedInquiry(inq) && !hasExpiredLatestOffer(inq);
+
+  const activeFilteredInquiries = filteredInquiries.filter(isActiveInquiry);
+
+  const activeInquiriesCount = inquiries.filter(isActiveInquiry).length;
 
   const completedInquiries = inquiries.filter(isCompletedInquiry);
 
@@ -1539,7 +1700,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         previewEmployee={previewEmployee}
         onBackToAdmin={() => {
           setPreviewEmployee(null);
-          setActiveTab("ansatte");
+
+          if (previewEmployeeFromInquiry) {
+            setPreviewEmployeeFromInquiry(false);
+            setActiveTab("oppdrag");
+          } else {
+            setActiveTab("ansatte");
+          }
         }}
       />
     );
@@ -1619,6 +1786,24 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         }}
         onPreviewCustomer={(inquiryId) => {
           setPreviewCustomerInquiryId(inquiryId);
+        }}
+        onPreviewProjectManager={(employeeId) => {
+          const projectManager = adminEmployees.find(
+            (employee) =>
+              Number(employee.id) === Number(employeeId) &&
+              employee.status === "Aktiv" &&
+              employee.role === "Prosjektleder"
+          );
+
+          if (!projectManager) {
+            window.alert(
+              "Fant ikke den tildelte prosjektansvarlige blant aktive ansatte."
+            );
+            return;
+          }
+
+          setPreviewEmployeeFromInquiry(true);
+          setPreviewEmployee(projectManager);
         }}
       />
     );
@@ -2507,7 +2692,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                 </td>
 
                                 <td className="px-4 py-4 align-middle">
-                                  {getStageBadge(inq.stage || "digital_befaring", inq.notes)}
+                                  {getServiceBadge(inq)}
                                 </td>
 
                                 <td className="px-4 py-4 align-middle">
@@ -4562,6 +4747,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
             {employeeView === "ansatte" && (
               <EmployeeList
                 onViewAsEmployee={(employee) => {
+                  setPreviewEmployeeFromInquiry(false);
                   setPreviewEmployee(employee);
                 }}
               />
