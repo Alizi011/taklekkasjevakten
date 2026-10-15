@@ -1,3 +1,4 @@
+import ReportApprovalWorkflow from "../components/ReportApprovalWorkflow";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
@@ -114,6 +115,7 @@ interface AdminItemSection {
 interface AdminSectionsDocument {
   version: 1;
   summary: string;
+  main_cause: string;
   scope: string;
   items: Record<string, AdminItemSection>;
   recommendations: string;
@@ -163,7 +165,7 @@ function statusClass(status?: ReportStatus) {
     case "publisert":
       return "bg-cyan-500/10 text-cyan-300 border-cyan-500/30";
     default:
-      return "bg-slate-800 text-slate-300 border-slate-700";
+      return "bg-[#43202b] text-[#efdae2] border-[#754453]";
   }
 }
 
@@ -178,7 +180,7 @@ function tgClass(status?: string) {
     case "tg0":
       return "bg-emerald-500/10 text-emerald-300 border-emerald-500/30";
     case "ikke_aktuell":
-      return "bg-slate-800 text-slate-400 border-slate-700";
+      return "bg-[#43202b] text-[#d7bfca] border-[#754453]";
     default:
       return "bg-blue-500/10 text-blue-300 border-blue-500/30";
   }
@@ -209,6 +211,23 @@ function extractNumberedSection(text: string, number: number): string {
   return (next ? rest.slice(0, next.index) : rest).trim();
 }
 
+/** Match chapter by title rather than chapter number (legacy reports have different numbering). */
+function extractSectionByHeading(text: string, titlePattern: RegExp): string {
+  const normalized = text.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const title = lines[i].trim().replace(/^\d+\.\s*/, "");
+    if (titlePattern.test(title)) { start = i + 1; break; }
+  }
+  if (start < 0) return "";
+  let end = lines.length;
+  for (let i = start; i < lines.length; i++) {
+    if (/^\s*\d+\.\s+\S/.test(lines[i])) { end = i; break; }
+  }
+  return lines.slice(start, end).join("\n").trim();
+}
+
 function createInitialSections(
   report: ReportData | null,
   rows: ChecklistRow[]
@@ -227,12 +246,13 @@ function createInitialSections(
 
   const base: AdminSectionsDocument = {
     version: 1,
-    summary: extractNumberedSection(source, 1),
-    scope: extractNumberedSection(source, 2),
+    summary: extractSectionByHeading(source, /^SAMMENDRAG OG HOVEDKONKLUSJON$/i) || extractNumberedSection(source, 1),
+    main_cause: extractSectionByHeading(source, /^(?:HOVEDÅRSAK TIL LEKKASJEN|SANNSYNLIG HOVEDÅRSAK TIL LEKKASJEN)$/i),
+    scope: extractSectionByHeading(source, /^OPPDRAG OG OMFANG$/i),
     items,
-    recommendations: extractNumberedSection(source, 5),
-    consequences: extractNumberedSection(source, 6),
-    limitations: extractNumberedSection(source, 7),
+    recommendations: extractSectionByHeading(source, /^ANBEFALTE TILTAK$/i),
+    consequences: extractSectionByHeading(source, /^KONSEKVENSER VED UTSATT UTBEDRING$/i),
+    limitations: extractSectionByHeading(source, /^FORBEHOLD OG BEGRENSNINGER$/i),
   };
 
   if (!report?.admin_sections_json) return base;
@@ -245,6 +265,7 @@ function createInitialSections(
         ...base,
         ...parsed,
         version: 1,
+        main_cause: String(parsed.main_cause ?? base.main_cause),
         items: {
           ...base.items,
           ...(parsed.items || {}),
@@ -307,7 +328,7 @@ function buildAdminFinal(
             const text = section?.admin_text?.trim();
             return [
               `- ${row.item_title}${status ? ` (${status})` : ""}`,
-              text ? `  ${text}` : "  Ingen tilleggskommentar fra admin.",
+              text ? `  ${text}` : "",
             ].join("\n");
           })
           .join("\n\n")
@@ -315,11 +336,12 @@ function buildAdminFinal(
 
   const parts = [
     ["1. SAMMENDRAG OG HOVEDKONKLUSJON", sections.summary],
-    ["2. OPPDRAG OG OMFANG", sections.scope],
-    ["3. REGISTRERTE FORHOLD OG FAGLIG VURDERING", registered],
-    ["4. ANBEFALTE TILTAK", sections.recommendations],
-    ["5. KONSEKVENSER VED UTSATT UTBEDRING", sections.consequences],
-    ["6. FORBEHOLD OG BEGRENSNINGER", sections.limitations],
+    ["2. HOVEDÅRSAK TIL LEKKASJEN", sections.main_cause],
+    ["3. OPPDRAG OG OMFANG", sections.scope],
+    ["4. REGISTRERTE FORHOLD OG FAGLIG VURDERING", registered],
+    ["5. ANBEFALTE TILTAK", sections.recommendations],
+    ["6. KONSEKVENSER VED UTSATT UTBEDRING", sections.consequences],
+    ["7. FORBEHOLD OG BEGRENSNINGER", sections.limitations],
   ];
 
   return parts
@@ -336,6 +358,7 @@ export default function AdminReportReview({
   onChanged,
 }: AdminReportReviewProps) {
   const [report, setReport] = useState<ReportData | null>(null);
+  const [approvalLocked, setApprovalLocked] = useState(false);
   const [completionReport, setCompletionReport] =
     useState<CompletionReportData | null>(null);
   const [completionDraft, setCompletionDraft] = useState("");
@@ -362,12 +385,11 @@ export default function AdminReportReview({
   const [lastSavedSections, setLastSavedSections] = useState("");
   const [returnNote, setReturnNote] = useState("");
 
+  const [creatingDraft, setCreatingDraft] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
-  const [approving, setApproving] = useState(false);
   const [returning, setReturning] = useState(false);
-  const [publishing, setPublishing] = useState(false);
   const [reopening, setReopening] = useState(false);
   const [savingPhotoId, setSavingPhotoId] = useState<number | null>(null);
 
@@ -384,13 +406,12 @@ export default function AdminReportReview({
 
   const editable = useMemo(
     () =>
+      !approvalLocked && (
       report?.status === "sendt_til_admin" ||
       report?.status === "under_gjennomgang" ||
-      report?.status === "godkjent",
-    [report?.status]
+      report?.status === "godkjent"),
+    [report?.status, approvalLocked]
   );
-
-  const isCorrection = Boolean(report?.supersedes_report_id);
   const pdfSrc = report?.pdf_url ? apiAssetUrl(report.pdf_url) : "";
 
   const adminText = useMemo(
@@ -430,7 +451,7 @@ export default function AdminReportReview({
 
     try {
       const [reportRes, completionRes, checklistRes, photoRes] = await Promise.all([
-        fetch(apiUrl(`/reports.php?inquiry_id=${inquiryId}`)),
+        fetch(apiUrl(`/reports.php?inquiry_id=${inquiryId}`), { credentials: "include" }),
         fetch(apiUrl(`/completion_reports.php?inquiry_id=${inquiryId}`)),
         fetch(apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)),
         fetch(apiUrl(`/photos.php?inquiry_id=${inquiryId}`)),
@@ -898,12 +919,44 @@ export default function AdminReportReview({
     }
   };
 
+  const createAdminDraft = async () => {
+    if (creatingDraft || report) return;
+    setCreatingDraft(true);
+    setError("");
+    try {
+      const initial = createInitialSections(null, checklistRows);
+      const finalText = buildAdminFinal(initial, checklistRows);
+      const response = await fetch(apiUrl('/reports.php'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inquiry_id: inquiryId,
+          status: 'utkast',
+          admin_final: finalText,
+          admin_sections_json: initial,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.report) {
+        throw new Error(data.message || 'Kunne ikke opprette rapportutkast.');
+      }
+      await loadReviewData();
+      setMessage('Rapportutkastet er opprettet. Feltregistreringene er uendret.');
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke opprette utkast.');
+    } finally {
+      setCreatingDraft(false);
+    }
+  };
+
   const updateReport = async (
     payload: Record<string, unknown>,
     successMessage: string
   ): Promise<ReportData> => {
     const res = await fetch(apiUrl("/reports.php"), {
-      method: "PUT",
+      credentials: "include", method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         inquiry_id: inquiryId,
@@ -975,10 +1028,10 @@ export default function AdminReportReview({
     setMessage("");
 
     try {
-      await saveAdminVersion(true);
+      if (report?.status !== "godkjent") await saveAdminVersion(true);
 
       const res = await fetch(apiUrl("/generate_report_pdf.php"), {
-        method: "POST",
+        credentials: "include", method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           inquiry_id: inquiryId,
@@ -1056,72 +1109,6 @@ export default function AdminReportReview({
     }
   };
 
-  const handleApprove = async () => {
-    if (!adminText.trim()) return;
-
-    setApproving(true);
-    setError("");
-    setMessage("");
-
-    try {
-      const next = await updateReport(
-        {
-          admin_final: adminText.trim(),
-          admin_sections_json: adminSections,
-          status: "godkjent",
-        },
-        "Rapporten er godkjent. Generer/oppdater PDF før publisering."
-      );
-
-      if (!next.pdf_url) {
-        setMessage(
-          "Rapporten er godkjent. PDF må genereres før den kan publiseres."
-        );
-      }
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Kunne ikke godkjenne rapporten."
-      );
-    } finally {
-      setApproving(false);
-    }
-  };
-
-  const handlePublish = async () => {
-    if (!report || !adminText.trim()) return;
-
-    if (!report.pdf_url) {
-      setError("Generer PDF med admins sluttversjon før publisering.");
-      return;
-    }
-
-    const confirmed = window.confirm(
-      isCorrection
-        ? "Publisere den korrigerte rapporten til kunden nå?"
-        : "Publisere denne rapporten til kunden nå? Kunden får tilgang til den godkjente sluttversjonen."
-    );
-    if (!confirmed) return;
-
-    setPublishing(true);
-    setError("");
-    setMessage("");
-
-    try {
-      await updateReport(
-        { status: "publisert" },
-        isCorrection
-          ? "Den korrigerte rapporten er publisert til kunden."
-          : "Rapporten er publisert til kunden."
-      );
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Kunne ikke publisere rapporten."
-      );
-    } finally {
-      setPublishing(false);
-    }
-  };
-
   const handleReopenPublished = async () => {
     if (!report || report.status !== "publisert") return;
     if (
@@ -1138,7 +1125,7 @@ export default function AdminReportReview({
 
     try {
       const res = await fetch(apiUrl("/reports.php"), {
-        method: "PUT",
+        credentials: "include", method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           inquiry_id: inquiryId,
@@ -1169,6 +1156,7 @@ export default function AdminReportReview({
   const updateGlobalSection = (
     field:
       | "summary"
+      | "main_cause"
       | "scope"
       | "recommendations"
       | "consequences"
@@ -1207,7 +1195,7 @@ export default function AdminReportReview({
   const invalidatePdfAfterDocumentationChange = async () => {
     try {
       const res = await fetch(apiUrl("/reports.php"), {
-        method: "PUT",
+        credentials: "include", method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           inquiry_id: inquiryId,
@@ -1302,10 +1290,11 @@ export default function AdminReportReview({
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#070a11] text-white p-8">
-        <div className="max-w-[1600px] mx-auto bg-[#0b0f17] border border-slate-800 rounded-3xl p-8 flex items-center justify-center gap-2 text-sm text-slate-400">
-          <Loader2 className="w-5 h-5 animate-spin text-[#F5B800]" />
-          Henter rapport, kontrollpunkter og dokumentasjon...
+      <div className="min-h-screen bg-[#270b13] text-white flex items-center justify-center p-8">
+        <div className="w-full max-w-[560px] rounded-3xl border border-[#653444] bg-[#32121d] p-10 text-center shadow-2xl">
+          <Loader2 className="w-7 h-7 animate-spin text-[#F5B800] mx-auto" />
+          <p className="mt-4 text-sm font-bold text-[#efdae2]">Henter rapportgrunnlag</p>
+          <p className="mt-1 text-xs text-[#c8acb7]">Rapport, kontrollpunkter og dokumentasjon lastes inn…</p>
         </div>
       </div>
     );
@@ -1321,8 +1310,8 @@ export default function AdminReportReview({
       completionReport.status === "godkjent";
 
     return (
-      <div className="min-h-screen bg-[#070a11] text-white">
-        <header className="sticky top-0 z-40 border-b border-cyan-500/20 bg-slate-950 px-6 py-4">
+      <div className="min-h-screen bg-[#270b13] text-white">
+        <header className="sticky top-0 z-40 border-b border-cyan-500/20 bg-[#1b0b12] px-6 py-4">
           <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4">
             <div>
               <p className="text-[10px] font-black uppercase tracking-wider text-cyan-400">
@@ -1331,7 +1320,7 @@ export default function AdminReportReview({
               <h1 className="mt-1 text-lg font-extrabold">
                 Utførelsesrapport #{completionReport.id} · Oppdrag #{inquiryId}
               </h1>
-              <p className="mt-1 text-xs text-slate-400">
+              <p className="mt-1 text-xs text-[#d7bfca]">
                 {[customerName, address].filter(Boolean).join(" · ")}
               </p>
             </div>
@@ -1340,7 +1329,7 @@ export default function AdminReportReview({
               <button
                 type="button"
                 onClick={() => onBack()}
-                className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-bold text-slate-300 hover:text-white"
+                className="flex items-center gap-2 rounded-xl border border-[#754453] bg-[#341722] px-4 py-2.5 text-xs font-bold text-[#efdae2] hover:text-white"
               >
                 <ArrowLeft className="h-4 w-4" />
                 Tilbake til rapporter
@@ -1350,7 +1339,7 @@ export default function AdminReportReview({
         </header>
 
         <main className="mx-auto max-w-[1600px] space-y-5 px-4 py-6 md:px-8">
-          <section className="rounded-2xl border border-cyan-500/25 bg-[#0b0f17] px-5 py-4">
+          <section className="rounded-2xl border border-cyan-500/25 bg-[#32121d] px-5 py-4">
             <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -1366,20 +1355,20 @@ export default function AdminReportReview({
                     {statusLabel(completionReport.status)}
                   </span>
                 </div>
-                <p className="mt-1 text-xs text-slate-400">
+                <p className="mt-1 text-xs text-[#d7bfca]">
                   Den tekniske rapporten beholdes som historikk. Her kvalitetssikres ny tilstand,
                   utført arbeid og nye TG-verdier etter service.
                 </p>
               </div>
 
               <div className="flex flex-wrap gap-2 text-[10px]">
-                <span className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-slate-400">
+                <span className="rounded-xl border border-[#653444] bg-[#1b0b12] px-3 py-2 text-[#d7bfca]">
                   Kilde teknisk rapport: #{completionReport.source_report_id}
                 </span>
-                <span className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-slate-400">
+                <span className="rounded-xl border border-[#653444] bg-[#1b0b12] px-3 py-2 text-[#d7bfca]">
                   Arbeid: #{completionReport.work_completion_id}
                 </span>
-                <span className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-slate-400">
+                <span className="rounded-xl border border-[#653444] bg-[#1b0b12] px-3 py-2 text-[#d7bfca]">
                   Revisjon {completionReport.revision_no || 1}
                 </span>
               </div>
@@ -1402,12 +1391,12 @@ export default function AdminReportReview({
 
           <section className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(460px,0.95fr)]">
             <div className="space-y-4">
-              <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0b0f17]">
-                <div className="border-b border-slate-800 px-5 py-4">
+              <section className="overflow-hidden rounded-2xl border border-[#653444] bg-[#32121d]">
+                <div className="border-b border-[#653444] px-5 py-4">
                   <p className="text-[10px] font-black uppercase tracking-wider text-cyan-400">
                     Admins sluttversjon
                   </p>
-                  <p className="mt-1 text-[11px] text-slate-500">
+                  <p className="mt-1 text-[11px] text-[#c8acb7]">
                     Kontroller at utført arbeid og ny TG stemmer med feltregistreringen.
                     Teknisk rapport skal ikke overskrives.
                   </p>
@@ -1424,13 +1413,13 @@ export default function AdminReportReview({
                       completionReport.status === "publisert"
                     }
                     rows={34}
-                    className="w-full resize-y rounded-2xl border border-slate-800 bg-slate-950 p-4 text-xs leading-6 text-slate-200 outline-none focus:border-cyan-500/50 read-only:opacity-75"
+                    className="w-full resize-y rounded-2xl border border-[#653444] bg-[#1b0b12] p-4 text-xs leading-6 text-slate-200 outline-none focus:border-cyan-500/50 read-only:opacity-75"
                   />
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-slate-800 bg-[#0b0f17] p-5">
-                <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+              <section className="rounded-2xl border border-[#653444] bg-[#32121d] p-5">
+                <p className="text-[10px] font-black uppercase tracking-wider text-[#c8acb7]">
                   Kommentar ved retur
                 </p>
                 <textarea
@@ -1441,18 +1430,18 @@ export default function AdminReportReview({
                   disabled={completionReport.status === "publisert"}
                   rows={4}
                   placeholder="Beskriv hva prosjektansvarlig må korrigere i Utførelsesrapport..."
-                  className="mt-3 w-full rounded-2xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-200 outline-none focus:border-red-500/40 disabled:opacity-50"
+                  className="mt-3 w-full rounded-2xl border border-[#653444] bg-[#1b0b12] p-4 text-xs text-slate-200 outline-none focus:border-red-500/40 disabled:opacity-50"
                 />
               </section>
             </div>
 
-            <aside className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0b0f17] xl:sticky xl:top-[96px]">
-              <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
+            <aside className="overflow-hidden rounded-3xl border border-[#653444] bg-[#32121d] xl:sticky xl:top-[96px]">
+              <div className="flex items-center justify-between gap-3 border-b border-[#653444] px-5 py-4">
                 <div>
                   <p className="text-[10px] font-black uppercase tracking-wider text-cyan-400">
                     Utførelsesrapport · PDF
                   </p>
-                  <p className="mt-1 text-[11px] text-slate-500">
+                  <p className="mt-1 text-[11px] text-[#c8acb7]">
                     Samme godkjenningskrav som Teknisk rapport.
                   </p>
                 </div>
@@ -1464,7 +1453,7 @@ export default function AdminReportReview({
                     disabled={
                       completionPdfBusy || !completionDraft.trim() || !report2WorkLeadApproved
                     }
-                    className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3.5 py-2 text-xs font-extrabold disabled:opacity-50"
+                    className="flex items-center gap-2 rounded-xl border border-[#754453] bg-[#341722] px-3.5 py-2 text-xs font-extrabold disabled:opacity-50"
                   >
                     {completionPdfBusy ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -1486,10 +1475,10 @@ export default function AdminReportReview({
               ) : (
                 <div className="flex h-[calc(100vh-250px)] min-h-[720px] flex-col items-center justify-center px-8 text-center">
                   <FileText className="mb-3 h-10 w-10 text-slate-700" />
-                  <p className="text-sm font-extrabold text-slate-300">
+                  <p className="text-sm font-extrabold text-[#efdae2]">
                     PDF må genereres
                   </p>
-                  <p className="mt-2 max-w-sm text-xs text-slate-500">
+                  <p className="mt-2 max-w-sm text-xs text-[#c8acb7]">
                     Kontroller utførelsesrapporten, lagre sluttversjonen og generer PDF før publisering.
                   </p>
                 </div>
@@ -1506,7 +1495,7 @@ export default function AdminReportReview({
                 <p className="mt-1 text-xs font-extrabold text-white">
                   Arbeidsledelse og utførelse
                 </p>
-                <p className="mt-1 text-[10px] leading-5 text-slate-500">
+                <p className="mt-1 text-[10px] leading-5 text-[#c8acb7]">
                   Når Miroslav godkjenner, vises teksten i PDF-en: «Arbeidet har blitt ledet av bygningsingeniør Miroslav Subanovic og utført av Perun AS.»
                 </p>
               </div>
@@ -1525,7 +1514,7 @@ export default function AdminReportReview({
                 className={`flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-extrabold disabled:opacity-50 ${
                   report2WorkLeadApproved
                     ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                    : "border-slate-700 bg-slate-900 text-slate-300"
+                    : "border-[#754453] bg-[#341722] text-[#efdae2]"
                 }`}
               >
                 {approvalBusy === "rapport2-work_lead" ? (
@@ -1541,13 +1530,13 @@ export default function AdminReportReview({
           </section>
 
           {completionReport.status !== "publisert" ? (
-            <section className="sticky bottom-3 z-30 rounded-2xl border border-slate-700 bg-slate-950/95 p-4 shadow-2xl backdrop-blur">
+            <section className="sticky bottom-3 z-30 rounded-2xl border border-[#754453] bg-[#1b0b12]/95 p-4 shadow-2xl backdrop-blur">
               <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
                 <div>
-                  <p className="text-xs font-bold text-slate-300">
+                  <p className="text-xs font-bold text-[#efdae2]">
                     Utførelsesrapporten følger samme kontrollflyt som Teknisk rapport.
                   </p>
-                  <p className="mt-1 text-[10px] text-slate-500">
+                  <p className="mt-1 text-[10px] text-[#c8acb7]">
                     Returner ved feil, eller godkjenn og publiser etter at PDF er kontrollert.
                   </p>
                 </div>
@@ -1561,7 +1550,7 @@ export default function AdminReportReview({
                       !completionDraft.trim() ||
                       !completionEditable
                     }
-                    className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-extrabold disabled:opacity-50"
+                    className="flex items-center gap-2 rounded-xl border border-[#754453] bg-[#341722] px-4 py-2.5 text-xs font-extrabold disabled:opacity-50"
                   >
                     {completionSaving ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -1635,7 +1624,7 @@ export default function AdminReportReview({
                   <p className="text-xs font-extrabold text-cyan-300">
                     Utførelsesrapporten er publisert til kunden.
                   </p>
-                  <p className="mt-1 text-[11px] text-slate-400">
+                  <p className="mt-1 text-[11px] text-[#d7bfca]">
                     Arbeidet er dokumentert ferdig. Velg avslutning dersom saken ikke allerede er overført til vedlikehold eller garanti.
                   </p>
                   {closureResult && (
@@ -1663,8 +1652,8 @@ export default function AdminReportReview({
 
         {showClosureDialog && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-            <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-slate-700 bg-[#0b0f17] shadow-2xl">
-              <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-6 py-5">
+            <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-[#754453] bg-[#32121d] shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-[#653444] px-6 py-5">
                 <div>
                   <p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-400">
                     Ferdigstilling
@@ -1672,14 +1661,14 @@ export default function AdminReportReview({
                   <h2 className="mt-1 text-xl font-black text-white">
                     Hvordan skal saken følges opp videre?
                   </h2>
-                  <p className="mt-2 text-xs leading-5 text-slate-400">
+                  <p className="mt-2 text-xs leading-5 text-[#d7bfca]">
                     Utførelsesrapporten er publisert. Arbeidsoppdraget skal nå avsluttes og eventuelt overføres til vedlikehold eller garanti.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => !closureSaving && setShowClosureDialog(false)}
-                  className="rounded-xl border border-slate-700 bg-slate-900 p-2 text-slate-400 hover:text-white"
+                  className="rounded-xl border border-[#754453] bg-[#341722] p-2 text-[#d7bfca] hover:text-white"
                   aria-label="Lukk"
                 >
                   <X className="h-4 w-4" />
@@ -1719,7 +1708,7 @@ export default function AdminReportReview({
                       className={`rounded-2xl border p-4 text-left transition ${
                         closureType === option.value
                           ? "border-cyan-400/60 bg-cyan-500/10"
-                          : "border-slate-800 bg-slate-950 hover:border-slate-700"
+                          : "border-[#653444] bg-[#1b0b12] hover:border-[#754453]"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-3">
@@ -1730,7 +1719,7 @@ export default function AdminReportReview({
                           className={`flex h-5 w-5 items-center justify-center rounded-full border ${
                             closureType === option.value
                               ? "border-cyan-400 bg-cyan-400 text-slate-950"
-                              : "border-slate-600"
+                              : "border-[#885766]"
                           }`}
                         >
                           {closureType === option.value && (
@@ -1738,7 +1727,7 @@ export default function AdminReportReview({
                           )}
                         </span>
                       </div>
-                      <p className="mt-2 text-[11px] leading-5 text-slate-500">
+                      <p className="mt-2 text-[11px] leading-5 text-[#c8acb7]">
                         {option.text}
                       </p>
                     </button>
@@ -1746,9 +1735,9 @@ export default function AdminReportReview({
                 </div>
 
                 {closureType === "vedlikehold" && (
-                  <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
+                  <div className="rounded-2xl border border-[#653444] bg-[#1b0b12] p-4">
                     <label className="block">
-                      <span className="text-[11px] font-extrabold text-slate-300">
+                      <span className="text-[11px] font-extrabold text-[#efdae2]">
                         Første vedlikeholdskontroll
                       </span>
                       <select
@@ -1756,7 +1745,7 @@ export default function AdminReportReview({
                         onChange={(event) =>
                           setMaintenanceInterval(event.target.value)
                         }
-                        className="mt-2 w-full rounded-xl border border-slate-700 bg-[#0b0f17] px-4 py-3 text-sm text-white outline-none focus:border-cyan-500/50"
+                        className="mt-2 w-full rounded-xl border border-[#754453] bg-[#32121d] px-4 py-3 text-sm text-white outline-none focus:border-cyan-500/50"
                       >
                         <option value="kontroll_3m">Om 3 måneder</option>
                         <option value="kontroll_6m">Om 6 måneder</option>
@@ -1782,25 +1771,25 @@ export default function AdminReportReview({
                 )}
 
                 <label className="block">
-                  <span className="text-[11px] font-extrabold text-slate-300">
-                    Intern merknad <span className="font-normal text-slate-600">(valgfritt)</span>
+                  <span className="text-[11px] font-extrabold text-[#efdae2]">
+                    Intern merknad <span className="font-normal text-[#bd9eaa]">(valgfritt)</span>
                   </span>
                   <textarea
                     value={closureReason}
                     onChange={(event) => setClosureReason(event.target.value)}
                     rows={3}
                     placeholder="Eksempel: årlig kontroll av beslag og gjennomføringer."
-                    className="mt-2 w-full resize-none rounded-2xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-200 outline-none focus:border-cyan-500/50"
+                    className="mt-2 w-full resize-none rounded-2xl border border-[#653444] bg-[#1b0b12] p-4 text-xs text-slate-200 outline-none focus:border-cyan-500/50"
                   />
                 </label>
               </div>
 
-              <div className="flex flex-col-reverse gap-2 border-t border-slate-800 px-6 py-4 sm:flex-row sm:justify-end">
+              <div className="flex flex-col-reverse gap-2 border-t border-[#653444] px-6 py-4 sm:flex-row sm:justify-end">
                 <button
                   type="button"
                   onClick={() => setShowClosureDialog(false)}
                   disabled={closureSaving}
-                  className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-bold text-slate-300 disabled:opacity-50"
+                  className="rounded-xl border border-[#754453] bg-[#341722] px-4 py-2.5 text-xs font-bold text-[#efdae2] disabled:opacity-50"
                 >
                   Gjør dette senere
                 </button>
@@ -1826,8 +1815,8 @@ export default function AdminReportReview({
   }
 
   return (
-    <div className="min-h-screen bg-[#070a11] text-white">
-      <header className="sticky top-0 z-40 bg-slate-950 border-b border-slate-800 px-6 py-4">
+    <div className="min-h-screen bg-[#270b13] text-white">
+      <header className="sticky top-0 z-40 bg-[#1b0b12] border-b border-[#653444] px-6 py-4">
         <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-4">
           <div>
             <p className="text-[10px] uppercase tracking-wider font-black text-orange-400">
@@ -1836,7 +1825,7 @@ export default function AdminReportReview({
             <h1 className="text-lg font-extrabold">
               Rapport #{report?.id ?? "–"} · Oppdrag #{inquiryId}
             </h1>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-[#d7bfca] mt-1">
               {[customerName, address].filter(Boolean).join(" · ")}
             </p>
           </div>
@@ -1844,7 +1833,7 @@ export default function AdminReportReview({
           <button
             type="button"
             onClick={() => onBack?.()}
-            className="px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-xs font-bold text-slate-300 hover:text-white flex items-center gap-2"
+            className="px-4 py-2.5 rounded-xl bg-[#341722] border border-[#754453] text-xs font-bold text-[#efdae2] hover:text-white flex items-center gap-2"
           >
             <ArrowLeft className="w-4 h-4" />
             Tilbake til rapporter
@@ -1854,12 +1843,28 @@ export default function AdminReportReview({
 
       <main className="max-w-[1600px] mx-auto px-4 md:px-8 py-6 space-y-5">
         {!report ? (
-          <section className="bg-[#0b0f17] border border-slate-800 rounded-3xl p-8">
-            <p className="text-sm font-bold">Ingen rapport funnet.</p>
+          <section className="bg-[#32121d] border border-[#653444] rounded-3xl p-12 text-center">
+            <FileText className="w-9 h-9 text-slate-700 mx-auto" />
+            <p className="mt-4 text-sm font-bold text-[#efdae2]">Ingen rapport funnet</p>
+            <p className="mt-1 text-xs text-[#c8acb7]">
+              Det finnes ingen teknisk rapport knyttet til oppdrag #{inquiryId} ennå.
+              Opprett et Rapport 1-utkast fra eksisterende kontrollpunkter og dokumentasjon.
+            </p>
+            {error && <p role="alert" className="mt-4 text-xs text-red-300">{error}</p>}
+            {message && <p role="status" className="mt-4 text-xs text-emerald-300">{message}</p>}
+            <button
+              type="button"
+              onClick={() => void createAdminDraft()}
+              disabled={creatingDraft}
+              className="mt-5 inline-flex items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-5 py-3 text-xs font-black text-slate-950 transition hover:bg-amber-400 disabled:opacity-50"
+            >
+              {creatingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+              {creatingDraft ? "Oppretter rapport…" : "Lag rapport – Opprett Rapport 1-utkast"}
+            </button>
           </section>
         ) : (
           <>
-            <section className="bg-[#0b0f17] border border-slate-800 rounded-2xl px-5 py-4">
+            <section className="bg-[#32121d] border border-[#653444] rounded-2xl px-5 py-4">
               <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -1884,7 +1889,7 @@ export default function AdminReportReview({
                       {hasUnsavedChanges ? "Ulagrede endringer" : "Lagret"}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <p className="text-xs text-[#d7bfca] mt-1">
                     Kontroller hvert feltpunkt, velg dokumentasjonsbilder og
                     rediger sluttteksten. Lyd og transkripsjon er kun
                     kontrollgrunnlag.
@@ -1892,18 +1897,35 @@ export default function AdminReportReview({
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <div className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-400">
+                  <div className="px-3 py-2 rounded-xl bg-[#1b0b12] border border-[#653444] text-[11px] text-[#d7bfca]">
                     <strong className="text-white">{checklistRows.length}</strong>{" "}
                     punkter
                   </div>
-                  <div className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-400">
+                  <div className="px-3 py-2 rounded-xl bg-[#1b0b12] border border-[#653444] text-[11px] text-[#d7bfca]">
                     <strong className="text-white">{selectedPhotoCount}</strong>{" "}
                     bilder valgt
                   </div>
+                  {report?.revision_no ? (
+                    <div className="px-3 py-2 rounded-xl bg-[#1b0b12] border border-[#653444] text-[11px] text-[#d7bfca]">
+                      Revisjon <strong className="text-white">{report.revision_no}</strong>
+                    </div>
+                  ) : null}
+                  {report?.submitted_at ? (
+                    <div className="px-3 py-2 rounded-xl bg-[#1b0b12] border border-[#653444] text-[11px] text-[#d7bfca]">
+                      Sendt inn{" "}
+                      <strong className="text-white">
+                        {new Date(String(report.submitted_at).replace(" ", "T")).toLocaleDateString("nb-NO", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          year: "numeric",
+                        })}
+                      </strong>
+                    </div>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => setShowOriginal(true)}
-                    className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-bold text-slate-300 hover:text-white flex items-center gap-2"
+                    className="px-4 py-2 rounded-xl bg-[#341722] border border-[#754453] text-xs font-bold text-[#efdae2] hover:text-white flex items-center gap-2"
                   >
                     <Eye className="w-4 h-4" />
                     Originalutkast
@@ -1930,19 +1952,19 @@ export default function AdminReportReview({
               <div className="space-y-4">
                 {adminSections && (
                   <>
-                    <section className="bg-[#0b0f17] border border-slate-800 rounded-2xl overflow-hidden">
-                      <div className="px-5 py-4 border-b border-slate-800">
+                    <section className="bg-[#32121d] border border-[#653444] rounded-2xl overflow-hidden">
+                      <div className="px-5 py-4 border-b border-[#653444]">
                         <p className="text-[10px] uppercase tracking-wider font-black text-orange-400">
                           Rapportens hoveddel
                         </p>
-                        <p className="text-[11px] text-slate-500 mt-1">
+                        <p className="text-[11px] text-[#c8acb7] mt-1">
                           Disse feltene bygger rammen rundt kontrollpunktene.
                         </p>
                       </div>
 
                       <div className="p-5 grid grid-cols-1 gap-4">
                         <label className="block">
-                          <span className="text-[11px] font-extrabold text-slate-300">
+                          <span className="text-[11px] font-extrabold text-[#efdae2]">
                             1. Sammendrag og hovedkonklusjon
                           </span>
                           <textarea
@@ -1952,13 +1974,30 @@ export default function AdminReportReview({
                             }
                             readOnly={!editable || report.status === "publisert"}
                             rows={5}
-                            className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-orange-500/50 read-only:opacity-70"
+                            className="mt-2 w-full bg-[#1b0b12] border border-[#653444] rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-rose-400/60 read-only:opacity-70"
                           />
                         </label>
 
                         <label className="block">
-                          <span className="text-[11px] font-extrabold text-slate-300">
-                            2. Oppdrag og omfang
+                          <span className="text-[11px] font-extrabold text-[#efdae2]">
+                            2. Hovedårsak til lekkasjen
+                          </span>
+                          <p className="mt-1 text-[11px] leading-5 text-[#d7bfca]">
+                            Beskriv påvist årsak, vannets inntrengningsvei og dokumentasjonsgrunnlag. Bruk «sannsynlig» dersom årsaken ikke er sikkert fastslått.
+                          </p>
+                          <textarea
+                            value={adminSections.main_cause}
+                            onChange={(e) => updateGlobalSection("main_cause", e.target.value)}
+                            readOnly={!editable || report.status === "publisert"}
+                            rows={5}
+                            placeholder="Hovedårsak eller sannsynlig hovedårsak, med henvisning til registrerte funn …"
+                            className="mt-2 w-full bg-[#1b0b12] border border-[#653444] rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-rose-400/60 read-only:opacity-70"
+                          />
+                        </label>
+
+                        <label className="block">
+                          <span className="text-[11px] font-extrabold text-[#efdae2]">
+                            3. Oppdrag og omfang
                           </span>
                           <textarea
                             value={adminSections.scope}
@@ -1967,7 +2006,7 @@ export default function AdminReportReview({
                             }
                             readOnly={!editable || report.status === "publisert"}
                             rows={4}
-                            className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-orange-500/50 read-only:opacity-70"
+                            className="mt-2 w-full bg-[#1b0b12] border border-[#653444] rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-rose-400/60 read-only:opacity-70"
                           />
                         </label>
                       </div>
@@ -1978,7 +2017,7 @@ export default function AdminReportReview({
                         <p className="text-[10px] uppercase tracking-wider font-black text-cyan-400">
                           3. Kontrollpunkter og feltgrunnlag
                         </p>
-                        <p className="text-[11px] text-slate-500 mt-1">
+                        <p className="text-[11px] text-[#c8acb7] mt-1">
                           Prosjektansvarliges feltdata vises urørt. Admin redigerer
                           bare sluttteksten og bildevalget.
                         </p>
@@ -1986,7 +2025,7 @@ export default function AdminReportReview({
                     </div>
 
                     {checklistRows.length === 0 ? (
-                      <div className="bg-[#0b0f17] border border-slate-800 rounded-2xl p-6 text-xs text-slate-500">
+                      <div className="bg-[#32121d] border border-[#653444] rounded-2xl p-6 text-xs text-[#c8acb7]">
                         Ingen kontrollpunkter ble returnert fra sjekklisten.
                       </div>
                     ) : (
@@ -2009,10 +2048,10 @@ export default function AdminReportReview({
                         return (
                           <article
                             key={key}
-                            className={`bg-[#0b0f17] border rounded-2xl overflow-hidden ${
+                            className={`bg-[#32121d] border rounded-2xl overflow-hidden ${
                               section.included
-                                ? "border-slate-700"
-                                : "border-slate-800 opacity-75"
+                                ? "border-[#754453]"
+                                : "border-[#653444] opacity-75"
                             }`}
                           >
                             <div className="px-5 py-4 flex items-center justify-between gap-4">
@@ -2021,6 +2060,9 @@ export default function AdminReportReview({
                                 onClick={() => toggleExpanded(key)}
                                 className="min-w-0 flex-1 text-left flex items-center gap-3"
                               >
+                                <span className="w-7 h-7 rounded-lg bg-[#341722] border border-[#653444] flex items-center justify-center text-[10px] font-black text-[#d7bfca] shrink-0">
+                                  {rowIndex + 1}
+                                </span>
                                 <div
                                   className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 ${tgClass(
                                     row.status
@@ -2035,7 +2077,7 @@ export default function AdminReportReview({
                                   <p className="font-extrabold text-sm text-white truncate">
                                     {row.item_title}
                                   </p>
-                                  <div className="flex flex-wrap gap-3 mt-1 text-[10px] text-slate-500">
+                                  <div className="flex flex-wrap gap-3 mt-1 text-[10px] text-[#c8acb7]">
                                     <span className="flex items-center gap-1">
                                       <Camera className="w-3 h-3" />
                                       {itemPhotos.length} bilder · {selectedCount} valgt
@@ -2064,7 +2106,7 @@ export default function AdminReportReview({
                                   className={`px-3 py-2 rounded-xl border text-[10px] font-black flex items-center gap-1.5 disabled:opacity-50 ${
                                     section.included
                                       ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-                                      : "bg-slate-900 border-slate-700 text-slate-500"
+                                      : "bg-[#341722] border-[#754453] text-[#c8acb7]"
                                   }`}
                                 >
                                   {section.included && (
@@ -2078,7 +2120,7 @@ export default function AdminReportReview({
                                 <button
                                   type="button"
                                   onClick={() => toggleExpanded(key)}
-                                  className="w-9 h-9 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center text-slate-400"
+                                  className="w-9 h-9 rounded-xl bg-[#341722] border border-[#754453] flex items-center justify-center text-[#d7bfca]"
                                 >
                                   {isOpen ? (
                                     <ChevronUp className="w-4 h-4" />
@@ -2090,27 +2132,27 @@ export default function AdminReportReview({
                             </div>
 
                             {isOpen && (
-                              <div className="border-t border-slate-800 p-5 space-y-5">
+                              <div className="border-t border-[#653444] p-5 space-y-5">
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                  <div className="rounded-2xl bg-slate-950 border border-slate-800 p-4">
-                                    <p className="text-[9px] uppercase tracking-wider font-black text-slate-500">
+                                  <div className="rounded-2xl bg-[#1b0b12] border border-[#653444] p-4">
+                                    <p className="text-[9px] uppercase tracking-wider font-black text-[#c8acb7]">
                                       Prosjektansvarlig · feltregistrering
                                     </p>
-                                    <p className="text-xs leading-6 text-slate-300 mt-2 whitespace-pre-wrap">
+                                    <p className="text-xs leading-6 text-[#efdae2] mt-2 whitespace-pre-wrap">
                                       {row.comment?.trim() ||
                                         "Ingen skriftlig kommentar registrert på dette punktet."}
                                     </p>
                                   </div>
 
-                                  <div className="rounded-2xl bg-slate-950 border border-slate-800 p-4">
-                                    <p className="text-[9px] uppercase tracking-wider font-black text-slate-500">
+                                  <div className="rounded-2xl bg-[#1b0b12] border border-[#653444] p-4">
+                                    <p className="text-[9px] uppercase tracking-wider font-black text-[#c8acb7]">
                                       Kontrollgrunnlag
                                     </p>
                                     <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
-                                      <span className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400">
+                                      <span className="px-2.5 py-1.5 rounded-lg bg-[#341722] border border-[#653444] text-[#d7bfca]">
                                         {itemPhotos.length} dokumentasjonsbilder
                                       </span>
-                                      <span className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400">
+                                      <span className="px-2.5 py-1.5 rounded-lg bg-[#341722] border border-[#653444] text-[#d7bfca]">
                                         {audioCount} lydnotat
                                       </span>
                                     </div>
@@ -2178,11 +2220,11 @@ export default function AdminReportReview({
 
                                             {openTranscripts[photo.id] &&
                                               photo.audio_transcript && (
-                                                <div className="mt-3 rounded-xl bg-slate-950 border border-slate-800 p-3">
-                                                  <p className="text-[9px] uppercase tracking-wider font-black text-slate-500 mb-1">
+                                                <div className="mt-3 rounded-xl bg-[#1b0b12] border border-[#653444] p-3">
+                                                  <p className="text-[9px] uppercase tracking-wider font-black text-[#c8acb7] mb-1">
                                                     Automatisk transkripsjon
                                                   </p>
-                                                  <p className="text-xs leading-6 text-slate-300 whitespace-pre-wrap">
+                                                  <p className="text-xs leading-6 text-[#efdae2] whitespace-pre-wrap">
                                                     {photo.audio_transcript}
                                                   </p>
                                                 </div>
@@ -2199,7 +2241,7 @@ export default function AdminReportReview({
                                       <p className="text-[10px] uppercase tracking-wider font-black text-cyan-400">
                                         Bilder
                                       </p>
-                                      <p className="text-[10px] text-slate-500 mt-0.5">
+                                      <p className="text-[10px] text-[#c8acb7] mt-0.5">
                                         Klikk på bildet for stor visning. Admin kan
                                         velge hvert bilde inn eller ut av PDF-en.
                                       </p>
@@ -2207,7 +2249,7 @@ export default function AdminReportReview({
                                   </div>
 
                                   {itemPhotos.length === 0 ? (
-                                    <div className="rounded-xl border border-dashed border-slate-800 p-5 text-center text-[11px] text-slate-600">
+                                    <div className="rounded-xl border border-dashed border-[#653444] p-5 text-center text-[11px] text-[#bd9eaa]">
                                       Ingen bilder er knyttet til dette punktet.
                                     </div>
                                   ) : (
@@ -2226,7 +2268,7 @@ export default function AdminReportReview({
                                             className={`rounded-2xl overflow-hidden border ${
                                               selected
                                                 ? "border-emerald-500/50 bg-emerald-500/5"
-                                                : "border-slate-800 bg-slate-950"
+                                                : "border-[#653444] bg-[#1b0b12]"
                                             }`}
                                           >
                                             {imageUrl ? (
@@ -2235,7 +2277,7 @@ export default function AdminReportReview({
                                                 onClick={() =>
                                                   setLightboxUrl(imageUrl)
                                                 }
-                                                className="block w-full aspect-[4/3] bg-slate-900 overflow-hidden"
+                                                className="relative block w-full aspect-[4/3] bg-[#341722] overflow-hidden"
                                               >
                                                 <img
                                                   src={imageUrl}
@@ -2245,15 +2287,20 @@ export default function AdminReportReview({
                                                   }
                                                   className="w-full h-full object-cover hover:scale-[1.02] transition-transform"
                                                 />
+                                                {selected && (
+                                                  <span className="absolute left-2 top-2 rounded-md bg-emerald-500 px-1.5 py-0.5 text-[9px] font-black text-slate-950">
+                                                    I PDF
+                                                  </span>
+                                                )}
                                               </button>
                                             ) : (
-                                              <div className="aspect-[4/3] bg-slate-900 flex items-center justify-center">
+                                              <div className="aspect-[4/3] bg-[#341722] flex items-center justify-center">
                                                 <ImageIcon className="w-7 h-7 text-slate-700" />
                                               </div>
                                             )}
 
                                             <div className="p-3">
-                                              <p className="text-[10px] text-slate-400 line-clamp-2 min-h-[28px]">
+                                              <p className="text-[10px] text-[#d7bfca] line-clamp-2 min-h-[28px]">
                                                 {photo.caption_text ||
                                                   `Dokumentasjon #${photo.id}`}
                                               </p>
@@ -2274,7 +2321,7 @@ export default function AdminReportReview({
                                                 className={`mt-2 w-full px-2 py-2 rounded-xl border text-[10px] font-black flex items-center justify-center gap-1.5 disabled:opacity-50 ${
                                                   selected
                                                     ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-                                                    : "bg-slate-900 border-slate-700 text-slate-400"
+                                                    : "bg-[#341722] border-[#754453] text-[#d7bfca]"
                                                 }`}
                                               >
                                                 {savingPhotoId === photo.id ? (
@@ -2301,7 +2348,7 @@ export default function AdminReportReview({
                                     <span className="text-[10px] uppercase tracking-wider font-black text-orange-400">
                                       Admins slutttekst for punktet
                                     </span>
-                                    <span className="text-[10px] text-slate-600">
+                                    <span className="text-[10px] text-[#bd9eaa]">
                                       {section.admin_text.length} tegn
                                     </span>
                                   </div>
@@ -2319,7 +2366,7 @@ export default function AdminReportReview({
                                     }
                                     rows={5}
                                     placeholder="Skriv admins kvalitetssikrede vurdering av dette kontrollpunktet..."
-                                    className="mt-2 w-full bg-slate-950 border border-orange-500/20 rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-orange-500/50 read-only:opacity-60"
+                                    className="mt-2 w-full bg-[#1b0b12] border border-orange-500/20 rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-rose-400/60 read-only:opacity-60"
                                   />
                                 </label>
                               </div>
@@ -2330,11 +2377,11 @@ export default function AdminReportReview({
                     )}
 
                     {(photosByItem.__other__ || []).length > 0 && (
-                      <section className="bg-[#0b0f17] border border-slate-800 rounded-2xl p-5">
+                      <section className="bg-[#32121d] border border-[#653444] rounded-2xl p-5">
                         <p className="text-[10px] uppercase tracking-wider font-black text-cyan-400">
                           Øvrig dokumentasjon
                         </p>
-                        <p className="text-[11px] text-slate-500 mt-1">
+                        <p className="text-[11px] text-[#c8acb7] mt-1">
                           Bilder eller lyd som ikke er koblet til et bestemt
                           kontrollpunkt.
                         </p>
@@ -2354,14 +2401,14 @@ export default function AdminReportReview({
                                 className={`rounded-2xl overflow-hidden border ${
                                   selected
                                     ? "border-emerald-500/50"
-                                    : "border-slate-800"
+                                    : "border-[#653444]"
                                 }`}
                               >
                                 {imageUrl && (
                                   <button
                                     type="button"
                                     onClick={() => setLightboxUrl(imageUrl)}
-                                    className="block w-full aspect-[4/3] bg-slate-900"
+                                    className="block w-full aspect-[4/3] bg-[#341722]"
                                   >
                                     <img
                                       src={imageUrl}
@@ -2394,7 +2441,7 @@ export default function AdminReportReview({
                                     className={`w-full px-2 py-2 rounded-xl border text-[10px] font-black disabled:opacity-50 ${
                                       selected
                                         ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-                                        : "bg-slate-900 border-slate-700 text-slate-400"
+                                        : "bg-[#341722] border-[#754453] text-[#d7bfca]"
                                     }`}
                                   >
                                     {selected ? "Med i PDF" : "Velg inn"}
@@ -2407,8 +2454,8 @@ export default function AdminReportReview({
                       </section>
                     )}
 
-                    <section className="bg-[#0b0f17] border border-slate-800 rounded-2xl overflow-hidden">
-                      <div className="px-5 py-4 border-b border-slate-800">
+                    <section className="bg-[#32121d] border border-[#653444] rounded-2xl overflow-hidden">
+                      <div className="px-5 py-4 border-b border-[#653444]">
                         <p className="text-[10px] uppercase tracking-wider font-black text-orange-400">
                           Rapportens avsluttende vurderinger
                         </p>
@@ -2416,8 +2463,8 @@ export default function AdminReportReview({
 
                       <div className="p-5 space-y-4">
                         <label className="block">
-                          <span className="text-[11px] font-extrabold text-slate-300">
-                            4. Anbefalte tiltak
+                          <span className="text-[11px] font-extrabold text-[#efdae2]">
+                            5. Anbefalte tiltak
                           </span>
                           <textarea
                             value={adminSections.recommendations}
@@ -2429,13 +2476,13 @@ export default function AdminReportReview({
                             }
                             readOnly={!editable || report.status === "publisert"}
                             rows={6}
-                            className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-orange-500/50 read-only:opacity-70"
+                            className="mt-2 w-full bg-[#1b0b12] border border-[#653444] rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-rose-400/60 read-only:opacity-70"
                           />
                         </label>
 
                         <label className="block">
-                          <span className="text-[11px] font-extrabold text-slate-300">
-                            5. Konsekvenser ved utsatt utbedring
+                          <span className="text-[11px] font-extrabold text-[#efdae2]">
+                            6. Konsekvenser ved utsatt utbedring
                           </span>
                           <textarea
                             value={adminSections.consequences}
@@ -2447,13 +2494,13 @@ export default function AdminReportReview({
                             }
                             readOnly={!editable || report.status === "publisert"}
                             rows={4}
-                            className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-orange-500/50 read-only:opacity-70"
+                            className="mt-2 w-full bg-[#1b0b12] border border-[#653444] rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-rose-400/60 read-only:opacity-70"
                           />
                         </label>
 
                         <label className="block">
-                          <span className="text-[11px] font-extrabold text-slate-300">
-                            6. Forbehold og begrensninger
+                          <span className="text-[11px] font-extrabold text-[#efdae2]">
+                            7. Forbehold og begrensninger
                           </span>
                           <textarea
                             value={adminSections.limitations}
@@ -2465,7 +2512,7 @@ export default function AdminReportReview({
                             }
                             readOnly={!editable || report.status === "publisert"}
                             rows={5}
-                            className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-orange-500/50 read-only:opacity-70"
+                            className="mt-2 w-full bg-[#1b0b12] border border-[#653444] rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-rose-400/60 read-only:opacity-70"
                           />
                         </label>
                       </div>
@@ -2473,13 +2520,13 @@ export default function AdminReportReview({
                   </>
                 )}
 
-                <section className="bg-[#0b0f17] border border-slate-800 rounded-2xl p-5">
+                <section className="bg-[#32121d] border border-[#653444] rounded-2xl p-5">
                   <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4">
                     <div>
-                      <p className="text-[10px] uppercase tracking-wider font-black text-slate-500">
+                      <p className="text-[10px] uppercase tracking-wider font-black text-[#c8acb7]">
                         Kommentar ved retur
                       </p>
-                      <p className="text-[11px] text-slate-500 mt-1 leading-5">
+                      <p className="text-[11px] text-[#c8acb7] mt-1 leading-5">
                         Bare nødvendig dersom rapporten returneres til
                         prosjektansvarlig.
                       </p>
@@ -2490,19 +2537,19 @@ export default function AdminReportReview({
                       disabled={report.status === "publisert"}
                       rows={3}
                       placeholder="Eksempel: Kontroller konklusjonen og legg ved nærbilder av oppkant mot gesims."
-                      className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs text-slate-200 outline-none focus:border-red-500/40 disabled:opacity-50"
+                      className="w-full bg-[#1b0b12] border border-[#653444] rounded-2xl p-4 text-xs text-slate-200 outline-none focus:border-red-500/40 disabled:opacity-50"
                     />
                   </div>
                 </section>
               </div>
 
-              <aside className="bg-[#0b0f17] border border-slate-800 rounded-3xl overflow-hidden xl:sticky xl:top-[96px]">
-                <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between gap-3">
+              <aside className="bg-[#32121d] border border-[#653444] rounded-3xl overflow-hidden xl:sticky xl:top-[96px]">
+                <div className="px-5 py-4 border-b border-[#653444] flex items-center justify-between gap-3">
                   <div>
                     <p className="text-[10px] uppercase tracking-wider font-black text-cyan-400">
                       PDF-forhåndsvisning
                     </p>
-                    <p className="text-[11px] text-slate-500 mt-1">
+                    <p className="text-[11px] text-[#c8acb7] mt-1">
                       Oppdater etter tekst- eller bildeendringer.
                     </p>
                   </div>
@@ -2514,7 +2561,7 @@ export default function AdminReportReview({
                       report.status === "publisert" ||
                       !adminText.trim()
                     }
-                    className="px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
+                    className="px-3.5 py-2 rounded-xl bg-[#341722] border border-[#754453] text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
                   >
                     {generatingPdf ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -2535,10 +2582,10 @@ export default function AdminReportReview({
                 ) : (
                   <div className="h-[calc(100vh-250px)] min-h-[720px] flex flex-col items-center justify-center px-8 text-center">
                     <FileText className="w-10 h-10 text-slate-700 mb-3" />
-                    <p className="text-sm font-extrabold text-slate-300">
+                    <p className="text-sm font-extrabold text-[#efdae2]">
                       PDF må oppdateres
                     </p>
-                    <p className="text-xs text-slate-500 mt-2 max-w-sm">
+                    <p className="text-xs text-[#c8acb7] mt-2 max-w-sm">
                       Lagre kvalitetssikringen og klikk «Oppdater PDF». Valgte
                       bilder blir hentet fra feltgrunnlaget.
                     </p>
@@ -2553,18 +2600,18 @@ export default function AdminReportReview({
                 onClick={() => setShowOriginal(false)}
               >
                 <aside
-                  className="absolute left-0 top-0 h-full w-full max-w-2xl bg-[#0b0f17] border-r border-slate-700 shadow-2xl flex flex-col"
+                  className="absolute left-0 top-0 h-full w-full max-w-2xl bg-[#32121d] border-r border-[#754453] shadow-2xl flex flex-col"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between gap-4">
+                  <div className="px-6 py-5 border-b border-[#653444] flex items-center justify-between gap-4">
                     <div>
-                      <p className="text-[10px] uppercase tracking-wider font-black text-slate-500">
+                      <p className="text-[10px] uppercase tracking-wider font-black text-[#c8acb7]">
                         Referanse
                       </p>
                       <h3 className="text-base font-extrabold mt-1">
                         Feltteamets originalutkast
                       </h3>
-                      <p className="text-[11px] text-slate-500 mt-1">
+                      <p className="text-[11px] text-[#c8acb7] mt-1">
                         Skrivebeskyttet original. Punktdata, bilder og lyd ligger
                         i hovededitoren.
                       </p>
@@ -2572,12 +2619,12 @@ export default function AdminReportReview({
                     <button
                       type="button"
                       onClick={() => setShowOriginal(false)}
-                      className="w-10 h-10 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-white"
+                      className="w-10 h-10 rounded-xl bg-[#341722] border border-[#754453] flex items-center justify-center text-[#d7bfca] hover:text-white"
                     >
                       <X className="w-4 h-4" />
                     </button>
                   </div>
-                  <div className="flex-1 overflow-y-auto whitespace-pre-wrap p-6 text-[13px] leading-7 text-slate-300">
+                  <div className="flex-1 overflow-y-auto whitespace-pre-wrap p-6 text-[13px] leading-7 text-[#efdae2]">
                     {report.ai_draft || "Ingen rapporttekst."}
                   </div>
                 </aside>
@@ -2592,7 +2639,7 @@ export default function AdminReportReview({
                 <button
                   type="button"
                   onClick={() => setLightboxUrl("")}
-                  className="absolute top-5 right-5 w-11 h-11 rounded-xl bg-slate-950/80 border border-slate-700 flex items-center justify-center text-white"
+                  className="absolute top-5 right-5 w-11 h-11 rounded-xl bg-[#1b0b12]/80 border border-[#754453] flex items-center justify-center text-white"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -2605,116 +2652,21 @@ export default function AdminReportReview({
               </div>
             )}
 
-            <section className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] p-4">
-              <div className="mb-4">
-                <p className="text-[10px] font-black uppercase tracking-[0.12em] text-amber-300">
-                  Faglig ansvar · Rapport 1
-                </p>
-                <p className="mt-1 text-xs font-extrabold text-white">
-                  Godkjenning før endelig PDF
-                </p>
-                <p className="mt-1 text-[10px] leading-5 text-slate-500">
-                  Hver godkjenning vises først i rapporten etter at den er aktivert. Begge må være registrert før endelig PDF kan genereres og publiseres.
-                </p>
-              </div>
-
-              <div className="grid gap-3 lg:grid-cols-2">
-                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500">
-                        Feltkontroll
-                      </p>
-                      <p className="mt-1 text-xs font-black text-white">
-                        Miroslav Subanovic
-                      </p>
-                      <p className="mt-1 text-[10px] text-slate-500">
-                        Bygningsingeniør · Perun AS
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setReportApproval(
-                          "rapport1",
-                          report.id,
-                          "field_execution",
-                          !report1FieldApproved
-                        )
-                      }
-                      disabled={approvalBusy === "rapport1-field_execution" || report.status === "publisert"}
-                      className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-extrabold disabled:opacity-50 ${
-                        report1FieldApproved
-                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                          : "border-slate-700 bg-slate-900 text-slate-300"
-                      }`}
-                    >
-                      {approvalBusy === "rapport1-field_execution" ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : report1FieldApproved ? (
-                        <CheckCircle2 className="h-4 w-4" />
-                      ) : (
-                        <ShieldCheck className="h-4 w-4" />
-                      )}
-                      {report1FieldApproved ? "Godkjent" : "Godkjenn"}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500">
-                        Rapportkontroll
-                      </p>
-                      <p className="mt-1 text-xs font-black text-white">
-                        Marina Alizi
-                      </p>
-                      <p className="mt-1 text-[10px] text-slate-500">
-                        Bygningsingeniør · Perun AS
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setReportApproval(
-                          "rapport1",
-                          report.id,
-                          "report_review",
-                          !report1ReviewApproved
-                        )
-                      }
-                      disabled={approvalBusy === "rapport1-report_review" || report.status === "publisert"}
-                      className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-extrabold disabled:opacity-50 ${
-                        report1ReviewApproved
-                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                          : "border-slate-700 bg-slate-900 text-slate-300"
-                      }`}
-                    >
-                      {approvalBusy === "rapport1-report_review" ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : report1ReviewApproved ? (
-                        <CheckCircle2 className="h-4 w-4" />
-                      ) : (
-                        <ShieldCheck className="h-4 w-4" />
-                      )}
-                      {report1ReviewApproved ? "Godkjent" : "Godkjenn"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </section>
+            <ReportApprovalWorkflow inquiryId={inquiryId} reportId={report.id}
+                dirty={hasUnsavedChanges} pdfUrl={report.pdf_url}
+                onState={state => setApprovalLocked(["awaiting_pm", "awaiting_admin", "approved", "published"].includes(state))}
+                onUpdated={() => { void loadReviewData(); onChanged?.(); }} />
 
             {report.status !== "publisert" ? (
-              <section className="sticky bottom-3 z-30 bg-slate-950/95 backdrop-blur border border-slate-700 rounded-2xl p-4 shadow-2xl">
+              <section className="sticky bottom-3 z-30 bg-[#1b0b12]/95 backdrop-blur border border-[#754453] rounded-2xl p-4 shadow-2xl">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs text-slate-300 font-bold">
+                    <p className="text-xs text-[#efdae2] font-bold">
                       {hasUnsavedChanges
                         ? "Det finnes ulagrede endringer i punktredigeringen."
                         : "Punktredigeringen er lagret."}
                     </p>
-                    <p className="text-[10px] text-slate-500 mt-1">
+                    <p className="text-[10px] text-[#c8acb7] mt-1">
                       Lyd/transkripsjoner publiseres ikke. Kun valgte bilder og
                       admins slutttekst brukes i rapporten.
                     </p>
@@ -2725,7 +2677,7 @@ export default function AdminReportReview({
                       type="button"
                       onClick={handleSave}
                       disabled={saving || !adminText.trim()}
-                      className="px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
+                      className="px-4 py-2.5 rounded-xl bg-[#341722] border border-[#754453] text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
                     >
                       {saving ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
@@ -2735,7 +2687,7 @@ export default function AdminReportReview({
                       Lagre
                     </button>
 
-                    <button
+                    {false && (<button
                       type="button"
                       onClick={handleReturn}
                       disabled={returning || !returnNote.trim()}
@@ -2747,7 +2699,7 @@ export default function AdminReportReview({
                         <RotateCcw className="w-4 h-4" />
                       )}
                       Returner
-                    </button>
+                    </button>)}
 
                     {report.status === "godkjent" ? (
                       <button
@@ -2764,39 +2716,11 @@ export default function AdminReportReview({
                         {report.pdf_url ? "Oppdater PDF" : "Generer PDF"}
                       </button>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={handleApprove}
-                        disabled={approving || !adminText.trim()}
-                        className="px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
-                      >
-                        {approving ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <ShieldCheck className="w-4 h-4" />
-                        )}
-                        Godkjenn
-                      </button>
+                      null
                     )}
 
                     {report.status === "godkjent" && (
-                      <button
-                        type="button"
-                        onClick={handlePublish}
-                        disabled={
-                          publishing || !adminText.trim() || !report.pdf_url || !report1FullyApproved
-                        }
-                        className="px-5 py-2.5 rounded-xl bg-[#F5B800] hover:bg-amber-400 text-slate-950 text-xs font-black flex items-center gap-2 disabled:opacity-50"
-                      >
-                        {publishing ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Send className="w-4 h-4" />
-                        )}
-                        {isCorrection
-                          ? "Publiser korrigert rapport"
-                          : "Publiser til kunde"}
-                      </button>
+                      null
                     )}
                   </div>
                 </div>
@@ -2807,7 +2731,7 @@ export default function AdminReportReview({
                   <p className="text-xs font-extrabold text-cyan-300">
                     Rapporten er publisert til kunden.
                   </p>
-                  <p className="text-[11px] text-slate-400 mt-1">
+                  <p className="text-[11px] text-[#d7bfca] mt-1">
                     Publisert versjon er låst. Admin kan åpne en intern
                     korrigering ved behov.
                   </p>
@@ -2816,7 +2740,7 @@ export default function AdminReportReview({
                   type="button"
                   onClick={handleReopenPublished}
                   disabled={reopening}
-                  className="px-4 py-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-cyan-300 text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
+                  className="px-4 py-2.5 rounded-xl bg-[#341722] border border-cyan-500/30 text-cyan-300 text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
                 >
                   {reopening ? (
                     <Loader2 className="w-4 h-4 animate-spin" />

@@ -14,10 +14,9 @@ export default defineConfig({
 
   server: {
     port: 3000,
-
     proxy: {
       "/api": {
-        target: "https://taklekkasjevakten.no",
+        target: "https://api.taklekkasjevakten.no",
         changeOrigin: true,
         secure: true,
       },

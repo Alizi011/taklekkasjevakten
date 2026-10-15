@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { apiAssetUrl } from "../../lib/api";
 import {
   AlertCircle,
   AlertTriangle,
@@ -22,6 +24,15 @@ export type ChecklistStatus =
   | "tg3"
   | "ikke_aktuell";
 
+export interface ChecklistMedia {
+  id: number;
+  checklist_item_id?: string | null;
+  photo_url?: string | null;
+  audio_url?: string | null;
+  caption_text?: string | null;
+  created_at?: string | null;
+}
+
 export interface ChecklistItemData {
   id: string;
   title: string;
@@ -30,6 +41,7 @@ export interface ChecklistItemData {
   note: string;
   photoUrl?: string;
   audioUrl?: string;
+  attachments?: ChecklistMedia[];
 }
 
 interface ChecklistItemProps {
@@ -46,6 +58,7 @@ interface ChecklistItemProps {
   onPhotoSelect: (file: File) => void;
   onStartRecording: () => void;
   onStopRecording: () => void;
+  onAddComment: (comment: string) => Promise<void>;
 }
 
 const statusConfig: Record<
@@ -103,7 +116,11 @@ export default function ChecklistItem({
   onPhotoSelect,
   onStartRecording,
   onStopRecording,
+  onAddComment,
 }: ChecklistItemProps) {
+  const [newComment, setNewComment] = useState("");
+  const [addingComment, setAddingComment] = useState(false);
+  const attachments = item.attachments || [];
   const selected = item.status ? statusConfig[item.status] : null;
   const SelectedIcon = selected?.icon;
   const isExtra =
@@ -241,32 +258,47 @@ export default function ChecklistItem({
             />
           </div>
 
-          {(item.photoUrl || item.audioUrl) && (
-            <div className="mt-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white/60 p-3 sm:flex-row sm:items-center">
-              {item.photoUrl && (
-                <a
-                  href={item.photoUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-2 text-xs font-bold text-amber-700 hover:underline"
-                >
-                  <Camera className="h-4 w-4" />
-                  Vis bilde
-                </a>
-              )}
-
-              {item.audioUrl && (
-                <div className="flex min-w-0 items-center gap-2">
-                  <Play className="h-4 w-4 shrink-0 text-emerald-600" />
-                  <audio
-                    src={item.audioUrl}
-                    controls
-                    className="h-8 max-w-full"
-                  />
-                </div>
-              )}
-            </div>
-          )}
+          <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs font-bold text-slate-700">Lagret dokumentasjon ({attachments.length})</p>
+            {attachments.filter((entry) => entry.photo_url).length > 0 && (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {attachments.filter((entry) => entry.photo_url).map((entry) => (
+                  <a key={entry.id} href={apiAssetUrl(entry.photo_url)} target="_blank" rel="noopener noreferrer"
+                    className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                    <img src={apiAssetUrl(entry.photo_url)} alt={entry.caption_text || "Prosjektbilde"}
+                      loading="lazy" className="h-28 w-full object-cover" />
+                    {entry.caption_text && <p className="p-2 text-[10px] text-slate-700 break-words">{entry.caption_text}</p>}
+                  </a>
+                ))}
+              </div>
+            )}
+            {attachments.filter((entry) => entry.audio_url).map((entry) => (
+              <div key={entry.id} className="rounded-lg border border-slate-200 bg-white p-2">
+                <div className="mb-1 flex gap-2 text-[10px] text-slate-600"><Play className="h-3.5 w-3.5" /> Lydopptak #{entry.id}</div>
+                <audio controls preload="none" src={apiAssetUrl(entry.audio_url)} className="w-full" />
+              </div>
+            ))}
+            {attachments.filter((entry) => !entry.photo_url && !entry.audio_url && entry.caption_text).map((entry) => (
+              <div key={entry.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                <p className="whitespace-pre-wrap text-xs text-slate-700">{entry.caption_text}</p>
+                {entry.created_at && <p className="mt-1 text-[10px] text-slate-400">{entry.created_at}</p>}
+              </div>
+            ))}
+            <label className="block text-[10px] font-bold text-slate-600">Ny tilleggskommentar</label>
+            <textarea value={newComment} onChange={(event) => setNewComment(event.target.value)}
+              placeholder="Legg til en ny kommentar uten å endre tidligere kommentarer"
+              className="min-h-16 w-full rounded-lg border border-slate-300 bg-white p-2 text-xs text-slate-900" />
+            <button type="button" disabled={addingComment || !newComment.trim()}
+              onClick={async () => {
+                setAddingComment(true);
+                try { await onAddComment(newComment.trim()); setNewComment(""); }
+                catch { /* Error is displayed by the parent */ }
+                finally { setAddingComment(false); }
+              }}
+              className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">
+              {addingComment ? "Lagrer..." : "Lagre tilleggskommentar"}
+            </button>
+          </div>
 
           <div className="mt-4 flex flex-col gap-2 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2">

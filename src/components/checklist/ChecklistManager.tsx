@@ -3,6 +3,7 @@ import { ClipboardCheck, Loader2, PlusCircle } from "lucide-react";
 import ChecklistItem from "./ChecklistItem";
 import type {
   ChecklistItemData,
+  ChecklistMedia,
   ChecklistStatus,
 } from "./ChecklistItem";
 import ChecklistProgress from "./ChecklistProgress";
@@ -258,6 +259,7 @@ export default function ChecklistManager({
     buildItems(initialTemplate)
   );
   const [savedRows, setSavedRows] = useState<SavedChecklistRow[]>([]);
+  const mediaRef = useRef<ChecklistMedia[]>([]);
   const [openItemId, setOpenItemId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(inquiryId));
@@ -272,11 +274,12 @@ export default function ChecklistManager({
     rows: SavedChecklistRow[]
   ) => {
     const baseItems = buildItems(templateKey);
+    const byPoint = (key: string) => mediaRef.current.filter((m) => m.checklist_item_id === key);
 
     const merged = baseItems.map((item) => {
       const saved = rows.find((row) => row.item_id === item.id);
 
-      if (!saved) return item;
+      if (!saved) return { ...item, attachments: byPoint(item.id) };
 
       return {
         ...item,
@@ -284,6 +287,7 @@ export default function ChecklistManager({
         note: saved.comment || "",
         photoUrl: saved.photo_url || undefined,
         audioUrl: saved.audio_url || undefined,
+        attachments: byPoint(item.id),
       };
     });
 
@@ -303,6 +307,7 @@ export default function ChecklistManager({
         note: row.comment || "",
         photoUrl: row.photo_url || undefined,
         audioUrl: row.audio_url || undefined,
+        attachments: byPoint(row.item_id),
       }));
 
     setItems([...merged, ...customRows]);
@@ -318,11 +323,15 @@ export default function ChecklistManager({
     setError("");
 
     try {
-      const response = await fetch(
-        apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)
-      );
-      const data = await response.json();
-
+      const [response, mediaResponse] = await Promise.all([
+        fetch(apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)),
+        fetch(apiUrl(`/photos.php?inquiry_id=${inquiryId}`), { cache: "no-store" }),
+      ]);
+      const [data, mediaData] = await Promise.all([response.json(), mediaResponse.json()]);
+      if (!mediaResponse.ok || !mediaData.success) throw new Error("Kunne ikke hente dokumentasjonen.");
+      const media: ChecklistMedia[] = Array.isArray(mediaData.photos) ? mediaData.photos : [];
+      mediaRef.current = media;
+  
       if (!response.ok || !data.success) {
         throw new Error(
           data.message || "Kunne ikke hente lagret sjekkliste."
@@ -434,14 +443,44 @@ export default function ChecklistManager({
                 ...item,
                 status: updated.status,
                 note: updated.comment || "",
-                photoUrl: updated.photo_url || undefined,
-                audioUrl: updated.audio_url || undefined,
+                photoUrl: item.photoUrl,
+                audioUrl: item.audioUrl,
               }
             : item
         )
       );
     }
 
+    onChange?.();
+  };
+
+  const fetchSavedMedia = async () => {
+    if (!inquiryId) return;
+    const response = await fetch(apiUrl(`/photos.php?inquiry_id=${inquiryId}`), { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.message || "Kunne ikke hente dokumentasjon.");
+    const media: ChecklistMedia[] = Array.isArray(data.photos) ? data.photos : [];
+    mediaRef.current = media;
+    setItems((current) => current.map((item) => ({...item, attachments: media.filter((m) => m.checklist_item_id === item.id)})));
+  };
+
+  const addComment = async (item: ChecklistItemData, comment: string) => {
+    if (!inquiryId || !comment.trim()) return;
+    const formData = new FormData();
+    formData.append("inquiry_id", String(inquiryId));
+    formData.append("checklist_item_id", item.id);
+    formData.append("checklist_comment_only", "1");
+    formData.append("caption_text", comment.trim());
+    const response = await fetch(apiUrl("/photos.php"), {
+      method: "POST", credentials: "include", body: formData,
+    });
+    const result = await response.json();
+    if (!response.ok || !result.success) {
+      const message = result.message || "Kunne ikke lagre kommentaren.";
+      setError(message);
+      throw new Error(message);
+    }
+    await fetchSavedMedia();
     onChange?.();
   };
 
@@ -517,7 +556,15 @@ export default function ChecklistManager({
       formData.append("caption_text", item.note || item.title);
       formData.append("photo", uploadFile);
 
+      const sessionToken = window.localStorage.getItem(
+        "taklekkasjevakten_project_manager_session"
+      );
+
       const response = await fetch(apiUrl("/photos.php"), {
+        credentials: "include",
+        headers: sessionToken
+          ? { Authorization: `Bearer ${sessionToken}` }
+          : {},
         method: "POST",
         body: formData,
       });
@@ -537,6 +584,7 @@ export default function ChecklistManager({
         );
       }
 
+      await fetchSavedMedia();
       onChange?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Kunne ikke lagre bildet.");
@@ -545,67 +593,87 @@ export default function ChecklistManager({
     }
   };
 
-  const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
-    const formData = new FormData();
-    formData.append("audio", audioBlob, "recording.webm");
-
-    const response = await fetch(apiUrl("/transcribe_audio.php"), {
-      method: "POST",
-      body: formData,
-    });
-    const data = await response.json();
-
-    if (!response.ok || !data.success) {
-      throw new Error(data.message || "Transkribering av lydnotat feilet.");
-    }
-
-    return typeof data.text === "string" ? data.text.trim() : "";
-  };
-
   const saveAudioNote = async (
     item: ChecklistItemData,
     audioBlob: Blob
   ) => {
-    if (!inquiryId) return;
+    if (!inquiryId) {
+      setError("Mangler saksnummer. Lydopptaket ble ikke lagret.");
+      return;
+    }
+
+    setSavingId(item.id);
+    setError("");
 
     try {
-      await saveChecklistItem(item);
-      setSavingId(item.id);
-      setError("");
+      if (audioBlob.size === 0) {
+        throw new Error("Lydopptaket er tomt.");
+      }
 
-      const transcript = await transcribeAudio(audioBlob);
+      if (audioBlob.size > 25 * 1024 * 1024) {
+        throw new Error("Lydopptaket er større enn 25 MB.");
+      }
+
+      await saveChecklistItem(item);
+
+      const mimeType = audioBlob.type || "audio/webm";
+      const extension = mimeType.includes("mp4")
+        ? "m4a"
+        : mimeType.includes("ogg")
+          ? "ogg"
+          : "webm";
 
       const formData = new FormData();
-      formData.append("inquiry_id", inquiryId.toString());
+      formData.append("inquiry_id", String(inquiryId));
       formData.append("checklist_item_id", item.id);
       formData.append("caption_text", item.note || item.title);
-      formData.append("audio_transcript", transcript);
-      formData.append("audio", audioBlob, `audio_${item.id}.webm`);
+      formData.append(
+        "audio",
+        audioBlob,
+        `audio_${item.id}.${extension}`
+      );
+
+      // Originalopptaket lagres før transkripsjon.
+      const sessionToken = window.localStorage.getItem(
+        "taklekkasjevakten_project_manager_session"
+      );
 
       const response = await fetch(apiUrl("/photos.php"), {
+        credentials: "include",
+        headers: sessionToken
+          ? { Authorization: `Bearer ${sessionToken}` }
+          : {},
         method: "POST",
         body: formData,
       });
+
       const data = await response.json();
 
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || "Kunne ikke lagre lydnotatet.");
-      }
-
-      if (data.photo?.audio_url) {
-        setItems((current) =>
-          current.map((entry) =>
-            entry.id === item.id
-              ? { ...entry, audioUrl: data.photo.audio_url }
-              : entry
-          )
+      if (
+        !response.ok ||
+        !data.success ||
+        !data.photo?.audio_url
+      ) {
+        throw new Error(
+          data.message || "Serveren bekreftet ikke lydlagringen."
         );
       }
 
+      setItems((current) =>
+        current.map((entry) =>
+          entry.id === item.id
+            ? { ...entry, audioUrl: data.photo.audio_url }
+            : entry
+        )
+      );
+
+      await fetchSavedMedia();
       onChange?.();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Kunne ikke behandle lydnotatet."
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke lagre lydopptaket."
       );
     } finally {
       setSavingId(null);
@@ -614,51 +682,88 @@ export default function ChecklistManager({
 
   const startRecording = async (itemId: string) => {
     try {
+      if (!window.MediaRecorder) {
+        throw new Error("Nettleseren støtter ikke lydopptak.");
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
       });
-      const mediaRecorder = new MediaRecorder(stream);
 
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
+      try {
+        const supportedTypes = [
+          "audio/webm;codecs=opus",
+          "audio/mp4",
+          "audio/webm",
+          "audio/ogg;codecs=opus",
+        ];
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
+        const mimeType = supportedTypes.find((type) =>
+          MediaRecorder.isTypeSupported(type)
+        );
 
-      mediaRecorder.onstop = async () => {
-        const blob = new Blob(audioChunksRef.current, {
-          type: "audio/webm",
-        });
-        const item = items.find((entry) => entry.id === itemId);
+        const recorder = new MediaRecorder(
+          stream,
+          mimeType ? { mimeType } : undefined
+        );
 
-        if (item) {
+        mediaRecorderRef.current = recorder;
+        audioChunksRef.current = [];
+
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            audioChunksRef.current.push(event.data);
+          }
+        };
+
+        recorder.onstop = async () => {
+          stream.getTracks().forEach((track) => track.stop());
+          setRecordingId(null);
+
+          const blob = new Blob(audioChunksRef.current, {
+            type: recorder.mimeType || "audio/webm",
+          });
+
+          const item = items.find((entry) => entry.id === itemId);
+
+          if (!item) {
+            setError("Fant ikke kontrollpunktet for lydopptaket.");
+            return;
+          }
+
           await saveAudioNote(item, blob);
-        }
-      };
+        };
 
-      mediaRecorder.start();
-      setRecordingId(itemId);
-    } catch {
+        recorder.onerror = () => {
+          stream.getTracks().forEach((track) => track.stop());
+          setRecordingId(null);
+          setError("Feil under lydopptaket.");
+        };
+
+        recorder.start();
+        setRecordingId(itemId);
+        setError("");
+      } catch (err) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw err;
+      }
+    } catch (err) {
       setError(
-        "Kunne ikke starte mikrofon. Kontroller nettleserens mikrofontillatelse."
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke starte mikrofonen."
       );
     }
   };
 
   const stopRecording = () => {
-    if (!mediaRecorderRef.current) return;
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state !== "recording") return;
 
-    mediaRecorderRef.current.stop();
-    mediaRecorderRef.current.stream
-      .getTracks()
-      .forEach((track) => track.stop());
-
+    recorder.stop();
+    recorder.stream.getTracks().forEach((track) => track.stop());
     setRecordingId(null);
   };
-
   const addExtraObservation = () => {
     const itemNumber = items.length + 1;
     const newItem: ChecklistItemData = {
@@ -768,6 +873,7 @@ export default function ChecklistManager({
             onPhotoSelect={(file) => handlePhotoSelect(item, file)}
             onStartRecording={() => startRecording(item.id)}
             onStopRecording={stopRecording}
+            onAddComment={(comment) => addComment(item, comment)}
           />
         ))}
       </div>

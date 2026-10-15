@@ -5,7 +5,6 @@ import {
   Search,
   LogOut,
   MapPin,
-  Filter,
   FileText,
   Calendar,
   CalendarCheck,
@@ -24,7 +23,6 @@ import {
   Users,
   UserCheck,
   CircleDollarSign,
-  Bell,
   ChevronLeft,
   ChevronRight,
   MoreHorizontal,
@@ -35,6 +33,11 @@ import {
   CarFront,
   Clock3,
   Mail,
+  LayoutDashboard,
+  RefreshCw,
+  ArrowRight,
+  ArrowUpDown,
+  RotateCcw,
 } from "lucide-react";
 import InquiryDetail, { type Inquiry } from "./InquiryDetail";
 import ChecklistManager from "../components/ChecklistManager";
@@ -90,6 +93,7 @@ type ReportStatus =
 interface ReportSummary {
   status: ReportStatus;
   report_type?: "rapport1" | "rapport2";
+  workflow_state?: string | null;
 }
 
 interface ReportArchiveItem {
@@ -132,9 +136,172 @@ interface ReportArchiveCounts {
 
 // API-konfigurasjonen hentes fra src/lib/api.ts.
 
+
+// Årlig takkontroll: kun lesing. Perun Core er autoritativ datakilde.
+type RoofPlan = {
+  plan_id: number; property_id: number; source_inquiry_id: number | null;
+  property_name: string | null; address: string; postal_code: string | null;
+  city: string | null; closure_type: string; completed_date: string;
+  next_due_date: string; plan_status: string; cycle_status: string | null;
+  first_reminder_date: string | null; second_reminder_date: string | null;
+  final_reminder_date: string | null; reminders_enabled: number | string;
+};
+type RoofRequest = {
+  id: number; plan_id: number; source_inquiry_id: number | null;
+  requested_date: string; preferred_date: string | null; status: string;
+  address: string; city: string | null;
+};
+type RoofOverview = {
+  success: boolean;
+  stats: { active_plans: number | string; upcoming_reminders: number | string; new_requests: number | string; overdue_cycles: number | string };
+  plans: RoofPlan[];
+  requests: RoofRequest[];
+  notifications_enabled: boolean;
+  message?: string;
+};
+
+function RoofMaintenanceAdmin() {
+  const [data, setData] = useState<RoofOverview | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState("");
+  const [filter, setFilter] = useState("alle");
+  const [query, setQuery] = useState("");
+
+  const load = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(apiUrl("/roof_maintenance_admin.php"), {
+        method: "GET",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(response.status === 401 || response.status === 403
+          ? "Perun Core krever administratorinnlogging. Tilgang må kobles til den eksisterende Core-innloggingen."
+          : result.message || "Kunne ikke hente vedlikeholdsoversikten.");
+      }
+      setData(result as RoofOverview);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Kunne ikke hente data fra Perun Core.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => { void load(); }, []);
+  const fmt = (value?: string | null) => {
+    if (!value) return "—";
+    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return match ? `${match[3]}.${match[2]}.${match[1]}` : value;
+  };
+  const statusLabel = (value: string | null) => ({
+    active: "Aktiv", paused: "Pauset", declined: "Takket nei", closed: "Avsluttet",
+    upcoming: "Kommende", reminder_due: "Påminnelse aktuell", contacted: "Kontaktet",
+    requested: "Forespurt", booked: "Bestilt", completed: "Gjennomført",
+    cancelled: "Kansellert", submitted: "Ny bestilling",
+  } as Record<string, string>)[value || ""] || value || "—";
+  const closureLabel = (value: string) => ({
+    no_action: "Ingen tiltak", temporary_service: "Midlertidig service",
+    permanent_repair: "Varig utbedring", annual_inspection: "Årlig takkontroll",
+  } as Record<string, string>)[value] || value;
+  const plans = (data?.plans || []).filter((item) => {
+    const searchable = [item.address, item.city, item.property_name, item.property_id, item.source_inquiry_id].join(" ").toLowerCase();
+    return (filter === "alle" || item.plan_status === filter || item.cycle_status === filter) &&
+      searchable.includes(query.toLowerCase().trim());
+  });
+
+  return (
+    <div className="space-y-5">
+      <section className="rounded-2xl border border-[#65313e] bg-[#2b111c] p-5 md:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-black text-white">Oppfølging av årlig takkontroll</h3>
+            <p className="mt-1 text-xs text-[#d6b8c3]">Eiendommer overført fra avsluttede oppdrag, årlige kontrollsykluser og kundeforespørsler.</p>
+          </div>
+          <button type="button" onClick={() => void load()} disabled={busy}
+            className="inline-flex items-center gap-2 rounded-xl border border-[#794052] bg-[#431827] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#542439] disabled:opacity-50">
+            <RefreshCw className={`h-4 w-4 ${busy ? "animate-spin" : ""}`} /> Oppdater
+          </button>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            ["Overført til oppfølging", "active_plans"],
+            ["Første påminnelse neste 30 dager", "upcoming_reminders"],
+            ["Nye bestillingsforespørsler", "new_requests"],
+            ["Kontroller over anbefalt dato", "overdue_cycles"],
+          ].map(([label, key]) => (
+            <div key={key} className="rounded-xl border border-[#65313e] bg-[#361621] p-4">
+              <div className="text-xs text-[#dfc0cb]">{label}</div>
+              <div className="mt-3 text-3xl font-black text-white">{data ? Number(data.stats[key as keyof RoofOverview["stats"]] || 0) : "—"}</div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-4 text-xs text-[#d6b8c3]">Automatiske varsler er ikke aktivert. Påminnelser er planlagt 60, 30 og 0 dager før årsdatoen.</p>
+      </section>
+
+      {error && <div role="alert" className="rounded-xl border border-rose-400/40 bg-rose-500/10 p-4 text-sm text-rose-100">{error}</div>}
+      {busy && !data && <div className="flex items-center gap-2 text-sm text-[#e4c7d0]"><Loader2 className="h-4 w-4 animate-spin" /> Laster vedlikeholdsoversikt…</div>}
+
+      <section className="overflow-hidden rounded-2xl border border-[#65313e] bg-[#2b111c]">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#65313e] p-5">
+          <div><h3 className="text-base font-black text-white">Eiendommer i årlig oppfølging</h3>
+            <p className="mt-1 text-xs text-[#dfc0cb]">{plans.length} eiendommer vises</p></div>
+          <div className="flex flex-wrap gap-2">
+            <input aria-label="Søk i eiendommer" placeholder="Søk eiendom eller saksnummer" value={query} onChange={(event) => setQuery(event.target.value)}
+              className="rounded-lg border border-[#714050] bg-[#210c15] px-3 py-2 text-xs text-white" />
+            <select aria-label="Filtrer vedlikehold" value={filter} onChange={(event) => setFilter(event.target.value)}
+              className="rounded-lg border border-[#714050] bg-[#210c15] px-3 py-2 text-xs text-white">
+              <option value="alle">Alle statuser</option><option value="active">Aktive</option>
+              <option value="upcoming">Kommende</option><option value="requested">Forespurt</option>
+              <option value="booked">Bestilte</option><option value="paused">Pauset</option>
+              <option value="declined">Takket nei</option>
+            </select>
+          </div>
+        </div>
+        {data && plans.length === 0 ? (
+          <p className="p-8 text-center text-sm text-[#dfc0cb]">Ingen eiendommer i dette utvalget.</p>
+        ) : (
+          <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs">
+            <thead className="bg-[#210c15] text-[#dfc0cb]"><tr>
+              { ["Eiendom", "Avsluttet", "Grunnlag", "Neste kontroll", "Første påminnelse", "Status", "Varsling"].map((label) =>
+                <th key={label} className="px-4 py-3 font-bold">{label}</th>) }
+            </tr></thead>
+            <tbody className="divide-y divide-[#65313e]">
+              {plans.map((plan) => <tr key={plan.plan_id} className="hover:bg-[#401b29]">
+                <td className="px-4 py-3 font-bold text-white">{plan.property_name || plan.address}<div className="mt-1 font-normal text-[#dfc0cb]">{plan.address} · {plan.postal_code} {plan.city}{plan.source_inquiry_id ? ` · Sak #${plan.source_inquiry_id}` : ""}</div></td>
+                <td className="px-4 py-3">{fmt(plan.completed_date)}</td>
+                <td className="px-4 py-3">{closureLabel(plan.closure_type)}</td>
+                <td className="px-4 py-3 font-bold">{fmt(plan.next_due_date)}</td>
+                <td className="px-4 py-3">{fmt(plan.first_reminder_date)}</td>
+                <td className="px-4 py-3">{statusLabel(plan.cycle_status || plan.plan_status)}</td>
+                <td className="px-4 py-3 text-[#dfc0cb]">{Number(plan.reminders_enabled) === 1 ? "Tillatt i plan" : "Deaktivert"}</td>
+              </tr>)}
+            </tbody>
+          </table></div>
+        )}
+      </section>
+      <section className="overflow-hidden rounded-2xl border border-[#65313e] bg-[#2b111c]">
+        <div className="border-b border-[#65313e] p-5"><h3 className="text-base font-black text-white">Bestillingsforespørsler</h3>
+          <p className="mt-1 text-xs text-[#dfc0cb]">Kunden ber om takkontroll; tidspunkt avtales av administrasjonen.</p></div>
+        {data && data.requests.length === 0 ? (
+          <div className="p-8 text-center text-sm text-[#dfc0cb]">Ingen bestillingsforespørsler registrert.</div>
+        ) : <div className="divide-y divide-[#65313e]">{(data?.requests || []).map((request) => (
+          <div key={request.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 text-xs">
+            <div><div className="font-bold text-white">{request.address}, {request.city || ""}</div>
+              <div className="mt-1 text-[#dfc0cb]">Forespurt {fmt(request.requested_date)}{request.preferred_date ? ` · Ønsket dato ${fmt(request.preferred_date)}` : ""}</div></div>
+            <span className="rounded-lg border border-[#774051] bg-[#401b29] px-3 py-2 font-bold">{statusLabel(request.status)}</span>
+          </div>
+        ))}</div>}
+      </section>
+    </div>
+  );
+}
+
 export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<"oppdrag" | "kalender" | "sjekklister" | "prosjekter" | "kunder" | "markedsforing" | "epost" | "ansatte" | "timeliste" | "kjorebok" | "dataimport" | "rapporter" | "innstillinger">("oppdrag");
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const [activeTab, setActiveTab] = useState<"oppdrag" | "kalender" | "sjekklister" | "prosjekter" | "kunder" | "markedsforing" | "epost" | "ansatte" | "timeliste" | "kjorebok" | "dataimport" | "rapporter" | "arlig_takkontroll" | "innstillinger">("oppdrag");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<
     "aktive" | "handling" | "avsluttede" | "rapporter"
   >("aktive");
@@ -173,6 +340,9 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [loading, setLoading] = useState<boolean>(true);
   const [filterType, setFilterType] = useState<string>("alle");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [managerFilter, setManagerFilter] = useState<string>("alle");
+  const [serviceFilter, setServiceFilter] = useState<string>("alle");
+  const [sortNewest, setSortNewest] = useState(true);
   const [selectedInquiry, setSelectedInquiry] = useState<Inquiry | null>(null);
   const [previewCustomerInquiryId, setPreviewCustomerInquiryId] = useState<number | null>(null);
   const [previewBusinessCustomerId, setPreviewBusinessCustomerId] = useState<number | null>(null);
@@ -195,7 +365,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [calendarView, setCalendarView] = useState<"day" | "week" | "month">("month");
   const [checklistView, setChecklistView] = useState<"templates" | "completed">("templates");
   const [projectLibraryView, setProjectLibraryView] = useState<"published" | "new" | "archive">("published");
-  const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
+  const [, setNotificationBusy] = useState<string | null>(null);
   const [notificationMessage, setNotificationMessage] = useState<string>("");
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
   const [showProfile, setShowProfile] = useState(false);
@@ -383,11 +553,33 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           }
 
           if (report1) {
+            // Bare Rapport 1 i administrativ behandlingsstatus trenger et
+            // ekstra, skrivebeskyttet statusoppslag. Perun Core eier flyten.
+            let workflowState: string | null = null;
+            if (["sendt_til_admin", "under_gjennomgang"].includes(String(report1.status || ""))) {
+              try {
+                const flowRes = await fetch(apiUrl("/tlv_report_approval_workflow.php"), {
+                  method: "POST",
+                  credentials: "include",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ inquiry_id: Number(inq.id), action: "status" }),
+                });
+                if (flowRes.ok) {
+                  const flowData = await flowRes.json();
+                  if (flowData.success && typeof flowData.state === "string") {
+                    workflowState = flowData.state;
+                  }
+                }
+              } catch (flowError) {
+                console.warn(`Kunne ikke hente Core-godkjenningsstatus for sak #${inq.id}`, flowError);
+              }
+            }
             return [
               inq.id.toString(),
               {
                 status: report1.status as ReportStatus,
                 report_type: "rapport1" as const,
+                workflow_state: workflowState,
               },
             ] as const;
           }
@@ -734,7 +926,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     }
 
     return (
-      <span className="px-3 py-1 bg-slate-500/10 text-slate-400 border border-slate-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+      <span className="px-3 py-1 bg-slate-500/10 text-[#ead4dc] border border-slate-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
         <ClipboardList className="w-3.5 h-3.5 shrink-0" />
         Ikke klassifisert
       </span>
@@ -751,6 +943,16 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     const reportSummary = reportStatuses[inq.id.toString()];
     const reportStatus = reportSummary?.status;
     const reportType = reportSummary?.report_type;
+    const workflowState = reportSummary?.workflow_state;
+
+    if (reportType === "rapport1" && workflowState === "awaiting_pm") {
+      return (
+        <span className="px-3 py-1 bg-amber-500/10 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <Users className="w-3.5 h-3.5 shrink-0" />
+          Venter på prosjektansvarlig
+        </span>
+      );
+    }
 
     if (status === "venter_pa_kundeopplysninger") {
       return (
@@ -978,7 +1180,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     }
 
     return (
-      <span className="px-3 py-1 bg-slate-500/10 text-slate-400 border border-slate-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+      <span className="px-3 py-1 bg-slate-500/10 text-[#ead4dc] border border-slate-500/30 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
         <ClipboardList className="w-3.5 h-3.5 shrink-0" />
         Under behandling
       </span>
@@ -1431,71 +1633,6 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     setPreviewCustomerInquiryId(Number(latestInquiry.id));
   };
 
-  const filteredInquiries = inquiries.filter((inq) => {
-    const rawType = (inq.inquiry_type || inq.type || "").toLowerCase();
-    const rawStage = (inq.stage || "").toLowerCase();
-
-    let matchesFilter = filterType === "alle";
-    if (!matchesFilter) {
-      if (filterType === "lekkasjesok") matchesFilter = rawType.includes("lekkasje") || rawStage.includes("lekkasjesok");
-      else if (filterType === "takkontroll") matchesFilter = rawType.includes("kontroll") || rawStage.includes("takkontroll");
-      else if (filterType === "service") matchesFilter = rawType.includes("service") || rawStage.includes("service");
-      else if (filterType === "akutt") matchesFilter = rawType.includes("akutt");
-      else if (filterType === "b2b") matchesFilter = rawType.includes("b2b") || rawType.includes("sameie");
-      else if (filterType === "kundeopplysninger") {
-        matchesFilter =
-          String((inq as any).status || "").toLowerCase() ===
-          "kundeopplysninger_mottatt";
-      }
-      else if (filterType === "venter_pa_tilbud") {
-        matchesFilter =
-          String((inq as any).status || "").toLowerCase() ===
-          "venter_pa_tilbud";
-      }
-      else if (filterType === "avventer_kunde") {
-        const status = String((inq as any).status || "").toLowerCase();
-        matchesFilter = [
-          "tilbud_sendt",
-          "digital_befaring_tid_forslag",
-          "foreslatt_av_prosjektleder",
-        ].includes(status);
-      }
-      else if (filterType === "neste_7_dager") {
-        const bookingDate = getInquiryBookingDate(inq);
-        if (!bookingDate) {
-          matchesFilter = false;
-        } else {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-
-          const limit = new Date(today);
-          limit.setDate(limit.getDate() + 7);
-          limit.setHours(23, 59, 59, 999);
-
-          matchesFilter = bookingDate >= today && bookingDate <= limit;
-        }
-      }
-      else if (filterType === "rapporter_til_gjennomgang") {
-        const reportStatus = reportStatuses[inq.id.toString()]?.status;
-        matchesFilter =
-          reportStatus === "sendt_til_admin" ||
-          reportStatus === "under_gjennomgang";
-      }
-      else matchesFilter = rawType === filterType || rawStage === filterType;
-    }
-
-    const custName = inq.customer_name || inq.customerName || "";
-    const city = inq.city || "";
-    const inqId = inq.id.toString();
-
-    return (
-      matchesFilter &&
-      (custName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        city.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        inqId.toLowerCase().includes(searchQuery.toLowerCase()))
-    );
-  });
-
   const isCompletedInquiry = (inq: Inquiry) => {
     const status = String((inq as any).status || "").toLowerCase();
     const reportSummary = reportStatuses[inq.id.toString()];
@@ -1532,69 +1669,43 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const isActiveInquiry = (inq: Inquiry): boolean =>
     !isCompletedInquiry(inq) && !hasExpiredLatestOffer(inq);
 
-  const activeFilteredInquiries = filteredInquiries.filter(isActiveInquiry);
 
-  const activeInquiriesCount = inquiries.filter(isActiveInquiry).length;
+
+
 
   const completedInquiries = inquiries.filter(isCompletedInquiry);
 
 
-  const actionRequiredInquiries = activeFilteredInquiries.filter((inq) => {
-    const status = String((inq as any).status || "").toLowerCase();
-    const reportStatus = reportStatuses[inq.id.toString()]?.status;
-    const rawType = String(inq.inquiry_type || inq.type || "").toLowerCase();
-    const assignedId = (inq as any).assigned_project_manager_id;
-    const assignedName = String((inq as any).assigned_to || "").trim();
-
-    return (
-      reportStatus === "sendt_til_admin" ||
-      reportStatus === "under_gjennomgang" ||
-      status === "kundeopplysninger_mottatt" ||
-      status === "venter_pa_tilbud" ||
-      rawType.includes("akutt") ||
-      (!assignedId && !assignedName)
-    );
-  });
-
-  const reportsForReviewInquiries = activeFilteredInquiries.filter((inq) => {
-    const reportStatus = reportStatuses[inq.id.toString()]?.status;
-
-    return (
-      reportStatus === "sendt_til_admin" ||
-      reportStatus === "under_gjennomgang"
-    );
-  });
-
-  const visibleActiveInquiries =
-    activeSubTab === "handling"
-      ? actionRequiredInquiries
-      : activeSubTab === "rapporter"
-        ? reportsForReviewInquiries
-        : activeFilteredInquiries;
-
-
-  const akuttCount = inquiries.filter((i) => (i.inquiry_type || i.type || "").toLowerCase().includes("akutt")).length;
   const totalCount = inquiries.length;
-  const newInquiriesCount = inquiries.filter(
-    (i) => !isCompletedInquiry(i) && Boolean((i as any).is_new)
-  ).length;
-  const customerInfoReceivedCount = inquiries.filter(
-    (i) =>
-      String((i as any).status || "").toLowerCase() ===
-      "kundeopplysninger_mottatt"
-  ).length;
-  const waitingForOfferCount = inquiries.filter(
-    (i) =>
-      String((i as any).status || "").toLowerCase() ===
-      "venter_pa_tilbud"
-  ).length;
+  // "Ny sak" betyr en ny, aktiv henvendelse som ennå ikke er tatt videre.
+  // is_new kan bli stående på eldre oppdrag og kan ikke brukes alene.
+  const isNewInquiry = (inq: Inquiry): boolean => {
+    if (!isActiveInquiry(inq) || !Boolean(inq.is_new)) return false;
+    const status = String(inq.status || "").trim().toLowerCase();
+    const assigned = Boolean(
+      inq.assigned_project_manager_id || String(inq.assigned_to || "").trim()
+    );
+    const reportStatus = reportStatuses[inq.id.toString()]?.status;
+    if (assigned || reportStatus) return false;
+    return [
+      "ny", "ny_henvendelse", "mottatt", "venter_pa_kundeopplysninger",
+      "kundeopplysninger_mottatt", "venter_pa_prosjektansvarlig",
+    ].includes(status);
+  };
+
+  const newInquiriesCount = inquiries.filter(isNewInquiry).length;
+
+
+
+  // Skjul kun Rapport 1 som er bekreftet sendt til prosjektansvarlig.
+  // Rapport 2 og øvrige statuser beholder den eksisterende kølogikken.
+  const needsAdminReportAction = (report: ReportSummary | null | undefined): boolean =>
+    Boolean(report &&
+      ["sendt_til_admin", "under_gjennomgang"].includes(report.status) &&
+      !(report.report_type === "rapport1" && report.workflow_state === "awaiting_pm"));
 
   const reportsForReviewCount = inquiries.filter((i) => {
-    const reportStatus = reportStatuses[i.id.toString()]?.status;
-    return (
-      reportStatus === "sendt_til_admin" ||
-      reportStatus === "under_gjennomgang"
-    );
+    return needsAdminReportAction(reportStatuses[i.id.toString()]);
   }).length;
 
   const awaitingCustomerCount = inquiries.filter((i) => {
@@ -1606,18 +1717,21 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     ].includes(status);
   }).length;
 
-  const unassignedCount = inquiries.filter((i) => {
+  const unassignedInquiries = inquiries.filter((i) => {
     const assignedId = (i as any).assigned_project_manager_id;
     const assignedName = String((i as any).assigned_to || "").trim();
-    return !assignedId && !assignedName;
-  }).length;
+    return isActiveInquiry(i) && !assignedId && !assignedName;
+  });
+  const unassignedCount = unassignedInquiries.length;
 
-  const actionRequiredCount =
-    reportsForReviewCount +
-    customerInfoReceivedCount +
-    waitingForOfferCount +
-    akuttCount +
-    unassignedCount;
+  const actionRequiredCount = inquiries.filter((i) => {
+    if (!isActiveInquiry(i)) return false;
+    const status = String(i.status || "").toLowerCase();
+    const urgent = String(i.inquiry_type || i.type || "").toLowerCase().includes("akutt");
+    return needsAdminReportAction(reportStatuses[i.id.toString()]) ||
+      ["kundeopplysninger_mottatt", "venter_pa_tilbud"].includes(status) ||
+      urgent || unassignedInquiries.some((u) => u.id === i.id);
+  }).length;
 
   const scheduledTodayCount = inquiries.filter((i) => {
     const bookingDate = String((i as any).booking_date || "");
@@ -1629,34 +1743,70 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     return bookingDate === `${yyyy}-${mm}-${dd}`;
   }).length;
 
-  const openOppdragShortcut = (filter: string) => {
-    setActiveSubTab("aktive");
-    setFilterType(filter);
 
+
+
+
+  // Visningen bygger på de eksisterende oppdrags- og rapport-API-ene.
+  // Filtrene er kun visuelle; ingen statuser endres uten en eksplisitt handling.
+  const dashboardRows = inquiries
+    .filter((i) => Number(i.id) !== 19 && (activeSubTab === "rapporter" || isActiveInquiry(i) || String(i.status || "").toLowerCase() === "tilbud_sendt"))
+    .filter((i) => {
+      const status = String(i.status || "").toLowerCase();
+      const reportNeedsAdmin = needsAdminReportAction(reportStatuses[i.id.toString()]);
+      const responsible = String((i as any).assigned_to || "").trim();
+      const managerId = String((i as any).assigned_project_manager_id || "");
+      const unassigned = !responsible && !managerId;
+      const service = String(i.inquiry_type || i.type || i.recommended_service || "").toLowerCase();
+      const query = searchQuery.trim().toLocaleLowerCase("nb-NO");
+      const haystack = [i.id, i.customer_name, i.customerName, i.address, i.city, i.postal_code, responsible]
+        .map((v) => String(v || "")).join(" ").toLocaleLowerCase("nb-NO");
+      if (query && !haystack.includes(query)) return false;
+      if (managerFilter !== "alle" && !(managerFilter === "uten" ? unassigned : managerId === managerFilter)) return false;
+      if (serviceFilter !== "alle" && !service.includes(serviceFilter)) return false;
+      if (activeSubTab === "handling") {
+        return unassigned || reportNeedsAdmin ||
+          ["kundeopplysninger_mottatt", "venter_pa_tilbud"].includes(status) || service.includes("akutt");
+      }
+      if (activeSubTab === "rapporter") return reportNeedsAdmin;
+      if (filterType === "nye_saker") return isNewInquiry(i);
+      if (filterType === "planlagt_i_dag") {
+        const booking = String((i as any).booking_date || "").slice(0,10);
+        const today = new Date();
+        const local = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
+        return booking === local;
+      }
+      if (filterType === "planlagt_i_dag") {const d = String((i as any).booking_date || "").slice(0,10); const now=new Date();const today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;return d === today;}
+      if (filterType === "neste_7_dager") {
+        const d = getInquiryBookingDate(i);
+        if (!d) return false;
+        const start = new Date(); start.setHours(0,0,0,0);
+        const end = new Date(start); end.setDate(end.getDate() + 7);
+        return d >= start && d <= end;
+      }
+      if (filterType === "avventer_kunde") return ["tilbud_sendt", "digital_befaring_tid_forslag", "foreslatt_av_prosjektleder"].includes(status);
+      if (filterType === "venter_pa_tilbud") return status === "venter_pa_tilbud";
+      if (filterType === "kundeopplysninger") return status === "kundeopplysninger_mottatt";
+      return true;
+    })
+    .sort((a,b) => sortNewest ? Number(b.id) - Number(a.id) : Number(a.id) - Number(b.id));
+
+  const openDashboardView = (tab: "aktive" | "handling" | "rapporter" | "avsluttede", filter = "alle") => {
+    setActiveSubTab(tab);
+    setFilterType(filter);
+    setSearchQuery("");
+    setManagerFilter("alle");
+    setServiceFilter("alle");
+    // Vent til React har oppdatert resultatlisten før vi navigerer til den.
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
-        document
-          .getElementById("oppdrag-resultatliste")
-          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+        document.getElementById("oppdrag-resultatliste")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
       });
     });
   };
-
-  const scheduledNext7Days = inquiries.filter((i) => {
-    const bookingDate = String((i as any).booking_date || "");
-    if (!bookingDate) return false;
-
-    const date = new Date(`${bookingDate}T12:00:00`);
-    if (Number.isNaN(date.getTime())) return false;
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const limit = new Date(today);
-    limit.setDate(limit.getDate() + 7);
-
-    return date >= today && date <= limit;
-  }).length;
 
   if (showProfile) {
     return (
@@ -1810,11 +1960,62 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   }
 
   return (
-    <div className="min-h-screen bg-[#070a11] text-white">
+    <div className="tlv-admin-theme min-h-screen bg-[radial-gradient(ellipse_at_65%_0%,#41111d_0%,#270b13_45%,#18070d_100%)] text-white">
+      <style>{`
+/* Taklekkasjevakten admin – felles burgunderpalett.
+   Gjelder KUN innholdet under .tlv-admin-theme.
+   Ingen endringer i nettstedets offentlige sider, rapport-PDF eller prosjektportal.
+*/
+.tlv-admin-theme {
+  --tlv-surface: #281019;
+  --tlv-surface-raised: #351722;
+  --tlv-field: #1b0b12;
+  --tlv-stroke: #653444;
+  --tlv-text: #f7e9ed;
+  --tlv-muted: #ddc1ca;
+  color: var(--tlv-text);
+}
+
+/* Standardpaneler fra eldre faner: kalender, kunder, rapporter, ansatte, osv. */
+.tlv-admin-theme :is([class~="bg-slate-900"], [class~="bg-slate-950"], [class~="bg-slate-800"]) {
+  background-color: var(--tlv-surface) !important;
+}
+.tlv-admin-theme :is([class*="bg-slate-900/"], [class*="bg-slate-950/"], [class*="bg-slate-800/"]) {
+  background-color: rgba(39, 15, 25, 0.88) !important;
+}
+.tlv-admin-theme [class~="bg-[#0b0f17]"],
+.tlv-admin-theme [class~="bg-[#0d1320]"],
+.tlv-admin-theme [class~="bg-[#081321]"],
+.tlv-admin-theme [class~="bg-[#0b1320]"],
+.tlv-admin-theme [class~="bg-[#090d15]"] {
+  background-color: var(--tlv-surface) !important;
+}
+.tlv-admin-theme :is([class~="border-slate-700"], [class~="border-slate-800"], [class*="border-slate-800/"]) {
+  border-color: var(--tlv-stroke) !important;
+}
+.tlv-admin-theme :is([class~="text-slate-400"], [class~="text-slate-500"], [class~="text-slate-600"]) {
+  color: var(--tlv-muted) !important;
+}
+.tlv-admin-theme :is(input, select, textarea) {
+  color: var(--tlv-text);
+  color-scheme: dark;
+}
+.tlv-admin-theme :is(input, textarea)::placeholder {
+  color: #c3a4b0;
+  opacity: 1;
+}
+.tlv-admin-theme :is(input, select, textarea):focus-visible {
+  outline: 2px solid #c74d68;
+  outline-offset: 2px;
+}
+/* Helt bevisst: statusfarger, grønne aktiveringsknapper, blå statusetiketter,
+   røde varsler og gule handlingsknapper blir ikke overstyrt. */
+
+      `}</style>
       {/* FAST ADMINMENY */}
       <aside
-        className={`hidden lg:flex fixed inset-y-0 left-0 z-50 flex-col border-r border-slate-800/80 bg-[#081321] transition-[width] duration-300 ${
-          sidebarCollapsed ? "w-[76px]" : "w-[238px]"
+        className={`hidden lg:flex fixed inset-y-0 left-0 z-50 flex-col border-r border-[#532432] bg-[#1c0b12] transition-[width] duration-300 ${
+          sidebarCollapsed ? "w-[76px]" : "w-[246px]"
         }`}
       >
         <div
@@ -1829,6 +2030,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               sidebarCollapsed ? "max-h-[44px] max-w-[50px]" : "max-h-[58px] max-w-[195px]"
             }`}
           />
+          {!sidebarCollapsed && <div className="ml-2 min-w-0"><div className="truncate text-xs font-black text-white">Taklekkasjevakten</div><div className="mt-0.5 text-[10px] text-[#cbabb6]">En del av Perun AS</div></div>}
 
           <button
             type="button"
@@ -1845,12 +2047,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           </button>
         </div>
 
-        <nav className={`py-2 space-y-1.5 ${sidebarCollapsed ? "px-2" : "px-3"}`}>
+        <nav className={`py-4 space-y-1.5 ${sidebarCollapsed ? "px-2" : "px-3"}`}>
           {[
             {
               id: "oppdrag",
-              label: "Prosjekter",
-              icon: Inbox,
+              label: "Oppdrag",
+              icon: LayoutDashboard,
               tab: "oppdrag",
             },
             {
@@ -1919,6 +2121,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               icon: FileText,
               tab: "rapporter",
             },
+            {
+              id: "arlig_takkontroll",
+              label: "Årlig takkontroll",
+              icon: CalendarCheck,
+              tab: "arlig_takkontroll",
+            },
           ].map((item) => {
             const Icon = item.icon;
             const active = activeTab === item.id;
@@ -1948,8 +2156,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     sidebarCollapsed ? "justify-center" : "gap-3"
                   } ${
                     active
-                      ? "border border-amber-500/20 bg-[#F5B800]/10 text-[#F5B800]"
-                      : "border border-transparent text-slate-400 hover:bg-slate-900 hover:text-white"
+                      ? "border border-rose-400/30 bg-[#60202e] text-white shadow-[inset_3px_0_0_#f64b66]"
+                      : "border border-transparent text-[#e7cbd2] hover:bg-[#43202b] hover:text-white"
                   }`}
                   title={sidebarCollapsed ? item.label : undefined}
                 >
@@ -1981,7 +2189,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           <button
             type="button"
             onClick={() => setShowProfile(true)}
-            className={`mb-1 w-full flex items-center rounded-xl px-3 py-3 text-sm font-bold text-slate-400 transition-all hover:bg-slate-900 hover:text-white ${sidebarCollapsed ? "justify-center" : "gap-3"}`}
+            className={`mb-1 w-full flex items-center rounded-xl px-3 py-3 text-sm font-bold text-[#ead4dc] transition-all hover:bg-slate-900 hover:text-white ${sidebarCollapsed ? "justify-center" : "gap-3"}`}
             title={sidebarCollapsed ? "Min profil" : undefined}
           >
             <UserCircle className="h-4 w-4 shrink-0" />
@@ -1990,7 +2198,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           <button
             type="button"
             onClick={onLogout}
-            className={`w-full flex items-center rounded-xl px-3 py-3 text-sm font-bold text-slate-500 transition-all hover:bg-red-500/10 hover:text-red-300 ${
+            className={`w-full flex items-center rounded-xl px-3 py-3 text-sm font-bold text-[#cbb2bd] transition-all hover:bg-red-500/10 hover:text-red-300 ${
               sidebarCollapsed ? "justify-center" : "gap-3"
             }`}
             title={sidebarCollapsed ? "Logg ut" : undefined}
@@ -2001,49 +2209,33 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         </div>
       </aside>
 
-      {/* MOBIL/TOPPHEADER */}
-      <header
-        className={`sticky top-0 z-40 border-b border-slate-800/80 bg-[#08111d]/95 px-4 py-4 backdrop-blur transition-[margin] duration-300 ${
-          sidebarCollapsed ? "lg:ml-[76px]" : "lg:ml-[238px]"
-        }`}
-      >
-        <div className="mx-auto flex max-w-[1750px] items-center justify-between gap-4">
-          <button
-            type="button"
-            onClick={onLogout}
-            className="lg:hidden flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-400"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            Logg ut
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab("innstillinger");
-              setSettingsView("company");
-            }}
-            className={`ml-auto flex h-10 w-10 items-center justify-center rounded-xl border transition ${
-              activeTab === "innstillinger"
-                ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
-                : "border-slate-800 bg-slate-900/70 text-slate-400 hover:border-slate-700 hover:text-white"
-            }`}
-            title="Innstillinger"
-            aria-label="Innstillinger"
-          >
-            <Settings className="h-4 w-4" />
-          </button>
+      {/* TOPPLINJE – samme globale navigasjon som opprinnelig app */}
+      <header className={`sticky top-0 z-40 border-b border-[#572837] bg-[#1a0a11]/95 px-4 py-3 backdrop-blur-md transition-[margin] duration-300 ${sidebarCollapsed ? "lg:ml-[76px]" : "lg:ml-[246px]"}`}>
+        <div className="mx-auto flex max-w-[1750px] items-center gap-3">
+          <button type="button" onClick={onLogout} className="rounded-xl border border-[#673243] bg-[#2c1220] px-3 py-2 text-xs text-white lg:hidden"><LogOut className="mr-1 inline h-3.5 w-3.5" /> Logg ut</button>
+          {activeTab === "oppdrag" ? (
+            <label className="relative hidden w-full max-w-[570px] sm:block">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#dab8c2]" />
+              <input type="search" value={searchQuery} onChange={(e)=>setSearchQuery(e.target.value)} placeholder="Søk etter kunde, adresse eller oppdragsnummer…" className="w-full rounded-xl border border-[#63303e] bg-[#260d18] py-2.5 pl-10 pr-4 text-xs text-white placeholder:text-[#be9aa8] focus:border-rose-400 focus:outline-none" />
+            </label>
+          ) : <span className="text-sm font-extrabold text-[#f4dce3]">Administrasjon</span>}
+          <div className="ml-auto flex items-center gap-2">
+            <button type="button" onClick={() => {void fetchInquiries();}} title="Oppdater oppdragsdata" aria-label="Oppdater oppdragsdata" className="grid h-10 w-10 place-items-center rounded-xl border border-[#603042] bg-[#2a111e] text-[#ecd0d9] hover:bg-[#492033]"><RefreshCw className="h-4 w-4" /></button>
+            <button type="button" onClick={() => setShowProfile(true)} className="flex items-center gap-2 rounded-xl border border-[#603042] bg-[#2a111e] px-3 py-2 text-left hover:bg-[#492033]"><span className="grid h-7 w-7 place-items-center rounded-full bg-[#683247] text-[10px] font-black text-white">AD</span><span className="hidden text-xs font-bold text-white md:block">Admin</span></button>
+            <button type="button" onClick={() => {setActiveTab("innstillinger");setSettingsView("company");}} title="Innstillinger" aria-label="Innstillinger" className="grid h-10 w-10 place-items-center rounded-xl border border-[#603042] bg-[#2a111e] text-[#ecd0d9] hover:bg-[#492033]"><Settings className="h-4 w-4" /></button>
+          </div>
         </div>
       </header>
 
       <main
         className={`px-4 md:px-6 py-6 transition-[margin] duration-300 ${
-          sidebarCollapsed ? "lg:ml-[76px]" : "lg:ml-[238px]"
+          sidebarCollapsed ? "lg:ml-[76px]" : "lg:ml-[246px]"
         }`}
       >
         <div className="mx-auto max-w-[1750px]">
-          <div className="mb-6">
-            <h2 className="text-2xl md:text-3xl font-black tracking-tight text-white">
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+            <div>
+            <h2 className="text-3xl md:text-4xl font-black tracking-tight text-white">
               {activeTab === "oppdrag"
                 ? "Oppdrag"
                 : activeTab === "kalender"
@@ -2066,11 +2258,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                             ? "Kjørebok"
                           : activeTab === "dataimport"
                             ? "Dataimport"
+                          : activeTab === "arlig_takkontroll"
+                            ? "Årlig takkontroll"
                             : "Innstillinger"}
             </h2>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-1 text-sm text-[#cbb2bd]">
               {activeTab === "oppdrag"
-                ? "Oversikt over aktive oppdrag, saker som krever handling og rapporter til behandling."
+                ? "Operativ oversikt over alle oppdrag, saker og rapporter."
                 : activeTab === "kalender"
                     ? "Full månedsoversikt over planlagte oppdrag og møter."
                     : activeTab === "timeliste"
@@ -2083,775 +2277,265 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       ? "Kundedialog, kampanjer og utsendingskø fra den felles e-postmotoren."
                     : activeTab === "dataimport"
                       ? "Kontrollert import av historiske data til perun_core."
+                    : activeTab === "arlig_takkontroll"
+                      ? "Årlig vedlikeholdsoppfølging og bestillinger fra Perun Core."
                       : activeTab === "innstillinger"
                         ? "Konfigurasjon av firma, brukere, varsler, teknisk dokumentasjon, integrasjoner og system."
                         : "Administrasjon og operativ oversikt i Perun AS."}
             </p>
+            </div>
+            {activeTab === "oppdrag" && <div className="flex items-center gap-2 rounded-xl border border-[#673344] bg-[#290f19] px-4 py-3 text-xs font-semibold text-[#e9cbd3]"><Calendar className="h-4 w-4 text-rose-300" />{new Intl.DateTimeFormat("nb-NO",{weekday:"long",day:"numeric",month:"long",year:"numeric"}).format(new Date())}</div>}
           </div>
 
-        {/* FANE 1: OPPDRAG */}
+        {/* NYTT OPERATIVT OPPDRAGSDASHBOARD – eksisterende funksjoner beholdes */}
         {activeTab === "oppdrag" && (
-          <div className="space-y-5">
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
-              <div className="flex flex-col gap-4 border-b border-slate-800/80 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-6">
+            {/* KREVER HANDLING NÅ */}
+            <section className="rounded-2xl border border-rose-500/30 bg-[linear-gradient(120deg,#40101d_0%,#2b0e17_60%,#1b0910_100%)] p-5 shadow-[0_18px_50px_rgba(0,0,0,.18)] md:p-6">
+              <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10">
-                    <Inbox className="h-4 w-4 text-amber-300" />
-                  </div>
+                  <div className="grid h-11 w-11 place-items-center rounded-xl bg-rose-500/15 text-rose-300"><AlertTriangle className="h-5 w-5" /></div>
                   <div>
-                    <h3 className="text-base font-black text-white">Oppdrag</h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
-                      Arbeidsflyt, oppfølging og rapportbehandling.
-                    </p>
+                    <h3 className="text-lg font-black tracking-tight text-white">Krever handling nå</h3>
+                    <p className="mt-1 text-xs text-[#e3bac6]">{actionRequiredCount === 0 ? "Ingen oppdrag krever umiddelbar oppfølging." : `${actionRequiredCount} oppdrag trenger oppfølging.`}</p>
                   </div>
                 </div>
+                <button type="button" onClick={() => openDashboardView("handling")} className="rounded-lg border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-xs font-bold text-rose-100 transition hover:bg-rose-400/20">Vis handlingslisten <ArrowRight className="ml-1 inline h-3.5 w-3.5" /></button>
               </div>
 
-              <div className="flex gap-1 overflow-x-auto p-2">
-                {[
-                  {
-                    id: "aktive" as const,
-                    label: "Aktive oppdrag",
-                    count: activeInquiriesCount,
-                    filter: "alle",
-                  },
-                  {
-                    id: "handling" as const,
-                    label: "Krever handling",
-                    count: actionRequiredInquiries.length,
-                    filter: "alle",
-                  },
-                  {
-                    id: "rapporter" as const,
-                    label: "Rapporter til behandling",
-                    count: reportsForReviewCount,
-                    filter: "rapporter_til_gjennomgang",
-                  },
-                  {
-                    id: "avsluttede" as const,
-                    label: "Avsluttede saker",
-                    count: completedInquiries.length,
-                    filter: "alle",
-                  },
-                ].map((tab) => {
-                  const active = activeSubTab === tab.id;
+              <div className="grid gap-3 md:grid-cols-2">
+                <button type="button" onClick={() => openDashboardView("rapporter", "rapporter_til_gjennomgang")} className="flex items-center justify-between gap-3 rounded-xl border border-[#71303f] bg-[#250c16]/80 p-4 text-left transition hover:border-rose-400/60 hover:bg-[#37131f]">
+                  <div className="flex items-center gap-3">
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-sky-400/10 text-sky-300"><FileText className="h-5 w-5" /></div>
+                    <div>
+                      <div className="text-sm font-extrabold text-white">Rapporter til godkjenning</div>
+                      <div className="mt-1 text-xs text-[#d6b8c3]">{reportsForReviewCount} rapport(er) til administrativ behandling</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-rose-500/20 px-2.5 py-1 text-xs font-black text-rose-200">{reportsForReviewCount}</span>
+                    <ArrowRight className="h-4 w-4 text-rose-200" />
+                  </div>
+                </button>
 
+                <button type="button" onClick={() => {openDashboardView("aktive"); setManagerFilter("uten");}} className="flex items-center justify-between gap-3 rounded-xl border border-[#71303f] bg-[#250c16]/80 p-4 text-left transition hover:border-rose-400/60 hover:bg-[#37131f]">
+                  <div className="flex items-center gap-3">
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-rose-400/10 text-rose-300"><Users className="h-5 w-5" /></div>
+                    <div>
+                      <div className="text-sm font-extrabold text-white">Mangler prosjektansvarlig</div>
+                      <div className="mt-1 text-xs text-[#d6b8c3]">{unassignedCount} aktive oppdrag uten tildeling</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-rose-500/20 px-2.5 py-1 text-xs font-black text-rose-200">{unassignedCount}</span>
+                    <ArrowRight className="h-4 w-4 text-rose-200" />
+                  </div>
+                </button>
+              </div>
+
+              {unassignedInquiries.length > 0 && (
+                <div className="mt-5 border-t border-[#71303f]/70 pt-4">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="text-[11px] font-black uppercase tracking-[0.12em] text-[#d6b8c3]">Tildel prosjektansvarlig direkte</div>
+                    <span className="text-[10px] text-[#b995a2]">{unassignedCount} uten tildeling</span>
+                  </div>
+                  <div className="space-y-2">
+                    {unassignedInquiries.slice(0, 3).map((inq) => {
+                      const id = inq.id.toString();
+                      return (
+                        <div key={id} className="flex flex-col gap-3 rounded-xl border border-[#71303f] bg-[#200c14]/80 p-3.5 transition hover:border-rose-400/50 md:flex-row md:items-center">
+                          <button type="button" onClick={() => setSelectedInquiry(inq)} className="min-w-0 flex-1 text-left">
+                            <div className="truncate text-sm font-extrabold text-white">Oppdrag #{id} · {inq.customer_name || inq.customerName || "Ukjent kunde"}</div>
+                            <div className="mt-0.5 flex items-center gap-1 truncate text-[11px] text-[#d6b8c3]"><MapPin className="h-3 w-3 shrink-0 text-amber-300" />{[inq.address, inq.postal_code, inq.city].filter(Boolean).join(", ") || "Adresse ikke oppgitt"}</div>
+                          </button>
+                          <div className="flex shrink-0 gap-2">
+                            <select aria-label={`Velg prosjektansvarlig for oppdrag ${id}`} value={quickManagerSelections[id] || ""} onChange={(e) => setQuickManagerSelections((prev) => ({ ...prev, [id]: e.target.value }))} className="min-w-[190px] rounded-lg border border-[#774051] bg-[#210c15] px-2 py-2.5 text-[11px] text-white focus:border-rose-400 focus:outline-none">
+                              <option value="">Velg prosjektleder</option>
+                              {adminEmployees.filter((emp) => emp.status === "Aktiv" && emp.role === "Prosjektleder").map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+                            </select>
+                            <button type="button" disabled={!quickManagerSelections[id] || quickAssignBusyId === id} onClick={() => void quickAssignProjectManager(inq)} className="rounded-lg bg-rose-600 px-4 py-2.5 text-[11px] font-black text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40">{quickAssignBusyId === id ? "Tildeler…" : "Tildel"}</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {unassignedInquiries.length > 3 && (
+                      <button type="button" onClick={() => {openDashboardView("aktive"); setManagerFilter("uten");}} className="w-full rounded-xl border border-dashed border-[#774051] bg-transparent px-4 py-3 text-xs font-bold text-[#e3c6cd] transition hover:border-rose-400/60 hover:text-white">Vis alle {unassignedCount} saker uten tildeling <ArrowRight className="ml-1 inline h-3.5 w-3.5" /></button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* NØKKELTALL */}
+            <section>
+              <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <h3 className="text-base font-black text-white">Saksgang – oversikt</h3>
+                  <p className="mt-1 text-xs text-[#d6b8c3]">Fra nye henvendelser til oppfølging, rapporter og avslutning.</p>
+                </div>
+                <span className="rounded-lg border border-[#67303c] bg-[#270e17] px-3 py-1.5 text-xs text-[#e3c6cd]">{inquiries.filter(isActiveInquiry).length} aktive av {totalCount} totalt</span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                {[
+                  {title:"Nye saker", value:newInquiriesCount, icon:Inbox, accent:"text-emerald-300", view:"aktive" as const, filter:"nye_saker"},
+                  {title:"Mangler prosjektansvarlig", value:unassignedCount, icon:Users, accent:"text-rose-300", view:"handling" as const, filter:"alle"},
+                  {title:"Rapporter til godkjenning", value:reportsForReviewCount, icon:FileText, accent:"text-sky-300", view:"rapporter" as const, filter:"rapporter_til_gjennomgang"},
+                  {title:"Planlagt i dag", value:scheduledTodayCount, icon:CalendarCheck, accent:"text-indigo-300", view:"aktive" as const, filter:"planlagt_i_dag"},
+                  {title:"Avventer kunde", value:awaitingCustomerCount, icon:Clock3, accent:"text-amber-300", view:"aktive" as const, filter:"avventer_kunde"},
+                ].map((tile) => {
+                  const TileIcon = tile.icon;
+                  const hot = tile.value > 0 && (tile.title === "Mangler prosjektansvarlig" || tile.title === "Rapporter til godkjenning");
                   return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => {
-                        setActiveSubTab(tab.id);
-                        setFilterType(tab.filter);
-                      }}
-                      className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-3.5 py-2.5 text-[11px] font-black transition ${
-                        active
-                          ? "bg-amber-500/10 text-amber-300"
-                          : "text-slate-500 hover:bg-slate-900 hover:text-slate-200"
-                      }`}
-                    >
-                      {tab.label}
-                      {tab.count > 0 && (
-                        <span
-                          className={`rounded-md px-1.5 py-0.5 text-[9px] font-black ${
-                            active
-                              ? "bg-amber-500/15 text-amber-200"
-                              : "bg-slate-900 text-slate-500"
-                          }`}
-                        >
-                          {tab.count}
-                        </span>
-                      )}
+                    <button key={tile.title} type="button" onClick={() => openDashboardView(tile.view, tile.filter)} className={`group flex min-h-[125px] flex-col justify-between rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 ${hot ? "border-rose-400/50 bg-[#3a1724]" : "border-[#65313e] bg-[#2b121c]/90 hover:border-rose-400/60 hover:bg-[#3a1724]"}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <TileIcon className={`h-5 w-5 ${tile.accent}`} />
+                        <ChevronRight className="h-4 w-4 text-[#b995a2] transition group-hover:translate-x-0.5" />
+                      </div>
+                      <div>
+                        <div className="text-2xl font-black text-white">{tile.value}</div>
+                        <div className="mt-1 text-xs font-semibold text-[#e7cbd3]">{tile.title}</div>
+                      </div>
                     </button>
                   );
                 })}
               </div>
             </section>
 
-            {/* TOPPOVERSIKT: I DAG / NESTE 7 DAGER / SYSTEMSTATUS */}
-            <div className="grid gap-4 lg:grid-cols-3">
-                <section className="rounded-2xl border border-slate-800/75 bg-[#0d1320] p-4">
-                  <div className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
-                    I dag
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/55 p-3">
-                      <div className="text-xl font-black text-white">{scheduledTodayCount}</div>
-                      <div className="mt-1 text-[10px] text-slate-500">Oppdrag i dag</div>
-                    </div>
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/55 p-3">
-                      <div className="text-xl font-black text-red-300">{akuttCount}</div>
-                      <div className="mt-1 text-[10px] text-slate-500">Akutt</div>
-                    </div>
-                  </div>
-                </section>
+            {quickAssignMessage && <div role="status" className="rounded-xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-xs text-rose-100">{quickAssignMessage}</div>}
+            {notificationMessage && <div role="status" className="rounded-xl border border-sky-400/20 bg-sky-400/10 px-4 py-3 text-xs text-sky-100">{notificationMessage}</div>}
 
-                <section className="rounded-2xl border border-slate-800/75 bg-[#0d1320] p-4">
-                  <div className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
-                    Neste 7 dager
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    <button
-                      type="button"
-                      onClick={() => openOppdragShortcut("neste_7_dager")}
-                      className="flex w-full items-center justify-between rounded-xl border border-slate-800 bg-slate-950/55 px-3 py-3 text-left transition-colors hover:border-blue-500/30 hover:bg-slate-950"
-                      title="Vis planlagte oppdrag de neste 7 dagene"
-                    >
-                      <span className="text-[11px] text-slate-400">Planlagte oppdrag</span>
-                      <strong className="text-sm text-white">{scheduledNext7Days}</strong>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openOppdragShortcut("avventer_kunde")}
-                      className="flex w-full items-center justify-between rounded-xl border border-slate-800 bg-slate-950/55 px-3 py-3 text-left transition-colors hover:border-amber-500/30 hover:bg-slate-950"
-                      title="Vis saker som avventer kunden"
-                    >
-                      <span className="text-[11px] text-slate-400">Avventer kunde</span>
-                      <strong className="text-sm text-amber-300">{awaitingCustomerCount}</strong>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openOppdragShortcut("venter_pa_tilbud")}
-                      className="flex w-full items-center justify-between rounded-xl border border-slate-800 bg-slate-950/55 px-3 py-3 text-left transition-colors hover:border-violet-500/30 hover:bg-slate-950"
-                      title="Vis saker der tilbud må utarbeides"
-                    >
-                      <span className="text-[11px] text-slate-400">Tilbud må sendes</span>
-                      <strong className="text-sm text-violet-300">{waitingForOfferCount}</strong>
-                    </button>
-                  </div>
-                </section>
-
-                <section className="rounded-2xl border border-slate-800/75 bg-[#0d1320] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
-                        Kontroll
-                      </div>
-                      <div className="mt-1 text-xs font-black text-white">Systemstatus</div>
-                    </div>
-                    <ShieldCheck className="h-5 w-5 text-emerald-300" />
-                  </div>
-
-                  <div className="mt-4 space-y-2 text-[11px]">
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500">Oppdrag totalt</span>
-                      <span className="font-bold text-white">{totalCount}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500">Ikke tildelt</span>
-                      <span className={`font-bold ${unassignedCount > 0 ? "text-red-300" : "text-emerald-300"}`}>
-                        {unassignedCount}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500">Rapporter til kontroll</span>
-                      <span className={`font-bold ${reportsForReviewCount > 0 ? "text-blue-300" : "text-emerald-300"}`}>
-                        {reportsForReviewCount}
-                      </span>
-                    </div>
-                  </div>
-                </section>
+            {/* FILTER */}
+            <section className="rounded-2xl border border-[#5d2937] bg-[#2c111c] p-3 md:p-4">
+              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(210px,1fr)_180px_180px_190px_auto]">
+                <label className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#d0acb8]" />
+                  <input aria-label="Søk i oppdrag" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Søk kunde, adresse eller oppdragsnummer…" className="w-full rounded-xl border border-[#60313d] bg-[#1b0b12] py-3 pl-10 pr-3 text-xs text-white outline-none placeholder:text-[#b995a2] focus:border-rose-400" />
+                </label>
+                <select aria-label="Statusfilter" value={activeSubTab} onChange={(e) => openDashboardView(e.target.value as "aktive"|"handling"|"rapporter"|"avsluttede")} className="rounded-xl border border-[#60313d] bg-[#1b0b12] px-3 py-3 text-xs text-white">
+                  <option value="aktive">Alle aktive</option>
+                  <option value="handling">Krever handling</option>
+                  <option value="rapporter">Rapporter til admin</option>
+                  <option value="avsluttede">Avsluttede</option>
+                </select>
+                <select aria-label="Tjenestefilter" value={serviceFilter} onChange={(e) => setServiceFilter(e.target.value)} className="rounded-xl border border-[#60313d] bg-[#1b0b12] px-3 py-3 text-xs text-white">
+                  <option value="alle">Alle tjenester</option>
+                  <option value="lekkasje">Lekkasjesøk</option>
+                  <option value="takkontroll">Takkontroll</option>
+                  <option value="service">Service</option>
+                  <option value="akutt">Akutt</option>
+                </select>
+                <select aria-label="Prosjektansvarligfilter" value={managerFilter} onChange={(e) => setManagerFilter(e.target.value)} className="rounded-xl border border-[#60313d] bg-[#1b0b12] px-3 py-3 text-xs text-white">
+                  <option value="alle">Alle prosjektansvarlige</option>
+                  <option value="uten">Ikke tildelt</option>
+                  {adminEmployees.filter((emp) => emp.status === "Aktiv" && emp.role === "Prosjektleder").map((emp) => <option key={emp.id} value={String(emp.id)}>{emp.name}</option>)}
+                </select>
+                <button type="button" onClick={() => {openDashboardView("aktive"); setSortNewest(true);}} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#60313d] bg-[#381725] px-3 py-3 text-xs font-bold text-[#f6dfe5] transition hover:bg-[#492033]"><RotateCcw className="h-3.5 w-3.5" /> Nullstill</button>
               </div>
-
-            {/* OPERATIVE NØKKELTALL */}
-            <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-              {[
-                {
-                  id: "alle",
-                  label: "Krever handling",
-                  value: actionRequiredCount,
-                  sub: "Prioriterte saker",
-                  icon: Bell,
-                  tone: "border-red-500/20 bg-red-500/[0.055] text-red-300",
-                },
-                {
-                  id: "rapporter_til_gjennomgang",
-                  label: "Rapporter",
-                  value: reportsForReviewCount,
-                  sub: "Til godkjenning",
-                  icon: FileText,
-                  tone: "border-blue-500/20 bg-blue-500/[0.055] text-blue-300",
-                },
-                {
-                  id: "venter_pa_tilbud",
-                  label: "Venter tilbud",
-                  value: waitingForOfferCount,
-                  sub: "Må utarbeides",
-                  icon: CircleDollarSign,
-                  tone: "border-violet-500/20 bg-violet-500/[0.055] text-violet-300",
-                },
-                {
-                  id: "avventer_kunde",
-                  label: "Avventer kunde",
-                  value: awaitingCustomerCount,
-                  sub: "Svar / valg",
-                  icon: UserCheck,
-                  tone: "border-amber-500/20 bg-amber-500/[0.055] text-amber-300",
-                },
-                {
-                  id: "akutt",
-                  label: "Akutt",
-                  value: akuttCount,
-                  sub: "Krever prioritet",
-                  icon: AlertTriangle,
-                  tone: "border-red-500/20 bg-red-500/[0.055] text-red-300",
-                },
-              ].map((item) => {
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={() => {
-                      if (item.id === "rapporter_til_gjennomgang") {
-                        setActiveSubTab("rapporter");
-                      } else if (item.id === "alle") {
-                        setActiveSubTab("handling");
-                      } else if (item.id === "avventer_kunde") {
-                        setActiveSubTab("aktive");
-                      }
-                      setFilterType(item.id);
-                    }}
-                    className={`rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:border-opacity-60 ${item.tone}`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-2xl font-black text-white">{item.value}</div>
-                        <div className="mt-1 text-xs font-black text-white">{item.label}</div>
-                        <div className="mt-1 text-[10px] text-slate-500">{item.sub}</div>
-                      </div>
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-current/20 bg-black/10">
-                        <Icon className="h-4 w-4" />
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
             </section>
 
-            <div className="grid gap-5">
-              <div className="min-w-0 space-y-5">
-                {/* KREVER HANDLING NÅ */}
-                <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
-                  <div className="flex items-center justify-between gap-4 border-b border-slate-800/70 px-5 py-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Bell className="h-4 w-4 text-amber-300" />
-                        <h3 className="text-sm font-black text-white">Krever handling nå</h3>
-                      </div>
-                      <p className="mt-1 text-[11px] text-slate-500">
-                        Saker admin bør behandle før ordinær oppfølging.
-                      </p>
-                    </div>
-                    <span className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[10px] font-black text-amber-300">
-                      {actionRequiredCount} totalt
-                    </span>
+            {/* RESULTATLISTE */}
+            {activeSubTab !== "avsluttede" && (
+              <section id="oppdrag-resultatliste" className="scroll-mt-24 overflow-hidden rounded-2xl border border-[#65313e] bg-[#2a101a]">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#572636] px-5 py-4">
+                  <div>
+                    <h3 className="text-base font-black text-white">{activeSubTab === "handling" ? "Oppdrag som krever handling" : activeSubTab === "rapporter" ? "Rapporter til behandling" : "Aktive oppdrag"}</h3>
+                    <p className="mt-1 text-xs text-[#d9b8c3]">{dashboardRows.length} oppdrag vises · åpne en rad for full saksinformasjon</p>
                   </div>
-
-                  {actionRequiredCount === 0 ? (
-                    <div className="px-5 py-8 text-center text-xs text-slate-500">
-                      Ingen saker krever adminhandling akkurat nå.
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-800/60">
-                      {reportsForReviewCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveSubTab("rapporter");
-                            setFilterType("rapporter_til_gjennomgang");
-                          }}
-                          className="flex w-full items-center justify-between gap-4 px-5 py-3.5 text-left transition-colors hover:bg-white/[0.025]"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-blue-500/20 bg-blue-500/10 text-blue-300">
-                              <FileText className="h-4 w-4" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-black text-white">Rapporter til godkjenning</div>
-                              <div className="mt-0.5 text-[10px] text-slate-500">
-                                {reportsForReviewCount} rapport(er) venter på admin
-                              </div>
-                            </div>
-                          </div>
-                          <span className="text-blue-300">→</span>
-                        </button>
-                      )}
-
-                      {waitingForOfferCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const waitingOffers = inquiries.filter(
-                              (inq) =>
-                                String(inq.status || "").toLowerCase() ===
-                                "venter_pa_tilbud"
-                            );
-
-                            if (waitingOffers.length === 1) {
-                              setSelectedInquiry(waitingOffers[0]);
-                              return;
-                            }
-
-                            setFilterType("venter_pa_tilbud");
-                          }}
-                          className="flex w-full items-center justify-between gap-4 px-5 py-3.5 text-left transition-colors hover:bg-white/[0.025]"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-violet-500/20 bg-violet-500/10 text-violet-300">
-                              <CircleDollarSign className="h-4 w-4" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-black text-white">Tilbud må utarbeides</div>
-                              <div className="mt-0.5 text-[10px] text-slate-500">
-                                {waitingForOfferCount} sak(er) mangler tilbud
-                              </div>
-                            </div>
-                          </div>
-                          <span className="text-violet-300">→</span>
-                        </button>
-                      )}
-
-                      {customerInfoReceivedCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setFilterType("kundeopplysninger")}
-                          className="flex w-full items-center justify-between gap-4 px-5 py-3.5 text-left transition-colors hover:bg-white/[0.025]"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-500/20 bg-cyan-500/10 text-cyan-300">
-                              <UserCheck className="h-4 w-4" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-black text-white">Kundeinformasjon mottatt</div>
-                              <div className="mt-0.5 text-[10px] text-slate-500">
-                                {customerInfoReceivedCount} sak(er) klare for gjennomgang
-                              </div>
-                            </div>
-                          </div>
-                          <span className="text-cyan-300">→</span>
-                        </button>
-                      )}
-
-                      {unassignedCount > 0 && (
-                        <div className="px-5 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-red-500/20 bg-red-500/10 text-red-300">
-                              <Users className="h-4 w-4" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-black text-white">Mangler prosjektleder</div>
-                              <div className="mt-0.5 text-[10px] text-slate-500">
-                                {unassignedCount} sak(er) er ikke tildelt
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="mt-4 space-y-2">
-                            {inquiries
-                              .filter((inq) => {
-                                const assignedId = (inq as any).assigned_project_manager_id;
-                                const assignedName = String((inq as any).assigned_to || "").trim();
-                                return !assignedId && !assignedName;
-                              })
-                              .map((inq) => (
-                                <div
-                                  key={inq.id}
-                                  className="rounded-xl border border-slate-800 bg-slate-950/70 p-3"
-                                >
-                                  <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                                    <button
-                                      type="button"
-                                      onClick={() => setSelectedInquiry(inq)}
-                                      className="min-w-0 text-left"
-                                    >
-                                      <div className="text-xs font-black text-white">
-                                        Oppdrag #{inq.id} · {inq.customer_name || inq.customerName || "Ukjent kunde"}
-                                      </div>
-                                      <div className="mt-1 truncate text-[10px] text-slate-500">
-                                        {[inq.address, inq.postal_code, inq.city].filter(Boolean).join(", ") || "Adresse ikke oppgitt"}
-                                      </div>
-                                    </button>
-
-                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                                      <select
-                                        value={quickManagerSelections[inq.id.toString()] || ""}
-                                        onChange={(e) =>
-                                          setQuickManagerSelections((prev) => ({
-                                            ...prev,
-                                            [inq.id.toString()]: e.target.value,
-                                          }))
-                                        }
-                                        className="min-w-[210px] rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] font-bold text-white outline-none focus:border-amber-500/60"
-                                      >
-                                        <option value="">Velg prosjektleder</option>
-                                        {adminEmployees
-                                          .filter(
-                                            (employee) =>
-                                              employee.status === "Aktiv" &&
-                                              employee.role === "Prosjektleder"
-                                          )
-                                          .map((employee) => (
-                                            <option key={employee.id} value={employee.id}>
-                                              {employee.name}
-                                            </option>
-                                          ))}
-                                      </select>
-
-                                      <button
-                                        type="button"
-                                        onClick={() => void quickAssignProjectManager(inq)}
-                                        disabled={
-                                          quickAssignBusyId === inq.id.toString() ||
-                                          !quickManagerSelections[inq.id.toString()]
-                                        }
-                                        className="rounded-xl bg-[#F5B800] px-4 py-2 text-[11px] font-black text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
-                                      >
-                                        {quickAssignBusyId === inq.id.toString()
-                                          ? "Tildeler..."
-                                          : "Tildel"}
-                                      </button>
+                  <button type="button" onClick={() => setSortNewest((v) => !v)} className="inline-flex items-center gap-2 rounded-lg border border-[#693546] bg-[#391a27] px-3 py-2 text-xs font-semibold text-[#ecd0d8]"><ArrowUpDown className="h-3.5 w-3.5" /> Nummer {sortNewest ? "nyeste først" : "eldste først"}</button>
+                </div>
+                {loading ? (
+                  <div className="flex items-center justify-center gap-2 p-12 text-sm text-[#e2c3cd]"><Loader2 className="h-4 w-4 animate-spin" /> Henter oppdrag…</div>
+                ) : dashboardRows.length === 0 ? (
+                  <div className="p-12 text-center text-sm text-[#d9b8c3]">Ingen oppdrag samsvarer med filtrene.</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[1050px] text-left text-xs">
+                      <thead className="bg-[#200c14] text-[10px] font-extrabold uppercase tracking-wider text-[#d4b1bd]">
+                        <tr>
+                          <th className="px-5 py-4">Kunde / adresse</th>
+                          <th className="px-3 py-4">Prosjektansvarlig</th>
+                          <th className="px-3 py-4">Tjeneste</th>
+                          <th className="px-3 py-4">Dato</th>
+                          <th className="px-3 py-4">Status</th>
+                          <th className="px-3 py-4">Neste steg</th>
+                          <th className="px-3 py-4 text-right">Handling</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#562736]">
+                        {dashboardRows.map((inq) => {
+                          const id = inq.id.toString();
+                          const responsible = String((inq as any).assigned_to || "").trim();
+                          const unassigned = !responsible && !(inq as any).assigned_project_manager_id;
+                          const needsReport = needsAdminReportAction(reportStatuses[id]);
+                          const status = String(inq.status || "").toLowerCase();
+                          const nextLabel = needsReport ? "Behandle rapport" : unassigned ? "Tildel prosjektansvarlig" : status === "planlagt" ? "Åpne planlagt oppdrag" : "Åpne oppdrag";
+                          return (
+                            <tr key={id} onClick={() => setSelectedInquiry(inq)} className="group cursor-pointer bg-[#2c111b] transition-colors even:bg-[#321520] hover:bg-[#4a2030]">
+                              <td className="px-5 py-4">
+                                <div className="flex items-start gap-3">
+                                  <span className="rounded-lg border border-[#633347] bg-[#1b0a12] px-2 py-1.5 font-mono text-xs font-black text-[#f6e9ed]">#{id}</span>
+                                  <div className="min-w-[200px]">
+                                    <div className="flex flex-wrap items-center gap-2 font-extrabold text-white">
+                                      {inq.customer_name || inq.customerName || "Ukjent kunde"}
+                                      {isNewInquiry(inq) && <span className="rounded-md bg-amber-400 px-1.5 py-0.5 text-[9px] font-black text-[#221018]">NY</span>}
                                     </div>
+                                    <div className="mt-1 flex items-center gap-1 text-[11px] text-[#e8cbd4]"><MapPin className="h-3 w-3 shrink-0 text-amber-300" />{[inq.address, inq.postal_code, inq.city].filter(Boolean).join(", ")}</div>
+                                    <div className="mt-1 text-[10px] text-[#c5a5b2]">{inq.roof_type || inq.roofType || "Taktype ikke oppgitt"}{inq.building_type ? ` · ${inq.building_type}` : ""}</div>
                                   </div>
                                 </div>
-                              ))}
-                          </div>
-
-                          {quickAssignMessage && (
-                            <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-[10px] text-slate-300">
-                              {quickAssignMessage}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </section>
-
-                {/* SØK OG FILTER */}
-                <section className="flex flex-col gap-3 rounded-2xl border border-slate-800/70 bg-slate-900/45 p-3.5 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="relative w-full lg:max-w-[430px]">
-                    <input
-                      type="text"
-                      placeholder="Søk kunde, adresse, by eller ID..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full rounded-xl border border-slate-800 bg-slate-950/80 py-2.5 pl-9 pr-4 text-xs text-white outline-none transition-colors placeholder:text-slate-600 focus:border-amber-500/70"
-                    />
-                    <Search className="absolute left-3 top-3 h-3.5 w-3.5 text-slate-500" />
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <Filter className="mr-1 h-3.5 w-3.5 text-slate-600" />
-                    {[
-                      ["alle", "Alle"],
-                      ["rapporter_til_gjennomgang", "Rapporter"],
-                      ["venter_pa_tilbud", "Tilbud"],
-                      ["akutt", "Akutt"],
-                      ["lekkasjesok", "Lekkasjesøk"],
-                      ["takkontroll", "Takkontroll"],
-                      ["service", "Service"],
-                    ].map(([id, label]) => (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => setFilterType(id)}
-                        className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition-all ${
-                          filterType === id
-                            ? "bg-[#F5B800] text-slate-950"
-                            : "border border-slate-800/80 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:text-white"
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-
-                {notificationMessage && (
-                  <div className="rounded-xl border border-blue-500/20 bg-blue-500/[0.06] px-4 py-3 text-[11px] font-bold text-blue-300">
-                    {notificationMessage}
+                              </td>
+                              <td className={`px-3 py-4 font-bold ${unassigned ? "text-rose-300" : "text-[#f2e3e8]"}`}>{unassigned ? "Ikke tildelt" : responsible || `Prosjektleder #${(inq as any).assigned_project_manager_id}`}</td>
+                              <td className="px-3 py-4">{getServiceBadge(inq)}</td>
+                              <td className="whitespace-nowrap px-3 py-4 text-[#ecd4dd]">{parseCompactBookingDetails(inq.notes, inq.created_at, (inq as any).booking_date)}</td>
+                              <td className="px-3 py-4">{getWorkflowBadge(inq)}</td>
+                              <td className="px-3 py-4" onClick={(e) => e.stopPropagation()}>
+                                {unassigned && !needsReport ? (
+                                  <div className="flex min-w-[180px] flex-col gap-2">
+                                    <select aria-label={`Velg prosjektansvarlig for oppdrag ${id}`} value={quickManagerSelections[id] || ""} onChange={(e) => setQuickManagerSelections((prev) => ({ ...prev, [id]: e.target.value }))} className="min-w-[175px] rounded-lg border border-[#774051] bg-[#210c15] px-2 py-2 text-[11px] text-white">
+                                      <option value="">Velg prosjektansvarlig</option>
+                                      {adminEmployees.filter((emp) => emp.status === "Aktiv" && emp.role === "Prosjektleder").map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+                                    </select>
+                                    <button type="button" disabled={!quickManagerSelections[id] || quickAssignBusyId === id} onClick={() => void quickAssignProjectManager(inq)} className="rounded-lg bg-rose-600 px-3 py-2 text-[11px] font-black text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40">{quickAssignBusyId === id ? "Tildeler…" : "Tildel"}</button>
+                                  </div>
+                                ) : (
+                                  <button type="button" onClick={() => (needsReport ? setReviewInquiry(inq) : setSelectedInquiry(inq))} className="inline-flex items-center gap-1.5 rounded-lg border border-[#794052] bg-[#431827] px-3 py-2 text-[11px] font-bold text-white transition hover:border-rose-400"><ArrowRight className="h-3.5 w-3.5" />{nextLabel}</button>
+                                )}
+                              </td>
+                              <td className="px-3 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                                <div className="relative inline-flex">
+                                  <button type="button" aria-label={`Flere handlinger for oppdrag ${id}`} aria-expanded={openActionMenuId === id} onClick={() => setOpenActionMenuId((current) => (current === id ? null : id))} className="rounded-lg border border-[#714050] bg-[#1e0b13] p-2 text-[#f2dbe2] hover:bg-[#4b2331]"><MoreHorizontal className="h-4 w-4" /></button>
+                                  {openActionMenuId === id && (
+                                    <div className="absolute right-0 top-10 z-50 w-48 space-y-1 rounded-xl border border-[#794052] bg-[#210c15] p-1.5 text-left shadow-2xl">
+                                      <button type="button" onClick={() => {setOpenActionMenuId(null); setSelectedInquiry(inq);}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-white hover:bg-[#542439]">Åpne oppdrag</button>
+                                      {needsReport && <button type="button" onClick={() => {setOpenActionMenuId(null); setReviewInquiry(inq);}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-sky-200 hover:bg-[#542439]">Behandle rapport</button>}
+                                      <button type="button" onClick={() => {setOpenActionMenuId(null); void createAdminReminder(inq, "project_manager");}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-white hover:bg-[#542439]">Purr prosjektansvarlig</button>
+                                      <button type="button" onClick={() => {setOpenActionMenuId(null); void createAdminReminder(inq, "customer");}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-white hover:bg-[#542439]">Påminn kunde</button>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 )}
-
-                {/* AKTIVE OPPDRAG / KREVER HANDLING / RAPPORTER */}
-                {activeSubTab !== "avsluttede" && (
-                <section
-                  id="oppdrag-resultatliste"
-                  className="scroll-mt-24 overflow-hidden rounded-2xl border border-slate-800/75 bg-[#0d1320]"
-                >
-                  <div className="flex items-center justify-between border-b border-slate-800/70 px-5 py-4">
-                    <div>
-                      <h3 className="text-sm font-black text-white">
-                        {activeSubTab === "handling"
-                          ? "Saker som krever handling"
-                          : activeSubTab === "rapporter"
-                            ? "Rapporter til behandling"
-                            : filterType === "alle"
-                              ? "Aktive oppdrag"
-                              : "Filtrerte oppdrag"}
-                      </h3>
-                      <p className="mt-0.5 text-[11px] text-slate-500">
-                        {activeSubTab === "handling"
-                          ? `${visibleActiveInquiries.length} sak(er) krever oppfølging`
-                          : activeSubTab === "rapporter"
-                            ? `${reportsForReviewInquiries.length} rapport(er) venter på behandling`
-                            : `${visibleActiveInquiries.length} av ${activeInquiriesCount} aktive oppdrag vises`}
-                      </p>
-                    </div>
-                  </div>
-
-                  {loading ? (
-                    <div className="flex items-center justify-center gap-2 p-10 text-xs text-slate-400">
-                      <Loader2 className="h-4 w-4 animate-spin text-[#F5B800]" />
-                      Henter oppdrag...
-                    </div>
-                  ) : inquiries.length === 0 ? (
-                    <div className="p-12 text-center text-xs text-slate-500">
-                      Ingen henvendelser funnet i databasen ennå.
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full border-collapse text-left text-xs text-slate-300">
-                        <thead className="border-b border-slate-800/70 bg-slate-950/70 text-[10px] font-black uppercase tracking-[0.12em] text-slate-600">
-                          <tr>
-                            <th className="px-5 py-3.5">Kunde / adresse</th>
-                            <th className="px-4 py-3.5 w-[165px]">Ansvarlig</th>
-                            <th className="px-4 py-3.5 w-[170px]">Tjeneste</th>
-                            <th className="px-4 py-3.5 w-[180px]">Dato</th>
-                            <th className="px-4 py-3.5 w-[205px]">Status</th>
-                            <th className="px-4 py-3.5 w-[300px] text-right">Handling</th>
-                          </tr>
-                        </thead>
-
-                        <tbody className="divide-y divide-slate-800/60">
-                          {visibleActiveInquiries.map((inq) => {
-                            const custName = inq.customer_name || inq.customerName || "Ukjent kunde";
-                            const roof = inq.roof_type || inq.roofType || "Generelt tak";
-                            const building = inq.building_type ? ` · ${inq.building_type}` : "";
-                            const isNew = Boolean(inq.is_new ?? 1);
-                            const reportStatus = reportStatuses[inq.id.toString()]?.status;
-                            const responsible =
-                              String((inq as any).assigned_to || "").trim() ||
-                              ((inq as any).assigned_project_manager_id
-                                ? `Prosjektleder #${(inq as any).assigned_project_manager_id}`
-                                : "Ikke tildelt");
-
-                            const openInquiry = () => {
-                              if (
-                                reportStatus === "sendt_til_admin" ||
-                                reportStatus === "under_gjennomgang" ||
-                                reportStatus === "godkjent"
-                              ) {
-                                setReviewInquiry(inq);
-                              } else {
-                                setSelectedInquiry(inq);
-                              }
-                            };
-
-                            return (
-                              <tr
-                                key={inq.id}
-                                onClick={openInquiry}
-                                className="group cursor-pointer transition-colors hover:bg-white/[0.025]"
-                              >
-                                <td className="px-5 py-4 align-middle">
-                                  <div className="flex min-w-[285px] items-start gap-3">
-                                    <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-800 bg-slate-950/80 font-mono text-[11px] font-black text-slate-400">
-                                      #{inq.id}
-                                    </div>
-                                    <div className="min-w-0">
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <strong className="truncate text-[13px] font-black text-white">
-                                          {custName}
-                                        </strong>
-                                        {isNew && (
-                                          <span className="rounded-md bg-[#F5B800] px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-slate-950">
-                                            Ny
-                                          </span>
-                                        )}
-                                      </div>
-                                      <div className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-slate-300">
-                                        <MapPin className="h-3.5 w-3.5 shrink-0 text-amber-500" />
-                                        <span className="truncate">
-                                          {inq.address}
-                                          {inq.postal_code ? `, ${inq.postal_code}` : ""} {inq.city}
-                                        </span>
-                                      </div>
-                                      <div className="mt-1 text-[10px] text-slate-600">
-                                        {roof}{building}
-                                      </div>
-                                    </div>
-                                  </div>
-                                </td>
-
-                                <td className="px-4 py-4 align-middle">
-                                  <div className={`text-[11px] font-bold ${responsible === "Ikke tildelt" ? "text-red-300" : "text-slate-300"}`}>
-                                    {responsible}
-                                  </div>
-                                </td>
-
-                                <td className="px-4 py-4 align-middle">
-                                  {getServiceBadge(inq)}
-                                </td>
-
-                                <td className="px-4 py-4 align-middle">
-                                  <div className="inline-flex items-center gap-2 text-[11px] font-bold text-slate-300">
-                                    <Calendar className="h-3.5 w-3.5 shrink-0 text-amber-400" />
-                                    <span>
-                                      {parseCompactBookingDetails(
-                                        inq.notes,
-                                        inq.created_at,
-                                        (inq as any).booking_date
-                                      )}
-                                    </span>
-                                  </div>
-                                </td>
-
-                                <td className="px-4 py-4 align-middle">
-                                  {getWorkflowBadge(inq)}
-                                </td>
-
-                                <td className="px-3 py-4 text-right align-middle">
-                                  <div className="relative inline-flex">
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        const id = inq.id.toString();
-                                        setOpenActionMenuId((current) =>
-                                          current === id ? null : id
-                                        );
-                                      }}
-                                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-300 transition-all hover:border-amber-500/40 hover:bg-slate-800 hover:text-white"
-                                      title="Flere handlinger"
-                                      aria-label={`Flere handlinger for sak #${inq.id}`}
-                                      aria-expanded={openActionMenuId === inq.id.toString()}
-                                    >
-                                      <MoreHorizontal className="h-4 w-4" />
-                                    </button>
-
-                                    {openActionMenuId === inq.id.toString() && (
-                                      <div
-                                        className="absolute right-0 top-11 z-50 w-52 overflow-hidden rounded-xl border border-slate-700 bg-[#0b1320] p-1.5 text-left shadow-2xl"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setOpenActionMenuId(null);
-                                            openInquiry();
-                                          }}
-                                          className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-[11px] font-black text-white transition hover:bg-slate-800"
-                                        >
-                                          <span>
-                                            {["sendt_til_admin", "under_gjennomgang", "godkjent"].includes(
-                                              reportStatus || ""
-                                            )
-                                              ? "Behandle rapport"
-                                              : "Åpne sak"}
-                                          </span>
-                                          <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
-                                        </button>
-
-                                        {String(inq.status || "").toLowerCase() ===
-                                          "venter_pa_tilbud" && (
-                                          <>
-                                            <div className="my-1 border-t border-slate-800" />
-
-                                            <button
-                                              type="button"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                setOpenActionMenuId(null);
-                                                setSelectedInquiry(inq);
-                                              }}
-                                              className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-[11px] font-black text-violet-300 transition hover:bg-violet-500/10"
-                                            >
-                                              <CircleDollarSign className="h-3.5 w-3.5" />
-                                              Send tilbud til kunde
-                                            </button>
-                                          </>
-                                        )}
-
-                                        <div className="my-1 border-t border-slate-800" />
-
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setOpenActionMenuId(null);
-                                            setSelectedInquiry(inq);
-                                          }}
-                                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-[11px] font-bold text-emerald-300 transition hover:bg-emerald-500/10"
-                                        >
-                                          <Users className="h-3.5 w-3.5" />
-                                          {responsible === "Ikke tildelt"
-                                            ? "Tildel prosjektleder"
-                                            : "Endre prosjektleder"}
-                                        </button>
-
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setOpenActionMenuId(null);
-                                            void createAdminReminder(inq, "customer");
-                                          }}
-                                          disabled={notificationBusy === `${inq.id}-customer`}
-                                          className="flex w-full items-center rounded-lg px-3 py-2.5 text-[11px] font-bold text-amber-300 transition hover:bg-amber-500/10 disabled:cursor-wait disabled:opacity-50"
-                                        >
-                                          {notificationBusy === `${inq.id}-customer`
-                                            ? "Lagrer påminnelse..."
-                                            : "Påminn kunde"}
-                                        </button>
-
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setOpenActionMenuId(null);
-                                            void createAdminReminder(inq, "project_manager");
-                                          }}
-                                          disabled={notificationBusy === `${inq.id}-project_manager`}
-                                          className="flex w-full items-center rounded-lg px-3 py-2.5 text-[11px] font-bold text-blue-300 transition hover:bg-blue-500/10 disabled:cursor-wait disabled:opacity-50"
-                                        >
-                                          {notificationBusy === `${inq.id}-project_manager`
-                                            ? "Lagrer purring..."
-                                            : "Purr prosjektleder"}
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </section>
-                )}
-              </div>
-
-
-            </div>
+              </section>
+            )}
           </div>
         )}
-
 
         {activeTab === "oppdrag" &&
           activeSubTab === "avsluttede" &&
           completedInquiries.length > 0 && (
-          <section className="mt-5 overflow-hidden rounded-2xl border border-slate-800/75 bg-[#0d1320]">
+          <section className="mt-5 overflow-hidden rounded-2xl border border-slate-800/75 bg-[#32121d]">
             <div className="flex items-center justify-between border-b border-slate-800/70 px-5 py-4">
               <div>
                 <h3 className="text-sm font-black text-white">
                   Avsluttede saker
                 </h3>
-                <p className="mt-0.5 text-[11px] text-slate-500">
+                <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                   Ferdigbehandlede saker og saker der kunden har takket nei.
                 </p>
               </div>
@@ -2871,7 +2555,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-[10px] font-black text-slate-500">
+                      <span className="font-mono text-[10px] font-black text-[#cbb2bd]">
                         #{inq.id}
                       </span>
                       <span className="truncate text-xs font-black text-white">
@@ -2879,7 +2563,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       </span>
                     </div>
 
-                    <div className="mt-1 truncate text-[10px] text-slate-500">
+                    <div className="mt-1 truncate text-[10px] text-[#cbb2bd]">
                       {[inq.address, inq.postal_code, inq.city]
                         .filter(Boolean)
                         .join(", ") || "Adresse ikke oppgitt"}
@@ -2908,19 +2592,22 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         {activeTab === "oppdrag" &&
           activeSubTab === "avsluttede" &&
           completedInquiries.length === 0 && (
-          <section className="mt-5 rounded-2xl border border-slate-800/75 bg-[#0d1320] px-5 py-10 text-center">
-            <ShieldCheck className="mx-auto h-7 w-7 text-slate-600" />
+          <section className="mt-5 rounded-2xl border border-slate-800/75 bg-[#32121d] px-5 py-10 text-center">
+            <ShieldCheck className="mx-auto h-7 w-7 text-[#bda2af]" />
             <h3 className="mt-3 text-sm font-black text-white">Ingen avsluttede saker ennå</h3>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-[#cbb2bd]">
               Ferdigbehandlede saker og saker der kunden takker nei til tilbud flyttes hit automatisk.
             </p>
           </section>
         )}
 
+        {/* FANE: ÅRLIG TAKKONTROLL – LESING FRA PERUN CORE */}
+        {activeTab === "arlig_takkontroll" && <RoofMaintenanceAdmin />}
+
         {/* FANE: FULL KALENDER */}
         {activeTab === "kalender" && (
           <div className="space-y-5">
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="flex flex-col gap-4 border-b border-slate-800/80 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10">
@@ -2928,7 +2615,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </div>
                   <div>
                     <h3 className="text-base font-black text-white">Kalender</h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       Planlagte feltoppdrag, service, takkontroll og digitale befaringer.
                     </p>
                   </div>
@@ -2951,7 +2638,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       className={`inline-flex shrink-0 items-center rounded-xl px-3.5 py-2.5 text-[11px] font-black transition ${
                         active
                           ? "bg-amber-500/10 text-amber-300"
-                          : "text-slate-500 hover:bg-slate-900 hover:text-slate-200"
+                          : "text-[#cbb2bd] hover:bg-slate-900 hover:text-slate-200"
                       }`}
                     >
                       {tab.label}
@@ -2961,7 +2648,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               </div>
             </section>
 
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="flex flex-col gap-4 border-b border-slate-800/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h3 className="text-sm font-black capitalize text-white">
@@ -2971,7 +2658,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         ? calendarWeekLabel
                         : calendarMonthLabel}
                   </h3>
-                  <p className="mt-1 text-[10px] text-slate-500">
+                  <p className="mt-1 text-[10px] text-[#cbb2bd]">
                     {calendarView === "day"
                       ? "Alle planlagte oppdrag denne dagen."
                       : calendarView === "week"
@@ -2998,7 +2685,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         return next;
                       })
                     }
-                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-slate-400 hover:text-white"
+                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-[#ead4dc] hover:text-white"
                     aria-label="Forrige periode"
                   >
                     <ChevronLeft className="h-4 w-4" />
@@ -3029,7 +2716,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         return next;
                       })
                     }
-                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-slate-400 hover:text-white"
+                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-[#ead4dc] hover:text-white"
                     aria-label="Neste periode"
                   >
                     <ChevronRight className="h-4 w-4" />
@@ -3043,7 +2730,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     {["Man", "Tir", "Ons", "Tor", "Fre", "Lør", "Søn"].map((day) => (
                       <div
                         key={day}
-                        className="px-2 py-3 text-center text-[9px] font-black uppercase tracking-[0.12em] text-slate-600"
+                        className="px-2 py-3 text-center text-[9px] font-black uppercase tracking-[0.12em] text-[#bda2af]"
                       >
                         {day}
                       </div>
@@ -3063,7 +2750,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         <div
                           key={date.toISOString()}
                           className={`min-h-[125px] border-b border-r border-slate-800/60 p-2 transition-colors ${
-                            inCurrentMonth ? "bg-[#0d1320]" : "bg-slate-950/35"
+                            inCurrentMonth ? "bg-[#32121d]" : "bg-slate-950/35"
                           }`}
                         >
                           <div className="mb-2 flex items-center justify-between">
@@ -3073,14 +2760,14 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                   ? "bg-[#F5B800] text-slate-950"
                                   : inCurrentMonth
                                     ? "text-slate-300"
-                                    : "text-slate-700"
+                                    : "text-[#a88d9c]"
                               }`}
                             >
                               {date.getDate()}
                             </span>
 
                             {dayItems.length > 0 && (
-                              <span className="text-[9px] font-black text-slate-600">
+                              <span className="text-[9px] font-black text-[#bda2af]">
                                 {dayItems.length}
                               </span>
                             )}
@@ -3105,14 +2792,14 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                     })}
                                   </span>
                                 </div>
-                                <div className="mt-0.5 truncate text-[9px] text-slate-600">
+                                <div className="mt-0.5 truncate text-[9px] text-[#bda2af]">
                                   {inq.address || inq.city || "Adresse ikke registrert"}
                                 </div>
                               </button>
                             ))}
 
                             {dayItems.length > 3 && (
-                              <div className="px-1 text-[9px] font-bold text-slate-500">
+                              <div className="px-1 text-[9px] font-bold text-[#cbb2bd]">
                                 + {dayItems.length - 3} flere
                               </div>
                             )}
@@ -3135,7 +2822,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     return (
                       <div key={date.toISOString()} className="min-h-[360px] p-3">
                         <div className="mb-3 border-b border-slate-800/70 pb-3">
-                          <div className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-600">
+                          <div className="text-[9px] font-black uppercase tracking-[0.12em] text-[#bda2af]">
                             {new Intl.DateTimeFormat("nb-NO", {
                               weekday: "short",
                             }).format(date)}
@@ -3168,14 +2855,14 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                               <div className="mt-1 truncate text-[10px] font-black text-white">
                                 {inq.customer_name || inq.customerName || `Oppdrag #${inq.id}`}
                               </div>
-                              <div className="mt-1 truncate text-[9px] text-slate-600">
+                              <div className="mt-1 truncate text-[9px] text-[#bda2af]">
                                 {inq.address || inq.city || "Adresse ikke registrert"}
                               </div>
                             </button>
                           ))}
 
                           {dayItems.length === 0 && (
-                            <div className="rounded-xl border border-dashed border-slate-800 px-3 py-6 text-center text-[9px] text-slate-700">
+                            <div className="rounded-xl border border-dashed border-slate-800 px-3 py-6 text-center text-[9px] text-[#a88d9c]">
                               Ingen oppdrag
                             </div>
                           )}
@@ -3196,8 +2883,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     if (dayItems.length === 0) {
                       return (
                         <div className="rounded-2xl border border-dashed border-slate-800 px-5 py-12 text-center">
-                          <Calendar className="mx-auto h-6 w-6 text-slate-700" />
-                          <div className="mt-3 text-xs font-black text-slate-400">
+                          <Calendar className="mx-auto h-6 w-6 text-[#a88d9c]" />
+                          <div className="mt-3 text-xs font-black text-[#ead4dc]">
                             Ingen planlagte oppdrag denne dagen
                           </div>
                         </div>
@@ -3225,11 +2912,11 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                 <div className="truncate text-sm font-black text-white">
                                   {inq.customer_name || inq.customerName || `Oppdrag #${inq.id}`}
                                 </div>
-                                <div className="mt-1 flex items-center gap-1.5 truncate text-[10px] text-slate-500">
+                                <div className="mt-1 flex items-center gap-1.5 truncate text-[10px] text-[#cbb2bd]">
                                   <MapPin className="h-3 w-3 shrink-0 text-amber-500" />
                                   {inq.address || inq.city || "Adresse ikke registrert"}
                                 </div>
-                                <div className="mt-1 text-[10px] text-slate-600">
+                                <div className="mt-1 text-[10px] text-[#bda2af]">
                                   {(() => {
                                     const service = String(
                                       inq.recommended_service || ""
@@ -3246,7 +2933,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                               </div>
                             </div>
 
-                            <span className="shrink-0 text-[10px] font-black text-slate-500">
+                            <span className="shrink-0 text-[10px] font-black text-[#cbb2bd]">
                               Åpne oppdrag
                             </span>
                           </button>
@@ -3258,10 +2945,10 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               )}
             </section>
 
-            <section className="rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="border-b border-slate-800/70 px-5 py-4">
                 <h3 className="text-sm font-black text-white">Kommende avtaler</h3>
-                <p className="mt-1 text-[11px] text-slate-500">
+                <p className="mt-1 text-[11px] text-[#cbb2bd]">
                   Neste planlagte oppdrag fra i dag og fremover.
                 </p>
               </div>
@@ -3281,7 +2968,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         <div className="truncate text-xs font-black text-white">
                           {inq.customer_name || inq.customerName || `Oppdrag #${inq.id}`}
                         </div>
-                        <div className="mt-1 flex items-center gap-1.5 truncate text-[10px] text-slate-500">
+                        <div className="mt-1 flex items-center gap-1.5 truncate text-[10px] text-[#cbb2bd]">
                           <MapPin className="h-3 w-3 text-amber-500" />
                           {inq.address || inq.city || "Adresse ikke registrert"}
                         </div>
@@ -3306,7 +2993,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   ))}
 
                 {calendarInquiries.length === 0 && (
-                  <div className="px-5 py-8 text-center text-xs text-slate-500">
+                  <div className="px-5 py-8 text-center text-xs text-[#cbb2bd]">
                     Ingen planlagte oppdrag er registrert.
                   </div>
                 )}
@@ -3318,7 +3005,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         {/* FANE: SJEKKLISTER */}
         {activeTab === "sjekklister" && (
           <div className="space-y-5">
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="flex flex-col gap-4 border-b border-slate-800/80 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10">
@@ -3326,7 +3013,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </div>
                   <div>
                     <h3 className="text-base font-black text-white">Sjekklister</h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       Maler og utfylte sjekklister for gjennomføring og dokumentasjon.
                     </p>
                   </div>
@@ -3347,7 +3034,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       className={`inline-flex shrink-0 items-center rounded-xl px-3.5 py-2.5 text-[11px] font-black transition ${
                         active
                           ? "bg-amber-500/10 text-amber-300"
-                          : "text-slate-500 hover:bg-slate-900 hover:text-slate-200"
+                          : "text-[#cbb2bd] hover:bg-slate-900 hover:text-slate-200"
                       }`}
                     >
                       {tab.label}
@@ -3367,9 +3054,9 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
             </div>
 
             {checklistView === "completed" && (
-              <section className="rounded-2xl border border-slate-800/80 bg-[#0d1320] p-6">
+              <section className="rounded-2xl border border-slate-800/80 bg-[#32121d] p-6">
                 <div className="text-sm font-black text-white">Utfylte sjekklister</div>
-                <p className="mt-1 text-[11px] text-slate-500">
+                <p className="mt-1 text-[11px] text-[#cbb2bd]">
                   Denne fanen er klar for oversikten over ferdig utfylte sjekklister.
                 </p>
               </section>
@@ -3380,7 +3067,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         {/* FANE: PROSJEKTBIBLIOTEK */}
         {activeTab === "prosjekter" && (
           <div className="space-y-5">
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="flex flex-col gap-4 border-b border-slate-800/80 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10">
@@ -3388,7 +3075,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </div>
                   <div>
                     <h3 className="text-base font-black text-white">Prosjektbibliotek</h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       Publiserte prosjekter, nye prosjektopplastinger og arkiv.
                     </p>
                   </div>
@@ -3410,7 +3097,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       className={`inline-flex shrink-0 items-center rounded-xl px-3.5 py-2.5 text-[11px] font-black transition ${
                         active
                           ? "bg-amber-500/10 text-amber-300"
-                          : "text-slate-500 hover:bg-slate-900 hover:text-slate-200"
+                          : "text-[#cbb2bd] hover:bg-slate-900 hover:text-slate-200"
                       }`}
                     >
                       {tab.label}
@@ -3422,7 +3109,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
             <div className={projectLibraryView === "published" ? "block" : "hidden"}>
           <div className="space-y-8">
-            <section className="rounded-2xl border border-slate-800/80 bg-[#0d1320] p-5 md:p-6">
+            <section className="rounded-2xl border border-slate-800/80 bg-[#32121d] p-5 md:p-6">
               <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                 <div>
                   <div className="text-[11px] font-black uppercase tracking-[0.16em] text-amber-400/80">
@@ -3431,7 +3118,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   <h3 className="mt-1 text-xl font-black text-white">
                     Referanseprosjekter
                   </h3>
-                  <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
+                  <p className="mt-1 max-w-2xl text-xs leading-5 text-[#cbb2bd]">
                     Bygg prosjektbøker med før-, underveis- og etterbilder, bildetekster,
                     prosjektbeskrivelse og egne coverbilder.
                   </p>
@@ -3443,7 +3130,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               </div>
             </section>
 
-            <section className="rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <button
                 type="button"
                 onClick={() => {
@@ -3463,7 +3150,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     <h4 className="text-sm font-black text-white">
                       {editingProjectId ? `Rediger referanseprosjekt #${editingProjectId}` : "Publiser nytt referanseprosjekt"}
                     </h4>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       {projectEditorOpen
                         ? "Klikk for å lukke prosjekteditoren."
                         : "Åpne kun når du skal legge til eller redigere et prosjekt."}
@@ -3480,7 +3167,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
             {projectEditorOpen && (
             <form
               onSubmit={handleCreateProject}
-              className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]"
+              className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]"
             >
               <div className="flex items-center justify-between border-b border-slate-800/70 px-5 py-4 md:px-6">
                 <div className="flex items-center gap-2.5">
@@ -3497,7 +3184,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         ? `Rediger referanseprosjekt #${editingProjectId}`
                         : "Publiser nytt referanseprosjekt"}
                     </h4>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       Prosjektdata, prosjektbok og komplett bildebibliotek.
                     </p>
                   </div>
@@ -3507,7 +3194,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   <button
                     type="button"
                     onClick={handleCancelEdit}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] font-bold text-slate-400 transition-colors hover:text-white"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] font-bold text-[#ead4dc] transition-colors hover:text-white"
                   >
                     <X className="h-3.5 w-3.5" />
                     Avbryt
@@ -3521,14 +3208,14 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     <h5 className="text-xs font-black uppercase tracking-[0.12em] text-slate-300">
                       1. Prosjektinformasjon
                     </h5>
-                    <p className="mt-1 text-[11px] text-slate-600">
+                    <p className="mt-1 text-[11px] text-[#bda2af]">
                       Informasjonen som brukes i prosjektkortet og prosjektboken.
                     </p>
                   </div>
 
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                     <label className="space-y-1.5 md:col-span-2">
-                      <span className="text-[11px] font-bold text-slate-400">
+                      <span className="text-[11px] font-bold text-[#ead4dc]">
                         Prosjekttittel *
                       </span>
                       <input
@@ -3538,13 +3225,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         onChange={(e) =>
                           setNewProject({ ...newProject, title: e.target.value })
                         }
-                        className="w-full rounded-xl border border-slate-800 bg-slate-950/85 px-3.5 py-3 text-xs text-white outline-none transition-colors placeholder:text-slate-700 focus:border-amber-500/60"
+                        className="w-full rounded-xl border border-slate-800 bg-slate-950/85 px-3.5 py-3 text-xs text-white outline-none transition-colors placeholder:text-[#a88d9c] focus:border-amber-500/60"
                         required
                       />
                     </label>
 
                     <label className="space-y-1.5">
-                      <span className="text-[11px] font-bold text-slate-400">
+                      <span className="text-[11px] font-bold text-[#ead4dc]">
                         Fagområde
                       </span>
                       <select
@@ -3565,7 +3252,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     </label>
 
                     <label className="space-y-1.5">
-                      <span className="text-[11px] font-bold text-slate-400">
+                      <span className="text-[11px] font-bold text-[#ead4dc]">
                         Sted / område
                       </span>
                       <input
@@ -3578,12 +3265,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                             location: e.target.value,
                           })
                         }
-                        className="w-full rounded-xl border border-slate-800 bg-slate-950/85 px-3.5 py-3 text-xs text-white outline-none transition-colors placeholder:text-slate-700 focus:border-amber-500/60"
+                        className="w-full rounded-xl border border-slate-800 bg-slate-950/85 px-3.5 py-3 text-xs text-white outline-none transition-colors placeholder:text-[#a88d9c] focus:border-amber-500/60"
                       />
                     </label>
 
                     <label className="space-y-1.5 md:col-span-2">
-                      <span className="text-[11px] font-bold text-slate-400">
+                      <span className="text-[11px] font-bold text-[#ead4dc]">
                         Kort beskrivelse / ingress
                       </span>
                       <textarea
@@ -3596,7 +3283,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                             description: e.target.value,
                           })
                         }
-                        className="w-full resize-y rounded-xl border border-slate-800 bg-slate-950/85 px-3.5 py-3 text-xs leading-5 text-white outline-none transition-colors placeholder:text-slate-700 focus:border-amber-500/60"
+                        className="w-full resize-y rounded-xl border border-slate-800 bg-slate-950/85 px-3.5 py-3 text-xs leading-5 text-white outline-none transition-colors placeholder:text-[#a88d9c] focus:border-amber-500/60"
                       />
                     </label>
                   </div>
@@ -3607,7 +3294,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     <h5 className="text-xs font-black uppercase tracking-[0.12em] text-slate-300">
                       2. Prosjektbok
                     </h5>
-                    <p className="mt-1 text-[11px] text-slate-600">
+                    <p className="mt-1 text-[11px] text-[#bda2af]">
                       Full historie, funn, teknisk vurdering og løsning.
                     </p>
                   </div>
@@ -3619,7 +3306,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     onChange={(e) =>
                       setNewProject({ ...newProject, caseText: e.target.value })
                     }
-                    className="w-full resize-y rounded-xl border border-slate-800 bg-slate-950/85 px-4 py-3 text-xs leading-6 text-white outline-none transition-colors placeholder:text-slate-700 focus:border-amber-500/60"
+                    className="w-full resize-y rounded-xl border border-slate-800 bg-slate-950/85 px-4 py-3 text-xs leading-6 text-white outline-none transition-colors placeholder:text-[#a88d9c] focus:border-amber-500/60"
                   />
                 </section>
 
@@ -3629,7 +3316,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       <h5 className="text-xs font-black uppercase tracking-[0.12em] text-slate-300">
                         3. Bildebibliotek
                       </h5>
-                      <p className="mt-1 text-[11px] text-slate-600">
+                      <p className="mt-1 text-[11px] text-[#bda2af]">
                         Legg til så mange bilder du trenger. Velg fase og egne FØR/ETTER-covere.
                       </p>
                     </div>
@@ -3664,7 +3351,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                   className="h-full w-full object-cover"
                                 />
                               ) : (
-                                <div className="px-4 text-center text-[11px] text-slate-600">
+                                <div className="px-4 text-center text-[11px] text-[#bda2af]">
                                   Ingen bildefil valgt
                                 </div>
                               )}
@@ -3683,7 +3370,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                               </div>
                             </div>
 
-                            <label className="block cursor-pointer rounded-xl border border-dashed border-slate-700 bg-slate-900/70 px-3 py-2.5 text-center text-[11px] font-bold text-slate-400 transition-colors hover:border-amber-500/40 hover:text-amber-300">
+                            <label className="block cursor-pointer rounded-xl border border-dashed border-slate-700 bg-slate-900/70 px-3 py-2.5 text-center text-[11px] font-bold text-[#ead4dc] transition-colors hover:border-amber-500/40 hover:text-amber-300">
                               {img.file ? img.file.name : img.existingUrl ? "Bytt bilde" : "Velg bilde"}
                               <input
                                 type="file"
@@ -3704,7 +3391,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                 <div className="text-xs font-black text-white">
                                   Bilde {index + 1}
                                 </div>
-                                <div className="mt-0.5 text-[10px] text-slate-600">
+                                <div className="mt-0.5 text-[10px] text-[#bda2af]">
                                   Beskriv bildet og hvilken fase det tilhører.
                                 </div>
                               </div>
@@ -3719,7 +3406,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                             </div>
 
                             <label className="block space-y-1.5">
-                              <span className="text-[11px] font-bold text-slate-400">
+                              <span className="text-[11px] font-bold text-[#ead4dc]">
                                 Bildetekst
                               </span>
                               <textarea
@@ -3731,12 +3418,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                     caption: e.target.value,
                                   })
                                 }
-                                className="w-full resize-y rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-3 text-xs text-white outline-none placeholder:text-slate-700 focus:border-amber-500/60"
+                                className="w-full resize-y rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-3 text-xs text-white outline-none placeholder:text-[#a88d9c] focus:border-amber-500/60"
                               />
                             </label>
 
                             <div>
-                              <div className="mb-2 text-[11px] font-bold text-slate-400">
+                              <div className="mb-2 text-[11px] font-bold text-[#ead4dc]">
                                 Fase
                               </div>
                               <div className="grid grid-cols-3 gap-2">
@@ -3760,7 +3447,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                           : stage.value === "after"
                                             ? "border-emerald-400/40 bg-emerald-400/15 text-emerald-300"
                                             : "border-cyan-400/40 bg-cyan-400/15 text-cyan-300"
-                                        : "border-slate-800 bg-slate-950 text-slate-500 hover:text-slate-300"
+                                        : "border-slate-800 bg-slate-950 text-[#cbb2bd] hover:text-slate-300"
                                     }`}
                                   >
                                     {stage.label}
@@ -3770,7 +3457,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                             </div>
 
                             <div>
-                              <div className="mb-2 text-[11px] font-bold text-slate-400">
+                              <div className="mb-2 text-[11px] font-bold text-[#ead4dc]">
                                 Coverbilde
                               </div>
                               <div className="grid gap-2 sm:grid-cols-2">
@@ -3780,7 +3467,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                   className={`rounded-xl border px-3 py-2.5 text-[10px] font-black transition-all ${
                                     img.isCoverBefore
                                       ? "border-amber-400/45 bg-amber-400/15 text-amber-300"
-                                      : "border-slate-800 bg-slate-950 text-slate-500 hover:text-slate-300"
+                                      : "border-slate-800 bg-slate-950 text-[#cbb2bd] hover:text-slate-300"
                                   }`}
                                 >
                                   {img.isCoverBefore ? "✓ " : ""}Bruk som FØR-cover
@@ -3792,7 +3479,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                   className={`rounded-xl border px-3 py-2.5 text-[10px] font-black transition-all ${
                                     img.isCoverAfter
                                       ? "border-emerald-400/45 bg-emerald-400/15 text-emerald-300"
-                                      : "border-slate-800 bg-slate-950 text-slate-500 hover:text-slate-300"
+                                      : "border-slate-800 bg-slate-950 text-[#cbb2bd] hover:text-slate-300"
                                   }`}
                                 >
                                   {img.isCoverAfter ? "✓ " : ""}Bruk som ETTER-cover
@@ -3807,7 +3494,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 </section>
 
                 <div className="flex flex-col-reverse gap-3 border-t border-slate-800/70 pt-5 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-[10px] leading-4 text-slate-600">
+                  <p className="text-[10px] leading-4 text-[#bda2af]">
                     Minst ett bilde og prosjekttittel er påkrevd. Eksisterende bilder beholdes ved redigering.
                   </p>
 
@@ -3834,13 +3521,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
             )}
 
-            <section className="rounded-2xl border border-slate-800/80 bg-[#0d1320] p-5 md:p-6">
+            <section className="rounded-2xl border border-slate-800/80 bg-[#32121d] p-5 md:p-6">
               <div className="mb-5 flex items-center justify-between gap-3">
                 <div>
                   <h4 className="text-sm font-black text-white">
                     Publiserte referanser ({projects.length})
                   </h4>
-                  <p className="mt-1 text-[11px] text-slate-600">
+                  <p className="mt-1 text-[11px] text-[#bda2af]">
                     Samme før/etter-logikk som prosjektbiblioteket på nettsiden.
                   </p>
                 </div>
@@ -3866,7 +3553,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                               className="h-full w-full object-cover"
                             />
                           ) : (
-                            <div className="flex h-full items-center justify-center text-[11px] text-slate-700">
+                            <div className="flex h-full items-center justify-center text-[11px] text-[#a88d9c]">
                               Mangler førbilde
                             </div>
                           )}
@@ -3883,7 +3570,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                               className="h-full w-full object-cover"
                             />
                           ) : (
-                            <div className="flex h-full items-center justify-center text-[11px] text-slate-700">
+                            <div className="flex h-full items-center justify-center text-[11px] text-[#a88d9c]">
                               Mangler etterbilde
                             </div>
                           )}
@@ -3899,7 +3586,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
                       <div className="space-y-3 p-4">
                         <div className="flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-[0.11em]">
-                          <span className="text-slate-500">{p.category}</span>
+                          <span className="text-[#cbb2bd]">{p.category}</span>
                           {p.location && (
                             <span className="inline-flex items-center gap-1 normal-case tracking-normal text-amber-400">
                               <MapPin className="h-3 w-3" />
@@ -3913,7 +3600,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         </h5>
 
                         {p.description && (
-                          <p className="line-clamp-3 text-[11px] leading-5 text-slate-500">
+                          <p className="line-clamp-3 text-[11px] leading-5 text-[#cbb2bd]">
                             {p.description}
                           </p>
                         )}
@@ -3944,18 +3631,18 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
             </div>
 
             {projectLibraryView === "new" && (
-              <section className="rounded-2xl border border-slate-800/80 bg-[#0d1320] p-6">
+              <section className="rounded-2xl border border-slate-800/80 bg-[#32121d] p-6">
                 <div className="text-sm font-black text-white">Nytt prosjekt</div>
-                <p className="mt-1 text-[11px] text-slate-500">
+                <p className="mt-1 text-[11px] text-[#cbb2bd]">
                   Prosjekteditoren kan flyttes hit i neste steg uten å endre eksisterende prosjektdata.
                 </p>
               </section>
             )}
 
             {projectLibraryView === "archive" && (
-              <section className="rounded-2xl border border-slate-800/80 bg-[#0d1320] p-6">
+              <section className="rounded-2xl border border-slate-800/80 bg-[#32121d] p-6">
                 <div className="text-sm font-black text-white">Arkiv</div>
-                <p className="mt-1 text-[11px] text-slate-500">
+                <p className="mt-1 text-[11px] text-[#cbb2bd]">
                   Arkiverte prosjekter kan vises her når arkivfilteret kobles på.
                 </p>
               </section>
@@ -3966,7 +3653,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         {/* FANE: KUNDEREGISTER */}
         {activeTab === "kunder" && (
           <div className="space-y-5">
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="flex flex-col gap-4 border-b border-slate-800/80 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10">
@@ -3974,7 +3661,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </div>
                   <div>
                     <h3 className="text-base font-black text-white">Kunder</h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       Kunderegister, virksomheter, borettslag og eiendommer i perun_core.
                     </p>
                   </div>
@@ -3999,7 +3686,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       className={`inline-flex shrink-0 items-center rounded-xl px-3.5 py-2.5 text-[11px] font-black transition ${
                         active
                           ? "bg-amber-500/10 text-amber-300"
-                          : "text-slate-500 hover:bg-slate-900 hover:text-slate-200"
+                          : "text-[#cbb2bd] hover:bg-slate-900 hover:text-slate-200"
                       }`}
                     >
                       {tab.label}
@@ -4019,7 +3706,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         {/* FANE: MARKEDSFØRING */}
         {activeTab === "markedsforing" && (
           <div className="space-y-5">
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="flex flex-col gap-4 border-b border-slate-800/80 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10">
@@ -4027,7 +3714,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </div>
                   <div>
                     <h3 className="text-base font-black text-white">Markedsføring</h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       Prospekter, målgrupper og kontaktgrunnlag fra perun_core.
                     </p>
                   </div>
@@ -4050,7 +3737,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       className={`inline-flex shrink-0 items-center rounded-xl px-3.5 py-2.5 text-[11px] font-black transition ${
                         active
                           ? "bg-amber-500/10 text-amber-300"
-                          : "text-slate-500 hover:bg-slate-900 hover:text-slate-200"
+                          : "text-[#cbb2bd] hover:bg-slate-900 hover:text-slate-200"
                       }`}
                     >
                       {tab.label}
@@ -4072,7 +3759,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         {/* FANE: DATAIMPORT */}
         {activeTab === "dataimport" && (
           <div className="space-y-5">
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="flex flex-col gap-4 border-b border-slate-800/80 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10">
@@ -4080,7 +3767,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </div>
                   <div>
                     <h3 className="text-base font-black text-white">Dataimport</h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       Importer, kontroller og følg historiske data inn i perun_core.
                     </p>
                   </div>
@@ -4103,7 +3790,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       className={`inline-flex shrink-0 items-center rounded-xl px-3.5 py-2.5 text-[11px] font-black transition ${
                         active
                           ? "bg-amber-500/10 text-amber-300"
-                          : "text-slate-500 hover:bg-slate-900 hover:text-slate-200"
+                          : "text-[#cbb2bd] hover:bg-slate-900 hover:text-slate-200"
                       }`}
                     >
                       {tab.label}
@@ -4120,7 +3807,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         {/* FANE: TIMELISTEOVERSIKT */}
         {activeTab === "timeliste" && (
           <div className="space-y-5">
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="flex flex-col gap-4 border-b border-slate-800/80 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10">
@@ -4128,7 +3815,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </div>
                   <div>
                     <h3 className="text-base font-black text-white">Timelisteoversikt</h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       Registrerte timer, oversikt per ansatt og godkjenning.
                     </p>
                   </div>
@@ -4152,7 +3839,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       className={`inline-flex shrink-0 items-center rounded-xl px-3.5 py-2.5 text-[11px] font-black transition ${
                         active
                           ? "bg-amber-500/10 text-amber-300"
-                          : "text-slate-500 hover:bg-slate-900 hover:text-slate-200"
+                          : "text-[#cbb2bd] hover:bg-slate-900 hover:text-slate-200"
                       }`}
                     >
                       {tab.label}
@@ -4170,7 +3857,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         {/* FANE: KJØREBOK */}
         {activeTab === "kjorebok" && (
           <div className="space-y-5">
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="flex flex-col gap-4 border-b border-slate-800/80 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10">
@@ -4178,7 +3865,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </div>
                   <div>
                     <h3 className="text-base font-black text-white">Kjørebok</h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       Kjøringer, kjøretøy og kilometerstand samlet på ett sted.
                     </p>
                   </div>
@@ -4200,7 +3887,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       className={`inline-flex shrink-0 items-center rounded-xl px-3.5 py-2.5 text-[11px] font-black transition ${
                         active
                           ? "bg-amber-500/10 text-amber-300"
-                          : "text-slate-500 hover:bg-slate-900 hover:text-slate-200"
+                          : "text-[#cbb2bd] hover:bg-slate-900 hover:text-slate-200"
                       }`}
                     >
                       {tab.label}
@@ -4217,7 +3904,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         {/* FANE: RAPPORTER */}
         {activeTab === "rapporter" && (
           <div className="space-y-5">
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="border-b border-slate-800/80 px-5 py-5">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-500/20 bg-cyan-500/10">
@@ -4225,7 +3912,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </div>
                   <div>
                     <h3 className="text-base font-black text-white">Rapportmaler</h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       Forhåndsvis gjeldende kundemal uten å åpne et konkret oppdrag.
                     </p>
                   </div>
@@ -4244,7 +3931,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         Rapport 1
                       </span>
                       <h4 className="mt-4 text-base font-black text-white">Lekkasjesøk</h4>
-                      <p className="mt-1 max-w-md text-[11px] leading-5 text-slate-500">
+                      <p className="mt-1 max-w-md text-[11px] leading-5 text-[#cbb2bd]">
                         Teknisk rapport for lokalisering av lekkasjeårsak, registrerte forhold, tilstandsgrader, tiltak og bildedokumentasjon.
                       </p>
                     </div>
@@ -4267,7 +3954,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         Rapport 1
                       </span>
                       <h4 className="mt-4 text-base font-black text-white">Takkontroll</h4>
-                      <p className="mt-1 max-w-md text-[11px] leading-5 text-slate-500">
+                      <p className="mt-1 max-w-md text-[11px] leading-5 text-[#cbb2bd]">
                         Systematisk teknisk kontroll av taktekking, beslag, gjennomføringer, renner, lufting og øvrige registrerte kontrollpunkter.
                       </p>
                     </div>
@@ -4290,7 +3977,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         Rapport 2
                       </span>
                       <h4 className="mt-4 text-base font-black text-white">Utførelsesrapport</h4>
-                      <p className="mt-1 max-w-md text-[11px] leading-5 text-slate-500">
+                      <p className="mt-1 max-w-md text-[11px] leading-5 text-[#cbb2bd]">
                         Rapport etter utførte arbeider, bygget på Rapport 1 med dokumentasjon av tiltak, resultat, ny tilstandsgrad og bilder.
                       </p>
                     </div>
@@ -4304,7 +3991,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               </div>
             </section>
 
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="flex flex-col gap-4 border-b border-slate-800/80 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10">
@@ -4312,7 +3999,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </div>
                   <div>
                     <h3 className="text-base font-black text-white">Rapportarkiv</h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       Alle produserte tekniske rapporter og utførelsesrapporter, med mottaker, revisjon, dato og PDF.
                     </p>
                   </div>
@@ -4348,13 +4035,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-3.5 py-2.5 text-[11px] font-black transition ${
                         active
                           ? "bg-amber-500/10 text-amber-300"
-                          : "text-slate-500 hover:bg-slate-900 hover:text-slate-200"
+                          : "text-[#cbb2bd] hover:bg-slate-900 hover:text-slate-200"
                       }`}
                     >
                       {tab.label}
                       <span
                         className={`rounded-full px-2 py-0.5 text-[9px] ${
-                          active ? "bg-amber-500/15 text-amber-200" : "bg-slate-900 text-slate-500"
+                          active ? "bg-amber-500/15 text-amber-200" : "bg-slate-900 text-[#cbb2bd]"
                         }`}
                       >
                         {tab.count}
@@ -4371,15 +4058,15 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               </section>
             )}
 
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               {reportArchiveLoading && reportArchive.length === 0 ? (
-                <div className="flex items-center justify-center gap-2 px-5 py-12 text-xs text-slate-500">
+                <div className="flex items-center justify-center gap-2 px-5 py-12 text-xs text-[#cbb2bd]">
                   <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
                   Henter rapportarkiv...
                 </div>
               ) : (
                 <>
-                  <div className="hidden grid-cols-[minmax(230px,1.4fr)_100px_minmax(190px,1fr)_minmax(200px,1fr)_155px_120px] gap-4 border-b border-slate-800/80 bg-slate-950/30 px-5 py-3 text-[9px] font-black uppercase tracking-[0.13em] text-slate-600 xl:grid">
+                  <div className="hidden grid-cols-[minmax(230px,1.4fr)_100px_minmax(190px,1fr)_minmax(200px,1fr)_155px_120px] gap-4 border-b border-slate-800/80 bg-slate-950/30 px-5 py-3 text-[9px] font-black uppercase tracking-[0.13em] text-[#bda2af] xl:grid">
                     <div>Rapport</div>
                     <div>Oppdrag</div>
                     <div>Mottaker</div>
@@ -4420,7 +4107,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                     : "Teknisk rapport"}
                                 </span>
 
-                                <span className="text-[9px] font-bold text-slate-600">
+                                <span className="text-[9px] font-bold text-[#bda2af]">
                                   Rev. {report.revision_no}
                                 </span>
                               </div>
@@ -4429,13 +4116,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                 {String(report.title || report.report_type_label || "Rapport")}
                               </div>
 
-                              <div className="mt-1 truncate text-[10px] text-slate-500">
+                              <div className="mt-1 truncate text-[10px] text-[#cbb2bd]">
                                 {String(report.full_address || report.address || "Adresse ikke registrert")}
                               </div>
                             </div>
 
                             <div>
-                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-600 xl:hidden">
+                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-[#bda2af] xl:hidden">
                                 Oppdrag
                               </p>
                               <p className="mt-1 text-xs font-black text-slate-200 xl:mt-0">
@@ -4444,39 +4131,39 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                             </div>
 
                             <div className="min-w-0">
-                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-600 xl:hidden">
+                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-[#bda2af] xl:hidden">
                                 Mottaker
                               </p>
                               <p className="mt-1 truncate text-xs font-black text-white xl:mt-0">
                                 {String(report.recipient_name || report.customer_name || "Ikke registrert")}
                               </p>
-                              <p className="mt-1 text-[10px] text-slate-500">
+                              <p className="mt-1 text-[10px] text-[#cbb2bd]">
                                 Kunde-ID {report.customer_id ?? "—"}
                               </p>
                             </div>
 
                             <div className="min-w-0 space-y-1">
-                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-600 xl:hidden">
+                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-[#bda2af] xl:hidden">
                                 Kontakt
                               </p>
-                              <div className="flex min-w-0 items-center gap-2 text-[10px] text-slate-400">
-                                <Mail className="h-3.5 w-3.5 shrink-0 text-slate-600" />
+                              <div className="flex min-w-0 items-center gap-2 text-[10px] text-[#ead4dc]">
+                                <Mail className="h-3.5 w-3.5 shrink-0 text-[#bda2af]" />
                                 <span className="truncate">{String(report.recipient_email || "Ingen e-post")}</span>
                               </div>
-                              <div className="flex min-w-0 items-center gap-2 text-[10px] text-slate-400">
-                                <span className="shrink-0 text-slate-600">Tlf.</span>
+                              <div className="flex min-w-0 items-center gap-2 text-[10px] text-[#ead4dc]">
+                                <span className="shrink-0 text-[#bda2af]">Tlf.</span>
                                 <span className="truncate">{String(report.recipient_phone || "Ingen telefon")}</span>
                               </div>
                             </div>
 
                             <div>
-                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-600 xl:hidden">
+                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-[#bda2af] xl:hidden">
                                 Dato
                               </p>
                               <p className="mt-1 text-[10px] font-bold leading-5 text-slate-300 xl:mt-0">
                                 {formatReportDate(reportDate)}
                               </p>
-                              <p className="mt-1 text-[9px] text-slate-600">
+                              <p className="mt-1 text-[9px] text-[#bda2af]">
                                 {reportView === "sent"
                                   ? "Publisert"
                                   : reportView === "approved"
@@ -4514,8 +4201,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
                     {reportArchive.filter((report) => report.archive_category === reportView).length === 0 && (
                       <div className="px-5 py-12 text-center">
-                        <FileText className="mx-auto h-6 w-6 text-slate-700" />
-                        <p className="mt-3 text-xs font-bold text-slate-500">
+                        <FileText className="mx-auto h-6 w-6 text-[#a88d9c]" />
+                        <p className="mt-3 text-xs font-bold text-[#cbb2bd]">
                           Ingen rapporter i denne kategorien.
                         </p>
                       </div>
@@ -4537,7 +4224,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 <div className="flex h-[94vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-3xl border border-slate-700 bg-[#090d15] shadow-2xl">
                   <div className="flex items-center justify-between gap-4 border-b border-slate-800 px-5 py-4">
                     <div className="min-w-0">
-                      <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500">
+                      <p className="text-[9px] font-black uppercase tracking-[0.15em] text-[#cbb2bd]">
                         Forhåndsvisning av rapportmal
                       </p>
                       <h3 className="mt-1 truncate text-base font-black text-white">
@@ -4547,7 +4234,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                             ? "Takkontroll"
                             : "Utførelsesrapport"}
                       </h3>
-                      <p className="mt-1 text-[10px] text-slate-500">
+                      <p className="mt-1 text-[10px] text-[#cbb2bd]">
                         Eksempeldata brukes kun for å vise malen. Ingenting lagres i databasen.
                       </p>
                     </div>
@@ -4564,7 +4251,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       <button
                         type="button"
                         onClick={() => setReportTemplatePreview(null)}
-                        className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-950 text-slate-400 transition hover:text-white"
+                        className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-950 text-[#ead4dc] transition hover:text-white"
                         aria-label="Lukk forhåndsvisning"
                       >
                         <X className="h-4 w-4" />
@@ -4595,7 +4282,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         {/* FANE: INNSTILLINGER */}
         {activeTab === "innstillinger" && (
           <div className="space-y-5">
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="flex flex-col gap-4 border-b border-slate-800/80 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10">
@@ -4603,7 +4290,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </div>
                   <div>
                     <h3 className="text-base font-black text-white">Innstillinger</h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       Firmaoppsett, brukertilgang, varsler og teknisk dokumentasjon.
                     </p>
                   </div>
@@ -4625,7 +4312,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       className={`inline-flex shrink-0 items-center rounded-xl px-3.5 py-2.5 text-[11px] font-black transition ${
                         active
                           ? "bg-amber-500/10 text-amber-300"
-                          : "text-slate-500 hover:bg-slate-900 hover:text-slate-200"
+                          : "text-[#cbb2bd] hover:bg-slate-900 hover:text-slate-200"
                       }`}
                     >
                       {tab.label}
@@ -4637,7 +4324,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
             {settingsView === "technical" ? (
               <div className="space-y-5">
-                <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+                <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
                   <div className="flex flex-col gap-4 border-b border-slate-800/80 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
                     <div className="flex items-center gap-3">
                       <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10">
@@ -4645,7 +4332,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       </div>
                       <div>
                         <h3 className="text-base font-black text-white">Teknisk dokumentasjon</h3>
-                        <p className="mt-0.5 text-[11px] text-slate-500">
+                        <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                           Arkitektur, databaser, API-er og modulstatus.
                         </p>
                       </div>
@@ -4667,7 +4354,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                           className={`inline-flex shrink-0 items-center rounded-xl px-3.5 py-2.5 text-[11px] font-black transition ${
                             active
                               ? "bg-amber-500/10 text-amber-300"
-                              : "text-slate-500 hover:bg-slate-900 hover:text-slate-200"
+                              : "text-[#cbb2bd] hover:bg-slate-900 hover:text-slate-200"
                           }`}
                         >
                           {tab.label}
@@ -4680,7 +4367,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 {technicalView === "architecture" ? (
                   <TechnicalDocumentation />
                 ) : (
-                  <section className="rounded-2xl border border-slate-800/80 bg-[#0d1320] p-6">
+                  <section className="rounded-2xl border border-slate-800/80 bg-[#32121d] p-6">
                     <div className="text-sm font-black text-white">
                       {technicalView === "databases"
                         ? "Databaser"
@@ -4688,7 +4375,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                           ? "API-er"
                           : "Modulstatus"}
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-500">
+                    <p className="mt-1 text-[11px] text-[#cbb2bd]">
                       Fanen er klar for videre teknisk dokumentasjon.
                     </p>
                   </section>
@@ -4703,7 +4390,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         {/* FANE: ANSATTE & TILGANG */}
         {activeTab === "ansatte" && (
           <div className="space-y-5">
-            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0d1320]">
+            <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#32121d]">
               <div className="flex flex-col gap-4 border-b border-slate-800/80 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10">
@@ -4711,7 +4398,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </div>
                   <div>
                     <h3 className="text-base font-black text-white">Ansatte / team</h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-[#cbb2bd]">
                       Ansatte, roller og prosjektteam samlet på ett sted.
                     </p>
                   </div>
@@ -4734,7 +4421,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       className={`inline-flex shrink-0 items-center rounded-xl px-3.5 py-2.5 text-[11px] font-black transition ${
                         active
                           ? "bg-amber-500/10 text-amber-300"
-                          : "text-slate-500 hover:bg-slate-900 hover:text-slate-200"
+                          : "text-[#cbb2bd] hover:bg-slate-900 hover:text-slate-200"
                       }`}
                     >
                       {tab.label}
@@ -4754,18 +4441,18 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
             )}
 
             {employeeView === "roller" && (
-              <section className="rounded-2xl border border-slate-800/80 bg-[#0d1320] p-6">
+              <section className="rounded-2xl border border-slate-800/80 bg-[#32121d] p-6">
                 <div className="text-sm font-black text-white">Roller & tilgang</div>
-                <p className="mt-1 text-[11px] text-slate-500">
+                <p className="mt-1 text-[11px] text-[#cbb2bd]">
                   Denne fanen er klar for rolle- og tilgangsstyringen.
                 </p>
               </section>
             )}
 
             {employeeView === "prosjektteam" && (
-              <section className="rounded-2xl border border-slate-800/80 bg-[#0d1320] p-6">
+              <section className="rounded-2xl border border-slate-800/80 bg-[#32121d] p-6">
                 <div className="text-sm font-black text-white">Prosjektteam</div>
-                <p className="mt-1 text-[11px] text-slate-500">
+                <p className="mt-1 text-[11px] text-[#cbb2bd]">
                   Denne fanen er klar for oversikt over prosjektteam og tildelinger.
                 </p>
               </section>
@@ -4777,3 +4464,5 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     </div>
   );
 }
+
+

@@ -13,12 +13,12 @@ import OfferCalculator, {
   calculateOffer,
   type OfferCalculation,
 } from "./OfferCalculator";
-
+import OfferWorkTemplates, { appendWorkSuggestions } from "./OfferWorkTemplates";
+import OfferQuantityCalculator from "./OfferQuantityCalculator";
+import OfferWorkDescriptionEditor from "./OfferWorkDescriptionEditor";
 import { API_BASE, apiAssetUrl } from "../../lib/api";
-
 export type OfferService = "lekkasjesok" | "takkontroll" | "service";
 export type FollowUpType = "service" | "varig_utbedring";
-
 interface OfferInquiry {
   id: number | string;
   customer_name?: string;
@@ -27,12 +27,10 @@ interface OfferInquiry {
   postal_code?: string;
   city?: string;
 }
-
 interface OfferEmployee {
   id?: number;
   name?: string;
 }
-
 interface OfferDraft {
   id?: number;
   service: OfferService;
@@ -45,8 +43,8 @@ interface OfferDraft {
   pricing_mode?: "hourly" | "fixed";
   fixed_price?: number;
   calculation_json?: string;
+  status?: string;
 }
-
 interface OfferGeneratorProps {
   open: boolean;
   inquiry: OfferInquiry | null;
@@ -57,12 +55,12 @@ interface OfferGeneratorProps {
   followUpType?: FollowUpType | null;
   followUpReason?: string;
   sourceReportId?: number | null;
+  initialOffer?: Partial<OfferDraft> | null;
   allowPublish?: boolean;
   onDraftSaved?: (offerId: number) => void | Promise<void>;
   onClose: () => void;
   onPublished?: () => void | Promise<void>;
 }
-
 const EMPTY_OFFER_DRAFT: OfferDraft = {
   service: "lekkasjesok",
   title: "",
@@ -75,32 +73,26 @@ const EMPTY_OFFER_DRAFT: OfferDraft = {
   fixed_price: 0,
   calculation_json: "",
 };
-
 function customerName(inquiry: OfferInquiry): string {
   return inquiry.customer_name || inquiry.customerName || "Ukjent kunde";
 }
-
 function fullAddress(inquiry: OfferInquiry): string {
   return [inquiry.address, inquiry.postal_code, inquiry.city]
     .filter(Boolean)
     .join(", ");
 }
-
 function serviceLabel(service: OfferService): string {
   if (service === "lekkasjesok") return "Lekkasjesøk";
   if (service === "takkontroll") return "Takkontroll";
   return "Service / utbedring";
 }
-
 function followUpLabel(type?: FollowUpType | null): string {
   if (type === "varig_utbedring") return "Varig utbedring";
   return "Service";
 }
-
 function buildOfferDraft(service: OfferService): OfferDraft {
   const label = serviceLabel(service);
   const isService = service === "service";
-
   return {
     ...EMPTY_OFFER_DRAFT,
     service,
@@ -115,7 +107,6 @@ function buildOfferDraft(service: OfferService): OfferDraft {
       "Arbeid utover beskrevet omfang avklares med kunden før utførelse. Fakturering skjer etter faktisk medgått tid og eventuelt materiell.",
   };
 }
-
 export default function OfferGenerator({
   open,
   inquiry,
@@ -126,6 +117,7 @@ export default function OfferGenerator({
   followUpType = null,
   followUpReason = "",
   sourceReportId = null,
+  initialOffer = null,
   allowPublish = true,
   onDraftSaved,
   onClose,
@@ -153,22 +145,17 @@ export default function OfferGenerator({
     estimated_vehicle_ex_vat: number;
     estimated_known_ex_vat: number;
   } | null>(null);
-
   useEffect(() => {
     if (!open) return;
-
     const base = buildOfferDraft(initialService);
-
     const followUpTitle =
       followUpType === "varig_utbedring"
         ? "Pristilbud – varig utbedring"
         : "Service – arbeid etter timesats";
-
     const followUpBaseDescription =
       followUpType === "varig_utbedring"
         ? "Tilbudet gjelder varig utbedring av dokumenterte tekniske mangler. Endelig arbeidsomfang fremgår av arbeidsbeskrivelsen og kalkulasjonen."
         : "Servicearbeidet utføres etter medgått tid i henhold til gjeldende timesatser. Materialer og eventuelle tillegg faktureres etter faktisk forbruk.";
-
     setDraft({
       ...base,
       title:
@@ -184,8 +171,33 @@ export default function OfferGenerator({
             }${followUpBaseDescription}`
           : base.description,
     });
-
-    setCalculation({
+    // Serveren velger riktig, eksisterende oppfølgingstilbud.
+    // Behold ID, beskrivelse og kalkulasjon ved gjenåpning.
+    if (initialOffer?.id) {
+      setDraft((current) => ({
+        ...current,
+        ...initialOffer,
+        service: "service",
+        id: Number(initialOffer.id),
+        title: String(initialOffer.title || current.title),
+        description: String(initialOffer.description || current.description),
+        team_rate: Number(initialOffer.team_rate ?? current.team_rate),
+        vehicle_rate: Number(initialOffer.vehicle_rate ?? current.vehicle_rate),
+        material_note: String(initialOffer.material_note ?? current.material_note),
+        terms: String(initialOffer.terms ?? current.terms),
+      }));
+    }
+    let restoredCalculation: OfferCalculation | null = null;
+    if (initialOffer?.calculation_json) {
+      try {
+        const parsed = JSON.parse(initialOffer.calculation_json);
+        if (parsed && Array.isArray(parsed.lines) &&
+          (parsed.pricingMode === "hourly" || parsed.pricingMode === "fixed")) {
+          restoredCalculation = parsed as OfferCalculation;
+        }
+      } catch { /* Eldre tilbud kan mangle kalkulasjon. */ }
+    }
+    setCalculation(restoredCalculation || {
       ...EMPTY_CALCULATION,
       pricingMode: "hourly",
       lines: EMPTY_CALCULATION.lines.map((line) => ({ ...line })),
@@ -203,41 +215,34 @@ export default function OfferGenerator({
     followUpType,
     followUpReason,
     sourceReportId,
+    initialOffer?.id,
   ]);
-
   useEffect(() => {
     if (pdfUrl) {
       setPdfDirty(true);
     }
   }, [draft, calculation]);
-
   if (!open || !inquiry) return null;
-
   const generatePdfPreview = async () => {
     if (!draft.id) {
       setError("Lagre tilbudsutkastet før PDF-forhåndsvisning genereres.");
       return;
     }
-
     setGeneratingPdf(true);
     setError("");
     setMessage("");
-
     try {
       const res = await fetch(`${API_BASE}/generate_offer_pdf.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ offer_id: draft.id }),
       });
-
       const data = await res.json();
-
       if (!res.ok || !data.success || !data.pdf_url) {
         throw new Error(
           data.message || "Kunne ikke generere PDF-forhåndsvisning."
         );
       }
-
       setPdfUrl(data.pdf_url);
       setPdfDirty(false);
       setMessage("PDF-forhåndsvisningen er klar.");
@@ -256,12 +261,10 @@ export default function OfferGenerator({
       setGeneratingPdf(false);
     }
   };
-
   const generateWithAi = async () => {
     setGeneratingAi(true);
     setError("");
     setMessage("");
-
     try {
       const res = await fetch(`${API_BASE}/generate_offer.php`, {
         method: "POST",
@@ -285,18 +288,14 @@ export default function OfferGenerator({
               : "Lag et kort, tydelig og profesjonelt tilbudsutkast basert på saken, kundeopplysningene, digital befaring og tilgjengelige rapportfunn. Foreslå internt timeestimat og relevante kalkulasjonsposter, men bruk aldri egne satser. Ikke lov arbeid som ikke er dokumentert.",
         }),
       });
-
       const data = await res.json();
-
       if (!res.ok || !data.success) {
         throw new Error(
           data.message ||
             "AI-hjelp for tilbud er ikke koblet til backend ennå."
         );
       }
-
       const aiOffer = data.offer || data.draft || {};
-
       setDraft((current) => ({
         ...current,
         title: aiOffer.title ?? current.title,
@@ -307,7 +306,6 @@ export default function OfferGenerator({
         team_rate: current.team_rate,
         vehicle_rate: current.vehicle_rate,
       }));
-
       const laborHours = Math.max(
         0,
         Number(aiOffer.estimate?.labor_hours || 0)
@@ -316,12 +314,10 @@ export default function OfferGenerator({
         0,
         Number(aiOffer.estimate?.vehicle_days || 0)
       );
-
       const estimatedLabor =
         laborHours * Number(draft.team_rate || 0);
       const estimatedVehicle =
         vehicleDays * Number(draft.vehicle_rate || 0);
-
       setAiEstimate({
         labor_hours: laborHours,
         vehicle_days: vehicleDays,
@@ -335,12 +331,10 @@ export default function OfferGenerator({
         estimated_vehicle_ex_vat: estimatedVehicle,
         estimated_known_ex_vat: estimatedLabor + estimatedVehicle,
       });
-
       setCalculation((current) => {
         const suggested = Array.isArray(aiOffer.suggested_calculation)
           ? aiOffer.suggested_calculation
           : [];
-
         let nextLines = current.lines.map((line) => {
           if (line.category === "labor" && laborHours > 0) {
             return {
@@ -350,7 +344,6 @@ export default function OfferGenerator({
               unit: "time",
             };
           }
-
           if (
             line.category === "equipment" &&
             line.description.toLowerCase().includes("servicebil") &&
@@ -362,13 +355,10 @@ export default function OfferGenerator({
               unit: "dag",
             };
           }
-
           return line;
         });
-
         for (const item of suggested) {
           if (!item?.category || !item?.description) continue;
-
           // Arbeid og servicebil finnes allerede som standardlinjer.
           if (item.category === "labor") continue;
           if (
@@ -377,16 +367,13 @@ export default function OfferGenerator({
           ) {
             continue;
           }
-
           const exists = nextLines.some(
             (line) =>
               line.category === item.category &&
               line.description.trim().toLowerCase() ===
                 String(item.description).trim().toLowerCase()
           );
-
           if (exists) continue;
-
           nextLines.push({
             id: `ai-${Date.now()}-${Math.random()
               .toString(16)
@@ -404,13 +391,11 @@ export default function OfferGenerator({
               item.category === "material" ? 15 : 0,
           });
         }
-
         return {
           ...current,
           lines: nextLines,
         };
       });
-
       setMessage(
         "AI-utkast og internt estimat er klart. Kontroller arbeidstid, mengder og kalkulasjon før publisering."
       );
@@ -425,25 +410,24 @@ export default function OfferGenerator({
       setGeneratingAi(false);
     }
   };
-
   const saveDraft = async (publish = false) => {
+    if (initialOffer?.id && initialOffer.status && initialOffer.status !== "utkast") {
+      setError("Tilbudet er ikke et utkast og kan ikke redigeres her.");
+      return;
+    }
     if (!draft.title.trim() || !draft.description.trim()) {
       setError("Tittel og arbeidsbeskrivelse må fylles ut.");
       return;
     }
-
     publish ? setPublishing(true) : setSaving(true);
     setError("");
     setMessage("");
-
     try {
       const totals = calculateOffer(calculation);
       const calculationJson = JSON.stringify(calculation);
       const fixedPrice =
         calculation.pricingMode === "fixed" ? totals.exclVat : 0;
-
       let offerId = draft.id;
-
       if (!offerId) {
         const createRes = await fetch(`${API_BASE}/offers.php`, {
           method: "POST",
@@ -474,15 +458,12 @@ export default function OfferGenerator({
             created_by_name: employee?.name || null,
           }),
         });
-
         const createData = await createRes.json();
-
         if (!createRes.ok || !createData.success || !createData.offer?.id) {
           throw new Error(
             createData.message || "Kunne ikke lagre tilbudsutkastet."
           );
         }
-
         offerId = Number(createData.offer.id);
         setDraft((current) => ({ ...current, id: offerId }));
       } else {
@@ -511,16 +492,13 @@ export default function OfferGenerator({
             source_report_id: sourceReportId,
           }),
         });
-
         const updateData = await updateRes.json();
-
         if (!updateRes.ok || !updateData.success) {
           throw new Error(
             updateData.message || "Kunne ikke oppdatere tilbudsutkastet."
           );
         }
       }
-
       if (!publish) {
         if (pdfUrl) {
           setPdfDirty(true);
@@ -529,7 +507,6 @@ export default function OfferGenerator({
         setMessage("Utkastet er lagret internt. Kunden kan ikke se det.");
         return;
       }
-
       if (!allowPublish) {
         throw new Error(
           mode === "followup"
@@ -537,27 +514,22 @@ export default function OfferGenerator({
             : "Publisering er ikke tilgjengelig ennå."
         );
       }
-
       if (!pdfUrl || pdfDirty) {
         throw new Error(
           "Generer og kontroller en oppdatert PDF før tilbudet publiseres."
         );
       }
-
       const publishRes = await fetch(`${API_BASE}/offers.php`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: offerId, publish: true }),
       });
-
       const publishData = await publishRes.json();
-
       if (!publishRes.ok || !publishData.success) {
         throw new Error(
           publishData.message || "Tilbudet ble lagret, men ikke publisert."
         );
       }
-
       // Første tilbud kan fortsatt drive hovedsakens status fremover.
       // Et nytt oppfølgingstilbud skal derimot ikke overskrive statusen til
       // et allerede planlagt eller pågående oppdrag. Tilbudet lever som en
@@ -574,9 +546,7 @@ export default function OfferGenerator({
             digital_inspection_comment: digitalInspectionComment,
           }),
         });
-
         const inquiryData = await inquiryRes.json();
-
         if (!inquiryRes.ok || !inquiryData.success) {
           throw new Error(
             inquiryData.message ||
@@ -584,7 +554,6 @@ export default function OfferGenerator({
           );
         }
       }
-
       setMessage(
         mode === "followup"
           ? "Nytt oppfølgingstilbud er publisert til kunden."
@@ -601,7 +570,6 @@ export default function OfferGenerator({
       setPublishing(false);
     }
   };
-
   return (
     <div className="fixed inset-0 z-[80] overflow-y-auto bg-slate-950/80 p-3 backdrop-blur-sm md:p-6">
       <div className="mx-auto max-w-6xl overflow-hidden rounded-3xl border border-slate-700 bg-[#0b0f17] shadow-2xl">
@@ -628,7 +596,6 @@ export default function OfferGenerator({
               {customerName(inquiry)} · {fullAddress(inquiry)}
             </p>
           </div>
-
           <button
             type="button"
             onClick={onClose}
@@ -637,7 +604,6 @@ export default function OfferGenerator({
             Lukk
           </button>
         </div>
-
         {mode === "followup" && followUpReason.trim() && (
           <div className="border-b border-slate-800 bg-blue-500/[0.035] px-5 py-4 md:px-7">
             <p className="text-[9px] font-black uppercase tracking-[0.14em] text-blue-300">
@@ -648,7 +614,6 @@ export default function OfferGenerator({
             </p>
           </div>
         )}
-
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.75fr)]">
           <div className="space-y-5 p-5 md:p-7 lg:border-r lg:border-slate-800">
             {error && (
@@ -656,13 +621,11 @@ export default function OfferGenerator({
                 {error}
               </div>
             )}
-
             {message && (
               <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-300">
                 {message}
               </div>
             )}
-
             <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.045] p-4">
               <div className="flex items-start gap-3">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
@@ -678,7 +641,6 @@ export default function OfferGenerator({
                 </div>
               </div>
             </div>
-
             <div className="flex flex-col justify-between gap-3 rounded-2xl border border-violet-500/20 bg-violet-500/[0.045] p-4 sm:flex-row sm:items-center">
               <div className="flex items-start gap-3">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-violet-500/25 bg-violet-500/10">
@@ -691,7 +653,6 @@ export default function OfferGenerator({
                   </p>
                 </div>
               </div>
-
               <button
                 type="button"
                 onClick={generateWithAi}
@@ -711,7 +672,6 @@ export default function OfferGenerator({
                 )}
               </button>
             </div>
-
             {aiEstimate && (
               <div className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.035] p-4">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -728,7 +688,6 @@ export default function OfferGenerator({
                       </p>
                     )}
                   </div>
-
                   <span className="rounded-full border border-slate-700 bg-slate-950 px-2.5 py-1 text-[9px] font-black uppercase text-slate-400">
                     Sikkerhet:{" "}
                     {aiEstimate.confidence === "high"
@@ -738,7 +697,6 @@ export default function OfferGenerator({
                       : "lav"}
                   </span>
                 </div>
-
                 <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                   <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
                     <p className="text-[9px] font-black uppercase text-slate-600">
@@ -748,7 +706,6 @@ export default function OfferGenerator({
                       {aiEstimate.labor_hours.toLocaleString("nb-NO")} t
                     </p>
                   </div>
-
                   <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
                     <p className="text-[9px] font-black uppercase text-slate-600">
                       Servicebil
@@ -757,7 +714,6 @@ export default function OfferGenerator({
                       {aiEstimate.vehicle_days.toLocaleString("nb-NO")} dag
                     </p>
                   </div>
-
                   <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
                     <p className="text-[9px] font-black uppercase text-slate-600">
                       Arbeid etter sats
@@ -768,7 +724,6 @@ export default function OfferGenerator({
                       ).toLocaleString("nb-NO")}
                     </p>
                   </div>
-
                   <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-3">
                     <p className="text-[9px] font-black uppercase text-amber-400">
                       Kjent sum eks. mva
@@ -783,7 +738,6 @@ export default function OfferGenerator({
                     </p>
                   </div>
                 </div>
-
                 <p className="mt-3 text-[10px] leading-4 text-slate-600">
                   Estimatet er kun et internt beslutningsgrunnlag. Ved timesats vises
                   ikke estimert timeforbruk til kunden. Ved fastpris kan estimatet brukes
@@ -791,7 +745,6 @@ export default function OfferGenerator({
                 </p>
               </div>
             )}
-
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
@@ -820,7 +773,6 @@ export default function OfferGenerator({
                   </option>
                 </select>
               </div>
-
               <div>
                 <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
                   Tilbudstittel
@@ -837,7 +789,6 @@ export default function OfferGenerator({
                 />
               </div>
             </div>
-
             <div>
               <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
                 Arbeidsbeskrivelse
@@ -855,12 +806,39 @@ export default function OfferGenerator({
                 className="w-full resize-y rounded-2xl border border-slate-800 bg-[#08111d] p-4 text-sm leading-6 text-slate-200 outline-none focus:border-amber-500/50"
               />
             </div>
-
+            <OfferWorkDescriptionEditor
+              originalText={draft.description}
+              disabled={saving || publishing || generatingAi || generatingPdf}
+            />
+            <OfferWorkTemplates
+                disabled={saving || publishing || generatingPdf || generatingAi || initialOffer?.status !== undefined && initialOffer.status !== "utkast"}
+                onApplySuggestions={(suggestions) => {
+                  setCalculation((current) => appendWorkSuggestions(current, suggestions));
+                  setMessage(`${suggestions.length} arbeidsoperasjoner lagt til. Kontroller mengder og priser før lagring.`);
+                }}
+              />
+            <OfferQuantityCalculator
+              disabled={saving || publishing}
+              onApplySuggestions={(suggestions) => {
+                setCalculation((current) => ({
+                  ...current,
+                  lines: [
+                    ...current.lines,
+                    ...suggestions.map((suggestion) => ({
+                      ...suggestion,
+                      id: `quantity-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                      unit_cost: 0,
+                      markup_percent: suggestion.category === "material" ? 15 : 0,
+                    })),
+                  ],
+                }));
+                setMessage(`${suggestions.length} mengdeforslag lagt til. Kontroller mengder og fyll inn pris før lagring.`);
+              }}
+            />
             <OfferCalculator
               value={calculation}
               onChange={(next) => {
                 setCalculation(next);
-
                 const labor = next.lines.find(
                   (line) => line.category === "labor"
                 );
@@ -869,7 +847,6 @@ export default function OfferGenerator({
                     line.category === "equipment" &&
                     line.description.toLowerCase().includes("servicebil")
                 );
-
                 setDraft((current) => ({
                   ...current,
                   pricing_mode: next.pricingMode,
@@ -878,7 +855,6 @@ export default function OfferGenerator({
                 }));
               }}
             />
-
             <div>
               <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
                 Materiell / tillegg
@@ -896,7 +872,6 @@ export default function OfferGenerator({
                 className="w-full resize-y rounded-xl border border-slate-800 bg-[#08111d] p-3 text-xs leading-5 text-slate-200 outline-none focus:border-amber-500/50"
               />
             </div>
-
             <div>
               <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
                 Betingelser
@@ -914,12 +889,10 @@ export default function OfferGenerator({
               />
             </div>
           </div>
-
           <aside className="bg-slate-950/35 p-5 md:p-7">
             <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">
               Forhåndsvisning
             </p>
-
             <div className="mt-3 overflow-hidden rounded-2xl border border-slate-800 bg-[#0b0f17]">
               <div className="border-b border-slate-800 p-4">
                 <p className="text-[10px] font-black uppercase tracking-wider text-amber-300">
@@ -932,12 +905,10 @@ export default function OfferGenerator({
                   {serviceLabel(draft.service)}
                 </p>
               </div>
-
               <div className="p-4">
                 <p className="whitespace-pre-wrap text-xs leading-5 text-slate-300">
                   {draft.description || "Arbeidsbeskrivelse mangler."}
                 </p>
-
                 <div className="mt-5 divide-y divide-slate-800 border-y border-slate-800">
                   {calculation.pricingMode === "fixed" ? (
                     <div className="flex justify-between gap-4 py-3 text-xs">
@@ -970,7 +941,6 @@ export default function OfferGenerator({
                       </div>
                     </>
                   )}
-
                   {calculation.pricingMode === "fixed" && (
                     <div className="flex justify-between gap-4 py-3 text-xs">
                       <span className="text-slate-500">Fastpris inkl. mva</span>
@@ -982,14 +952,12 @@ export default function OfferGenerator({
                     </div>
                   )}
                 </div>
-
                 {calculation.pricingMode === "hourly" && (
                   <p className="mt-4 text-[11px] leading-5 text-slate-400">
                     Arbeidet utføres etter medgått tid. Det angis ikke estimert varighet.
                     Materialer og eventuelle tillegg faktureres separat etter faktisk forbruk.
                   </p>
                 )}
-
                 {draft.material_note && calculation.pricingMode === "fixed" && (
                   <p className="mt-4 text-[11px] leading-5 text-slate-400">
                     {draft.material_note}
@@ -997,7 +965,6 @@ export default function OfferGenerator({
                 )}
               </div>
             </div>
-
             <div className="mt-5 rounded-2xl border border-blue-500/20 bg-blue-500/[0.04] p-4">
               <div className="flex items-start gap-2.5">
                 <FileText className="mt-0.5 h-4 w-4 shrink-0 text-blue-300" />
@@ -1012,7 +979,6 @@ export default function OfferGenerator({
                         : "Denne PDF-versjonen er klar for kontroll før publisering."
                       : "Lagre utkastet og generer kunde-PDF før tilbudet publiseres."}
                   </p>
-
                   {pdfUrl && !pdfDirty && (
                     <button
                       type="button"
@@ -1032,7 +998,6 @@ export default function OfferGenerator({
                 </div>
               </div>
             </div>
-
             <div className="mt-5 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-4">
               <div className="flex items-start gap-2.5">
                 <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
@@ -1048,7 +1013,6 @@ export default function OfferGenerator({
             </div>
           </aside>
         </div>
-
         <div className="flex flex-col-reverse gap-3 border-t border-slate-800 bg-slate-950/55 px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-7">
           <button
             type="button"
@@ -1057,7 +1021,6 @@ export default function OfferGenerator({
           >
             Avbryt
           </button>
-
           <div className="flex flex-col gap-2.5 sm:flex-row">
             <button
               type="button"
@@ -1074,7 +1037,6 @@ export default function OfferGenerator({
                 "Lagre utkast"
               )}
             </button>
-
             <button
               type="button"
               onClick={generatePdfPreview}
@@ -1093,7 +1055,6 @@ export default function OfferGenerator({
                 </span>
               )}
             </button>
-
             {allowPublish ? (
               <button
                 type="button"

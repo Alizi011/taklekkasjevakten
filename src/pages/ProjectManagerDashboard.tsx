@@ -1,3 +1,5 @@
+import InquiryWorkflowOverview from "../components/project-manager/InquiryWorkflowOverview";
+import ProjectManagerReportApproval from "../components/ProjectManagerReportApproval";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
@@ -35,7 +37,6 @@ import {
   Save,
   Home,
   Activity,
-  FolderOpen,
 } from "lucide-react";
 import ChecklistManager from "../components/checklist/ChecklistManager";
 import PhotoWithAudioNote from "../components/PhotoWithAudioNote";
@@ -496,6 +497,40 @@ function customerName(inquiry: Inquiry): string {
   return inquiry.customer_name || inquiry.customerName || "Ukjent kunde";
 }
 
+// Helrad-farge viser neste handling, ikke en tilfeldig kundefarge.
+const CASE_ROW_TONES = {
+  action: {
+    row: "bg-[#44211f] hover:bg-[#522623] border-l-red-400",
+    avatar: "border-red-400/40 bg-red-500/15 text-red-200",
+    detail: "text-red-200",
+  },
+  ready: {
+    row: "bg-[#1d3529] hover:bg-[#244231] border-l-emerald-400",
+    avatar: "border-emerald-400/40 bg-emerald-500/15 text-emerald-200",
+    detail: "text-emerald-200",
+  },
+  pending: {
+    row: "bg-[#36291c] hover:bg-[#46321f] border-l-amber-400",
+    avatar: "border-amber-400/40 bg-amber-500/15 text-amber-200",
+    detail: "text-amber-200",
+  },
+  neutral: {
+    row: "bg-[#24313a] hover:bg-[#293d49] border-l-cyan-400",
+    avatar: "border-cyan-400/40 bg-cyan-500/15 text-cyan-200",
+    detail: "text-cyan-200",
+  },
+} as const;
+
+function caseRowTone(progressKey: string) {
+  if (["report_approval", "followup_customer", "followup_declined", "expired"].includes(progressKey))
+    return CASE_ROW_TONES.action;
+  if (["planned", "today", "completed", "report_done", "followup_confirmed"].includes(progressKey))
+    return CASE_ROW_TONES.ready;
+  if (["planning", "waiting", "followup_waiting", "report_review"].includes(progressKey))
+    return CASE_ROW_TONES.pending;
+  return CASE_ROW_TONES.neutral;
+}
+
 function fullAddress(inquiry: Inquiry): string {
   const address = String(inquiry.address || "").trim();
   const formattedAddress = address
@@ -596,124 +631,6 @@ function formatKr(value?: number | null): string {
   }).format(Number(value));
 }
 
-
-function inquiryTypeLabel(value?: string | null): string {
-  switch (String(value || "").toLowerCase()) {
-    case "lekkasjesok":
-      return "Lekkasjesøk";
-    case "takkontroll":
-      return "Takkontroll og inspeksjon";
-    case "service":
-      return "Servicearbeid og reparasjon";
-    case "akutt":
-      return "Akutt utbedring";
-    case "digital":
-      return "Digital konsultasjon";
-    case "digital_befaring":
-      return "Digital befaring";
-    default:
-      return value || "Ikke oppgitt";
-  }
-}
-
-function humanizeOrderValue(value?: string | null): string {
-  const text = String(value || "").trim();
-  if (!text) return "Ikke oppgitt";
-
-  const normalized = text.replaceAll("_", " ");
-
-  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
-}
-
-function formatOrderDateTime(value?: string | null): string {
-  if (!value) return "Ikke oppgitt";
-
-  const date = new Date(String(value).replace(" ", "T"));
-
-  if (Number.isNaN(date.getTime())) return String(value);
-
-  return date.toLocaleString("nb-NO", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function parseInquiryOrderNotes(notes?: string | null) {
-  const source = String(notes || "").trim();
-
-  const result = {
-    building: "",
-    roofType: "",
-    damageLocation: "",
-    documentation: "",
-    description: "",
-    changeLog: "",
-  };
-
-  if (!source) return result;
-
-  let section = "";
-
-  for (const rawLine of source.split(/\r?\n/)) {
-    const line = rawLine.trimEnd();
-
-    let match = line.match(/^Bygning:\s*(.*)$/i);
-    if (match) {
-      result.building = match[1].trim();
-      section = "building";
-      continue;
-    }
-
-    match = line.match(/^Taktype:\s*(.*)$/i);
-    if (match) {
-      result.roofType = match[1].trim();
-      section = "roofType";
-      continue;
-    }
-
-    match = line.match(/^Skadested:\s*(.*)$/i);
-    if (match) {
-      result.damageLocation = match[1].trim();
-      section = "damageLocation";
-      continue;
-    }
-
-    match = line.match(/^Bilder\/Dokumentasjon:\s*(.*)$/i);
-    if (match) {
-      result.documentation = match[1].trim();
-      section = "documentation";
-      continue;
-    }
-
-    match = line.match(/^Beskrivelse:\s*(.*)$/i);
-    if (match) {
-      result.description = match[1].trim();
-      section = "description";
-      continue;
-    }
-
-    if (/^\[Bestillingsendring\b/i.test(line.trim())) {
-      result.changeLog = line.trim();
-      section = "changeLog";
-      continue;
-    }
-
-    if (section === "description") {
-      result.description = [result.description, line]
-        .filter(Boolean)
-        .join("\n");
-    } else if (section === "changeLog") {
-      result.changeLog = [result.changeLog, line]
-        .filter(Boolean)
-        .join("\n");
-    }
-  }
-
-  return result;
-}
 
 function reportStatusLabel(status?: ReportStatus): string {
   switch (status) {
@@ -1094,11 +1011,11 @@ function InquiryPhotosManager({ inquiryId }: { inquiryId: number }) {
   ).length;
 
   return (
-    <section className="bg-[#0b0f17] border border-slate-800 rounded-3xl p-6 space-y-5">
+    <section className="bg-[#211612] border border-slate-800 rounded-3xl p-6 space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
         <div>
           <h3 className="font-extrabold text-base text-white flex items-center gap-2">
-            <Camera className="w-5 h-5 text-[#F5B800]" />
+            <Camera className="w-5 h-5 text-orange-300" />
             Felt-dokumentasjon
           </h3>
           <p className="text-[11px] text-slate-400 mt-1">
@@ -1113,7 +1030,7 @@ function InquiryPhotosManager({ inquiryId }: { inquiryId: number }) {
             {selectedForReport} valgt til rapport
           </span>
 
-          <label className="bg-[#F5B800] hover:bg-amber-400 text-slate-950 font-extrabold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all">
+          <label className="bg-[#ff951a] hover:bg-orange-400 text-slate-950 font-extrabold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all">
             {uploading ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
@@ -1207,7 +1124,7 @@ function InquiryPhotosManager({ inquiryId }: { inquiryId: number }) {
                       }
                       rows={2}
                       placeholder="Beskriv hva bildet viser..."
-                      className="w-full resize-none rounded-xl border border-slate-800 bg-[#08111d] px-3 py-2.5 text-xs text-slate-200 outline-none transition focus:border-red-500/40"
+                      className="w-full resize-none rounded-xl border border-slate-800 bg-[#211410] px-3 py-2.5 text-xs text-slate-200 outline-none transition focus:border-red-500/40"
                     />
                   </div>
 
@@ -1230,7 +1147,7 @@ function InquiryPhotosManager({ inquiryId }: { inquiryId: number }) {
                           })
                         }
                         placeholder="1"
-                        className="w-full rounded-xl border border-slate-800 bg-[#08111d] px-3 py-2.5 text-xs text-slate-200 outline-none transition focus:border-red-500/40"
+                        className="w-full rounded-xl border border-slate-800 bg-[#211410] px-3 py-2.5 text-xs text-slate-200 outline-none transition focus:border-red-500/40"
                       />
                     </div>
 
@@ -1752,7 +1669,7 @@ export function LegacyWorkDocumentationWorkspace({ inquiryId }: Props) {
                   }))
                 }
                 placeholder="Kommentar til dokumentasjonen..."
-                className="min-w-0 flex-1 rounded-lg border border-slate-800 bg-[#08111d] px-3 py-2 text-[10px] text-white outline-none focus:border-cyan-500/40"
+                className="min-w-0 flex-1 rounded-lg border border-slate-800 bg-[#211410] px-3 py-2 text-[10px] text-white outline-none focus:border-cyan-500/40"
               />
               <button
                 type="button"
@@ -1790,7 +1707,7 @@ export function LegacyWorkDocumentationWorkspace({ inquiryId }: Props) {
     const audioKey = `${identity}-${phase}-audio`;
 
     return (
-      <section className="rounded-2xl border border-slate-800 bg-[#08111d] p-4">
+      <section className="rounded-2xl border border-slate-800 bg-[#211410] p-4">
         <div>
           <p className="text-[10px] font-black text-white">
             {phaseMeta[phase].label}
@@ -1866,7 +1783,7 @@ export function LegacyWorkDocumentationWorkspace({ inquiryId }: Props) {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-2xl border border-cyan-500/20 bg-[#0b0f17] px-5 py-4">
+      <section className="rounded-2xl border border-cyan-500/20 bg-[#211612] px-5 py-4">
         <div className="flex items-start gap-3">
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-cyan-500/20 bg-cyan-500/10">
             <Image className="h-4 w-4 text-cyan-400" />
@@ -1956,7 +1873,7 @@ export function LegacyWorkDocumentationWorkspace({ inquiryId }: Props) {
                                 : Number(event.target.value),
                           }))
                         }
-                        className="rounded-lg border border-slate-700 bg-[#08111d] px-3 py-2 text-[10px] text-slate-300 outline-none"
+                        className="rounded-lg border border-slate-700 bg-[#211410] px-3 py-2 text-[10px] text-slate-300 outline-none"
                       >
                         <option value="">Velg tiltak</option>
                         {items.map((item) => (
@@ -1969,7 +1886,7 @@ export function LegacyWorkDocumentationWorkspace({ inquiryId }: Props) {
                       <button
                         type="button"
                         onClick={() => linkExistingAsBefore(doc)}
-                        className="rounded-lg bg-amber-500 px-3 py-2 text-[10px] font-black text-slate-950 hover:bg-amber-400"
+                        className="rounded-lg bg-amber-500 px-3 py-2 text-[10px] font-black text-slate-950 hover:bg-orange-400"
                       >
                         Koble som 1 · Før
                       </button>
@@ -1984,7 +1901,7 @@ export function LegacyWorkDocumentationWorkspace({ inquiryId }: Props) {
             {items.map((item) => (
               <article
                 key={item.id}
-                className="rounded-3xl border border-slate-800 bg-[#0b0f17] p-5"
+                className="rounded-3xl border border-slate-800 bg-[#211612] p-5"
               >
                 <div className="flex flex-col gap-3 border-b border-slate-800/80 pb-4 sm:flex-row sm:items-start sm:justify-between">
                   <div>
@@ -2037,7 +1954,7 @@ export function LegacyWorkDocumentationWorkspace({ inquiryId }: Props) {
             ))}
 
             {items.length === 0 && (
-              <section className="rounded-2xl border border-dashed border-slate-800 bg-[#0b0f17] px-5 py-10 text-center">
+              <section className="rounded-2xl border border-dashed border-slate-800 bg-[#211612] px-5 py-10 text-center">
                 <Paperclip className="mx-auto h-6 w-6 text-slate-700" />
                 <p className="mt-3 text-xs font-bold text-slate-400">
                   Ingen utbedringstiltak er lagret ennå.
@@ -2052,7 +1969,7 @@ export function LegacyWorkDocumentationWorkspace({ inquiryId }: Props) {
           {customPoints.map((point) => (
             <article
               key={point.key}
-              className="rounded-3xl border border-violet-500/20 bg-[#0b0f17] p-5"
+              className="rounded-3xl border border-violet-500/20 bg-[#211612] p-5"
             >
               <div className="border-b border-slate-800/80 pb-4">
                 <p className="text-[9px] font-black uppercase tracking-wider text-violet-400">
@@ -2075,7 +1992,7 @@ export function LegacyWorkDocumentationWorkspace({ inquiryId }: Props) {
             </article>
           ))}
 
-          <section className="rounded-2xl border border-dashed border-slate-700 bg-[#0b0f17] p-5">
+          <section className="rounded-2xl border border-dashed border-slate-700 bg-[#211612] p-5">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
               <div className="min-w-0 flex-1">
                 <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
@@ -2085,7 +2002,7 @@ export function LegacyWorkDocumentationWorkspace({ inquiryId }: Props) {
                   value={newPointTitle}
                   onChange={(event) => setNewPointTitle(event.target.value)}
                   placeholder="F.eks. Ekstra kontroll av gesims"
-                  className="w-full rounded-xl border border-slate-800 bg-[#08111d] px-4 py-3 text-xs text-white outline-none focus:border-violet-500/40"
+                  className="w-full rounded-xl border border-slate-800 bg-[#211410] px-4 py-3 text-xs text-white outline-none focus:border-violet-500/40"
                 />
               </div>
               <button
@@ -2153,6 +2070,10 @@ export default function ProjectManagerDashboard({
 
   const [report, setReport] = useState<ReportData | null>(null);
   const [reportOverview, setReportOverview] = useState<Record<string, ReportData | null>>({});
+  // Faglig godkjenning fra Perun Core er autoritativ, ikke gammel TLV-rapportstatus.
+  const [approvalStates, setApprovalStates] = useState<Record<string, string>>({});
+  const [approvalRefresh, setApprovalRefresh] = useState(0);
+  const [approvalLoadError, setApprovalLoadError] = useState("");
   const [offerOverview, setOfferOverview] = useState<Record<string, FollowUpOffer | null>>({});
   const [fieldScheduleOverview, setFieldScheduleOverview] = useState<
     Record<string, FieldSchedule | null>
@@ -2240,10 +2161,64 @@ export default function ProjectManagerDashboard({
   const [followUpOfferDraftId, setFollowUpOfferDraftId] =
     useState<number | null>(null);
   const [followUpOffer, setFollowUpOffer] = useState<FollowUpOffer | null>(null);
-  const [loadingFollowUpOffer, setLoadingFollowUpOffer] = useState(false);
+  const [, setLoadingFollowUpOffer] = useState(false);
   const [postReportMessage, setPostReportMessage] = useState("");
   const [postReportError, setPostReportError] = useState("");
   const [savingMaintenanceFollowUp, setSavingMaintenanceFollowUp] = useState(false);
+
+  const assignedInquiryIds = useMemo(
+    () => inquiries.map((item) => normalizeInquiryId(item.id)).filter((id) => id > 0).join(","),
+    [inquiries]
+  );
+  const approvalQueue = useMemo(
+    () => inquiries.filter((item) => approvalStates[String(normalizeInquiryId(item.id))] === "awaiting_pm"),
+    [inquiries, approvalStates]
+  );
+
+  useEffect(() => {
+    // Admin-forhåndsvisning leser bare status med admin-cookie.
+    // Faglige handlinger krever fortsatt prosjektansvarliges SMS-sesjon.
+    const adminPreview = Boolean(onBackToAdmin);
+    const session = adminPreview ? null : window.localStorage.getItem("taklekkasjevakten_project_manager_session");
+    if ((!adminPreview && !session) || !assignedInquiryIds) {
+      setApprovalStates({});
+      setApprovalLoadError("");
+      return;
+    }
+    let cancelled = false;
+    const ids = assignedInquiryIds.split(",").map(Number);
+    const load = async () => {
+      const rows = await Promise.all(ids.map(async (id) => {
+        try {
+          const res = await fetch(apiUrl("/tlv_report_approval_workflow.php"), {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            cache: "no-store",
+            body: JSON.stringify(adminPreview
+              ? { inquiry_id: id, action: "status" }
+              : { inquiry_id: id, action: "pm_status", session_token: session }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) return { id, state: "", ok: false };
+          return { id, state: String(data.state || ""), ok: true };
+        } catch {
+          return { id, state: "", ok: false };
+        }
+      }));
+      if (cancelled) return;
+      setApprovalStates(Object.fromEntries(rows.filter((item) => item.ok).map((item) => [String(item.id), item.state])));
+      setApprovalLoadError(rows.some((item) => !item.ok) ? "Noen godkjenningsstatuser kunne ikke hentes. Prøv å oppdatere." : "");
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [assignedInquiryIds, approvalRefresh, onBackToAdmin]);
+
+  const openApproval = (inquiry: Inquiry) => {
+    setActiveInquiryId(normalizeInquiryId(inquiry.id));
+    setFieldWorkspaceTab("rapport");
+    setView("felt");
+  };
 
   const activeInquiry = useMemo(
     () =>
@@ -2505,6 +2480,9 @@ export default function ProjectManagerDashboard({
     const inquiryId = normalizeInquiryId(inquiry.id);
     const reportForInquiry = reportOverview[inquiryId.toString()] || null;
     const reportStatus = reportForInquiry?.status;
+    if (approvalStates[String(inquiryId)] === "awaiting_pm") {
+      return { key: "report_approval", label: "Krever godkjenning", subtitle: "Rapport 1 venter på faglig kontroll", accent: "amber" };
+    }
     const status = effectiveWorkflowStatus(inquiry);
     const booking = parseInquiryBooking(inquiry);
     const now = new Date();
@@ -2648,6 +2626,9 @@ export default function ProjectManagerDashboard({
   const progressNextAction = (inquiry: Inquiry, booking: Date | null): string => {
     const inquiryId = normalizeInquiryId(inquiry.id);
     const reportForInquiry = reportOverview[inquiryId.toString()] || null;
+    if (approvalStates[String(inquiryId)] === "awaiting_pm") {
+      return "Godkjenn eller returner Rapport 1";
+    }
     const schedule =
       fieldScheduleOverview[inquiryId.toString()] || null;
     const scheduleStatus = String(schedule?.status || "").toLowerCase();
@@ -2753,6 +2734,7 @@ export default function ProjectManagerDashboard({
       { key: "followup_waiting", title: "Venter på kundesvar", subtitle: "videre oppfølging foreslått", accent: "amber", items: byKey("followup_waiting") },
       { key: "followup_confirmed", title: "Oppfølging bekreftet", subtitle: "avtalt med kunde", accent: "emerald", items: byKey("followup_confirmed") },
       { key: "followup_declined", title: "Kunde takket nei", subtitle: "må eventuelt avklares", accent: "red", items: byKey("followup_declined") },
+      { key: "report_approval", title: "Rapporter til godkjenning", subtitle: "krever faglig beslutning", accent: "amber", items: byKey("report_approval") },
       { key: "report_progress", title: "Rapport pågår", subtitle: "rapport og funn", accent: "cyan", items: byKey("report_progress") },
       { key: "report_review", title: "Til gjennomgang", subtitle: "rapport sendt til admin", accent: "blue", items: byKey("report_review") },
       { key: "report_done", title: "Rapport ferdig", subtitle: "godkjent eller publisert", accent: "emerald", items: byKey("report_done") },
@@ -2767,6 +2749,7 @@ export default function ProjectManagerDashboard({
     fieldInquiries,
     overviewStatusFilter,
     reportOverview,
+    approvalStates,
     offerOverview,
     fieldScheduleOverview,
   ]);
@@ -4853,6 +4836,7 @@ export default function ProjectManagerDashboard({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             inquiry_id: activeInquiryId,
+          session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
             ai_draft: draft,
             status: "utkast",
           }),
@@ -4872,7 +4856,7 @@ export default function ProjectManagerDashboard({
       const pdfRes = await fetch(`${API_BASE}/generate_report_pdf.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inquiry_id: activeInquiryId }),
+        body: JSON.stringify({ inquiry_id: activeInquiryId, session_token: localStorage.getItem("taklekkasjevakten_project_manager_session") }),
       });
       const pdfData = await pdfRes.json();
 
@@ -4951,6 +4935,7 @@ export default function ProjectManagerDashboard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           inquiry_id: activeInquiryId,
+          session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
           ai_draft: reportDraft,
           status: "utkast",
         }),
@@ -5044,6 +5029,7 @@ export default function ProjectManagerDashboard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           inquiry_id: activeInquiryId,
+          session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
           ai_draft: reportWithRecommendation,
           status: "sendt_til_admin",
         }),
@@ -5190,6 +5176,16 @@ export default function ProjectManagerDashboard({
 
   const reportPublished = report?.status === "publisert";
 
+  // Den opprinnelige feltbookingen er ikke lenger neste handling når
+  // lekkasjesøket er utført og rapportprosessen har begynt.
+  // Ikke bruk passert dato alene: en avtale kan være utsatt eller ikke utført.
+  const initialFieldworkFinished = Boolean(
+    ["sendt_til_admin", "under_gjennomgang", "godkjent", "publisert"].includes(report?.status || "") ||
+    String(report?.ai_draft || "").trim() ||
+    String(report?.admin_final || "").trim() ||
+    workCompletionSnapshot?.status === "arbeid_ferdig"
+  );
+
   const followUpOfferStatus = String(followUpOffer?.status || "").toLowerCase();
   const followUpAccepted = followUpOfferStatus === "akseptert";
   const followUpWaitingForCustomer = [
@@ -5288,6 +5284,7 @@ export default function ProjectManagerDashboard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           inquiry_id: activeInquiryId,
+          session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
           ai_draft: nextDraft,
           status: "utkast",
         }),
@@ -5367,19 +5364,15 @@ export default function ProjectManagerDashboard({
     ? effectiveWorkflowStatus(overviewInquiry)
     : "";
 
-  const overviewOrderNotes = overviewInquiry
-    ? parseInquiryOrderNotes(overviewInquiry.notes)
-    : null;
-
   const overviewStandardService = standardServiceForInquiry(overviewInquiry);
   const overviewStandardTemplate = getStandardServiceOfferTemplate(
     overviewStandardService
   );
 
   return (
-    <div className="min-h-screen bg-[#07101d] text-white font-sans">
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_75%_0%,#4a210f_0%,#24140f_43%,#170f0d_100%)] text-white font-sans">
       <aside
-        className={`hidden lg:flex fixed inset-y-0 left-0 z-50 bg-[#081321] border-r border-slate-800/80 flex-col transition-[width] duration-300 ${
+        className={`hidden lg:flex fixed inset-y-0 left-0 z-50 bg-[linear-gradient(180deg,#26150f_0%,#1a100e_100%)] border-r border-orange-900/40 flex-col transition-[width] duration-300 ${
           sidebarCollapsed ? "w-[76px]" : "w-[238px]"
         }`}
       >
@@ -5405,7 +5398,7 @@ export default function ProjectManagerDashboard({
           <button
             type="button"
             onClick={() => setSidebarCollapsed((current) => !current)}
-            className={`absolute top-[29px] -right-3 w-7 h-7 rounded-full border border-slate-700 bg-[#0b1725] text-slate-300 hover:text-white hover:border-amber-500/50 hover:bg-slate-900 flex items-center justify-center shadow-lg transition-colors ${
+            className={`absolute top-[29px] -right-3 w-7 h-7 rounded-full border border-slate-700 bg-[#291915] text-slate-300 hover:text-white hover:border-amber-500/50 hover:bg-slate-900 flex items-center justify-center shadow-lg transition-colors ${
               sidebarCollapsed ? "rotate-180" : ""
             }`}
             title={sidebarCollapsed ? "Åpne meny" : "Lukk meny"}
@@ -5416,10 +5409,10 @@ export default function ProjectManagerDashboard({
         </div>
 
         <nav className={`py-4 space-y-1.5 ${sidebarCollapsed ? "px-2" : "px-3"}`}>
-          <button type="button" onClick={() => { setView("oversikt"); setOverviewDisplay("liste"); }} className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-extrabold transition-colors ${sidebarCollapsed ? "justify-center" : "gap-3"} ${view === "oversikt" && overviewDisplay === "liste" ? "bg-[#F5B800]/10 text-[#F5B800] border border-[#F5B800]/15" : "text-slate-400 hover:text-white hover:bg-slate-900/70"}`}>
+          <button type="button" onClick={() => { setView("oversikt"); setOverviewDisplay("liste"); }} className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-extrabold transition-colors ${sidebarCollapsed ? "justify-center" : "gap-3"} ${view === "oversikt" && overviewDisplay === "liste" ? "bg-orange-500/20 text-orange-300 border border-orange-500/30" : "text-slate-200 hover:text-white hover:bg-slate-900/70"}`}>
             <Briefcase className="w-4 h-4 shrink-0" />{!sidebarCollapsed && <span>Oppdrag</span>}
           </button>
-          <button type="button" onClick={() => { setView("oversikt"); setOverviewDisplay("kalender"); }} className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-bold transition-colors ${sidebarCollapsed ? "justify-center" : "gap-3"} ${view === "oversikt" && overviewDisplay === "kalender" ? "bg-[#F5B800]/10 text-[#F5B800]" : "text-slate-400 hover:text-white hover:bg-slate-900/70"}`}>
+          <button type="button" onClick={() => { setView("oversikt"); setOverviewDisplay("kalender"); }} className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-bold transition-colors ${sidebarCollapsed ? "justify-center" : "gap-3"} ${view === "oversikt" && overviewDisplay === "kalender" ? "bg-orange-500/20 text-orange-300" : "text-slate-200 hover:text-white hover:bg-slate-900/70"}`}>
             <CalendarDays className="w-4 h-4 shrink-0" />{!sidebarCollapsed && <span>Kalender</span>}
           </button>
           <button
@@ -5429,8 +5422,8 @@ export default function ProjectManagerDashboard({
               sidebarCollapsed ? "justify-center" : "gap-3"
             } ${
               view === "kunder"
-                ? "bg-[#F5B800]/10 text-[#F5B800] border border-[#F5B800]/15"
-                : "text-slate-500 hover:text-slate-300 hover:bg-slate-900/50"
+                ? "bg-orange-500/20 text-orange-300 border border-orange-500/30"
+                : "text-slate-300 hover:text-slate-300 hover:bg-slate-900/50"
             }`}
           >
             <Users className="w-4 h-4 shrink-0" />
@@ -5439,21 +5432,26 @@ export default function ProjectManagerDashboard({
           <button
             type="button"
             onClick={() => setView("rapporter")}
-            className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-bold transition-colors ${sidebarCollapsed ? "justify-center" : "gap-3"} ${view === "rapporter" ? "bg-[#F5B800]/10 text-[#F5B800] border border-[#F5B800]/15" : "text-slate-500 hover:text-slate-300 hover:bg-slate-900/50"}`}
+            className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-bold transition-colors ${sidebarCollapsed ? "justify-center" : "gap-3"} ${view === "rapporter" ? "bg-orange-500/20 text-orange-300 border border-orange-500/30" : "text-slate-300 hover:text-slate-300 hover:bg-slate-900/50"}`}
           >
             <FileText className="w-4 h-4 shrink-0" />{!sidebarCollapsed && <span>Rapporter</span>}
+            {approvalQueue.length > 0 && (
+              <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-amber-400 px-1.5 py-0.5 text-[11px] font-black text-slate-950">
+                {approvalQueue.length}
+              </span>
+            )}
           </button>
           <button
             type="button"
             onClick={() => setView("sjekklister")}
-            className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-bold transition-colors ${sidebarCollapsed ? "justify-center" : "gap-3"} ${view === "sjekklister" ? "bg-[#F5B800]/10 text-[#F5B800] border border-[#F5B800]/15" : "text-slate-500 hover:text-slate-300 hover:bg-slate-900/50"}`}
+            className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-bold transition-colors ${sidebarCollapsed ? "justify-center" : "gap-3"} ${view === "sjekklister" ? "bg-orange-500/20 text-orange-300 border border-orange-500/30" : "text-slate-300 hover:text-slate-300 hover:bg-slate-900/50"}`}
           >
             <ClipboardCheck className="w-4 h-4 shrink-0" />{!sidebarCollapsed && <span>Sjekklister</span>}
           </button>
           <button
             type="button"
             onClick={() => setView("dokumenter")}
-            className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-bold transition-colors ${sidebarCollapsed ? "justify-center" : "gap-3"} ${view === "dokumenter" ? "bg-[#F5B800]/10 text-[#F5B800] border border-[#F5B800]/15" : "text-slate-500 hover:text-slate-300 hover:bg-slate-900/50"}`}
+            className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-bold transition-colors ${sidebarCollapsed ? "justify-center" : "gap-3"} ${view === "dokumenter" ? "bg-orange-500/20 text-orange-300 border border-orange-500/30" : "text-slate-300 hover:text-slate-300 hover:bg-slate-900/50"}`}
           >
             <Paperclip className="w-4 h-4 shrink-0" />{!sidebarCollapsed && <span>Dokumenter</span>}
           </button>
@@ -5464,10 +5462,10 @@ export default function ProjectManagerDashboard({
               sidebarCollapsed ? "justify-center" : "gap-3"
             } ${
               view === "meldinger"
-                ? "bg-[#F5B800]/10 text-[#F5B800] border border-[#F5B800]/15"
+                ? "bg-orange-500/20 text-orange-300 border border-orange-500/30"
                 : unreadMessageCount > 0
                 ? "text-slate-200 bg-amber-500/[0.04] border border-amber-500/15 hover:bg-amber-500/[0.08]"
-                : "text-slate-500 hover:text-slate-300 hover:bg-slate-900/50"
+                : "text-slate-300 hover:text-slate-300 hover:bg-slate-900/50"
             }`}
             title={
               unreadMessageCount > 0
@@ -5478,7 +5476,7 @@ export default function ProjectManagerDashboard({
             <Mail
               className={`w-4 h-4 shrink-0 ${
                 unreadMessageCount > 0 && view !== "meldinger"
-                  ? "text-[#F5B800] animate-bounce drop-shadow-[0_0_6px_rgba(245,184,0,0.75)]"
+                  ? "text-orange-300 animate-bounce drop-shadow-[0_0_6px_rgba(245,184,0,0.75)]"
                   : ""
               }`}
             />
@@ -5487,7 +5485,7 @@ export default function ProjectManagerDashboard({
               <>
                 <span>Meldinger</span>
                 {unreadMessageCount > 0 && (
-                  <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-[#F5B800] px-1.5 py-0.5 text-[9px] font-black leading-none text-slate-950">
+                  <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-[#ff951a] px-1.5 py-0.5 text-[11px] font-black leading-none text-slate-950">
                     {unreadMessageCount > 9 ? "9+" : unreadMessageCount}
                   </span>
                 )}
@@ -5495,7 +5493,7 @@ export default function ProjectManagerDashboard({
             )}
 
             {sidebarCollapsed && unreadMessageCount > 0 && (
-              <span className="absolute translate-x-3 -translate-y-3 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#F5B800] px-1 text-[8px] font-black text-slate-950">
+              <span className="absolute translate-x-3 -translate-y-3 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#ff951a] px-1 text-[8px] font-black text-slate-950">
                 {unreadMessageCount > 9 ? "9+" : unreadMessageCount}
               </span>
             )}
@@ -5503,17 +5501,17 @@ export default function ProjectManagerDashboard({
           <button
             type="button"
             onClick={() => setView("team")}
-            className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-bold transition-colors ${sidebarCollapsed ? "justify-center" : "gap-3"} ${view === "team" ? "bg-[#F5B800]/10 text-[#F5B800] border border-[#F5B800]/15" : "text-slate-500 hover:text-slate-300 hover:bg-slate-900/50"}`}
+            className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-bold transition-colors ${sidebarCollapsed ? "justify-center" : "gap-3"} ${view === "team" ? "bg-orange-500/20 text-orange-300 border border-orange-500/30" : "text-slate-300 hover:text-slate-300 hover:bg-slate-900/50"}`}
           >
             <UserCheck className="w-4 h-4 shrink-0" />{!sidebarCollapsed && <span>Team</span>}
           </button>
-          <button type="button" className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-bold ${sidebarCollapsed ? "justify-center" : "gap-3"} text-slate-500 hover:text-slate-300 hover:bg-slate-900/50`}><Wrench className="w-4 h-4 shrink-0" />{!sidebarCollapsed && <span>Innstillinger</span>}</button>
+          <button type="button" className={`w-full flex items-center px-3 py-3 rounded-xl text-sm font-bold ${sidebarCollapsed ? "justify-center" : "gap-3"} text-slate-300 hover:text-slate-300 hover:bg-slate-900/50`}><Wrench className="w-4 h-4 shrink-0" />{!sidebarCollapsed && <span>Innstillinger</span>}</button>
         </nav>
 
       </aside>
 
       <header
-        className={`sticky top-0 z-40 bg-[#08111d]/95 backdrop-blur border-b border-slate-800/80 px-4 sm:px-6 py-4 transition-[margin] duration-300 ${
+        className={`sticky top-0 z-40 bg-[#2b170f]/95 backdrop-blur border-b border-orange-800/35 px-4 sm:px-6 py-4 transition-[margin] duration-300 ${
           sidebarCollapsed ? "lg:ml-[76px]" : "lg:ml-[238px]"
         }`}
       >
@@ -5540,7 +5538,7 @@ export default function ProjectManagerDashboard({
                 ? `${serviceLabel(standardServiceForInquiry(activeInquiry))} · #${activeInquiry.id}`
                 : "Oppdrag"}
             </h1>
-            <p className="text-[11px] text-slate-500 mt-0.5">
+            <p className="text-[13px] text-slate-300 mt-0.5">
               {view === "oversikt"
                 ? "Full oversikt og neste handling"
                 : view === "meldinger"
@@ -5576,30 +5574,30 @@ export default function ProjectManagerDashboard({
               <>
                 <section className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.16em] text-amber-400">
+                    <p className="text-xs font-black uppercase tracking-[0.16em] text-amber-400">
                       Prosjektleder
                     </p>
                     <h2 className="mt-1 text-3xl font-black tracking-tight">Oppdrag</h2>
-                    <p className="mt-1 text-sm text-slate-400">
+                    <p className="mt-1 text-sm text-slate-200">
                       Full oversikt og enkel håndtering
                     </p>
                   </div>
 
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <div className="relative">
-                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" />
                       <input
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         placeholder="Søk kunde, adresse eller ID..."
-                        className="w-full rounded-xl border border-slate-800 bg-[#0b1725] py-3 pl-9 pr-3 text-xs outline-none transition focus:border-[#F5B800]/70 sm:w-[330px]"
+                        className="w-full rounded-xl border border-slate-800 bg-[#291915] py-3 pl-9 pr-3 text-xs outline-none transition focus:border-orange-400/70 sm:w-[330px]"
                       />
                     </div>
 
                     <button
                       type="button"
                       onClick={() => setOverviewStatusFilter(null)}
-                      className="flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-[#0b1725] px-4 py-3 text-xs font-extrabold text-slate-300 transition hover:border-slate-700 hover:text-white"
+                      className="flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-[#291915] px-4 py-3 text-xs font-extrabold text-slate-300 transition hover:border-slate-700 hover:text-white"
                     >
                       <Funnel className="h-4 w-4" />
                       Filter
@@ -5609,7 +5607,7 @@ export default function ProjectManagerDashboard({
                       type="button"
                       onClick={onBackToAdmin}
                       disabled={!onBackToAdmin}
-                      className="flex items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-4 py-3 text-xs font-black text-slate-950 shadow-[0_8px_30px_rgba(245,184,0,0.12)] transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="flex items-center justify-center gap-2 rounded-xl bg-[#ff951a] px-4 py-3 text-xs font-black text-slate-950 shadow-[0_8px_30px_rgba(245,184,0,0.12)] transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
                       title={
                         onBackToAdmin
                           ? "Gå til admin for å opprette oppdrag"
@@ -5629,6 +5627,7 @@ export default function ProjectManagerDashboard({
                     .filter((inquiry) => {
                       const status = effectiveWorkflowStatus(inquiry);
                       const progress = inquiryProgress(inquiry);
+                      if (approvalStates[String(normalizeInquiryId(inquiry.id))] === "awaiting_pm") return true;
                       if (status === "tilbud_utlopt") return false;
 
                       return (
@@ -5665,18 +5664,14 @@ export default function ProjectManagerDashboard({
                           )
                           .slice(0, 4);
 
-                  const visibleActive = overviewGroups
-                    .flatMap((group) =>
-                      group.items.map((inquiry) => ({
-                        inquiry,
-                        group,
-                      }))
-                    )
-                    .slice(0, 5);
+                  const visibleActive = overviewGroups.flatMap((group) =>
+                    group.items.map((inquiry) => ({ inquiry, group }))
+                  );
 
                   const actionLabel = (inquiry: Inquiry) => {
                     const status = effectiveWorkflowStatus(inquiry);
                     const progress = inquiryProgress(inquiry);
+                    if (progress.key === "report_approval") return onBackToAdmin ? "Venter på faglig godkjenning" : "Åpne rapport til godkjenning";
                     if (confirmedBooking(inquiry) &&
                         ["tilbud_akseptert", "planlagt", "pagaende"].includes(status)) {
                       return "Åpne planlagt oppdrag";
@@ -5726,6 +5721,9 @@ export default function ProjectManagerDashboard({
                       return "Planlegg oppdraget";
                     }
 
+                    if (progress.key === "report_approval") {
+                      return "Åpne rapport til godkjenning";
+                    }
                     if (progress.key === "report_progress") {
                       return "Ferdigstill rapport";
                     }
@@ -5762,6 +5760,14 @@ export default function ProjectManagerDashboard({
                       };
                     }
 
+                    if (progress.key === "report_approval") {
+                      return {
+                        icon: AlertTriangle,
+                        iconClass: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+                        badge: "Godkjenn rapport",
+                        badgeClass: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+                      };
+                    }
                     if (progress.key === "report_progress") {
                       return {
                         icon: FileText,
@@ -5793,69 +5799,94 @@ export default function ProjectManagerDashboard({
                             setOverviewTopTab("actions");
                             document.getElementById("pm-top-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
                           }}
-                          className="group flex min-h-[108px] items-center gap-4 rounded-2xl border border-slate-800 bg-[#0b1725] p-5 text-left transition hover:border-red-500/30"
+                          className="group flex min-h-[108px] items-center gap-4 rounded-2xl border border-red-500/40 bg-gradient-to-br from-red-950/85 via-[#54201c] to-[#351818] p-5 text-left shadow-[0_10px_30px_rgba(95,23,24,0.2)] transition hover:border-red-400/70 hover:brightness-110"
                         >
                           <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-red-500/25 bg-red-500/10 text-red-400">
                             <AlertTriangle className="h-5 w-5" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-[11px] font-black text-slate-300">
+                            <p className="text-[13px] font-black text-slate-300">
                               Krever handling
                             </p>
                             <p className="mt-1 text-2xl font-black text-white">
                               {actionableInquiries.length}
                             </p>
-                            <p className="mt-1 text-[10px] text-slate-500">
+                            <p className="mt-1 text-xs text-slate-300">
                               Saker som bør følges opp
                             </p>
                           </div>
-                          <ChevronRight className="h-4 w-4 text-slate-700 transition group-hover:text-slate-400" />
+                          <ChevronRight className="h-4 w-4 text-slate-400 transition group-hover:text-slate-200" />
                         </button>
 
                         <button
                           type="button"
                           onClick={() => setOverviewDisplay("kalender")}
-                          className="group flex min-h-[108px] items-center gap-4 rounded-2xl border border-slate-800 bg-[#0b1725] p-5 text-left transition hover:border-emerald-500/30"
+                          className="group flex min-h-[108px] items-center gap-4 rounded-2xl border border-teal-500/40 bg-gradient-to-br from-teal-950/95 via-[#115655] to-[#203936] p-5 text-left shadow-[0_10px_30px_rgba(6,95,91,0.15)] transition hover:border-teal-400/70 hover:brightness-110"
                         >
-                          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-400">
+                          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-teal-400/40 bg-teal-500/20 text-teal-200">
                             <CalendarDays className="h-5 w-5" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-[11px] font-black text-slate-300">
+                            <p className="text-[13px] font-black text-slate-300">
                               I dag
                             </p>
                             <p className="mt-1 text-2xl font-black text-white">
                               {todayItems.length}
                             </p>
-                            <p className="mt-1 text-[10px] text-slate-500">
+                            <p className="mt-1 text-xs text-slate-300">
                               Planlagte oppdrag
                             </p>
                           </div>
-                          <ChevronRight className="h-4 w-4 text-slate-700 transition group-hover:text-slate-400" />
+                          <ChevronRight className="h-4 w-4 text-slate-400 transition group-hover:text-slate-200" />
                         </button>
 
                         <button
                           type="button"
                           onClick={() => setView("meldinger")}
-                          className="group flex min-h-[108px] items-center gap-4 rounded-2xl border border-slate-800 bg-[#0b1725] p-5 text-left transition hover:border-amber-500/30"
+                          className="group flex min-h-[108px] items-center gap-4 rounded-2xl border border-purple-500/40 bg-gradient-to-br from-purple-950/95 via-[#48235d] to-[#30203e] p-5 text-left shadow-[0_10px_30px_rgba(95,30,127,0.14)] transition hover:border-purple-400/70 hover:brightness-110"
                         >
-                          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-amber-500/25 bg-amber-500/10 text-amber-300">
+                          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-purple-400/40 bg-purple-500/20 text-purple-200">
                             <Mail className="h-5 w-5" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-[11px] font-black text-slate-300">
+                            <p className="text-[13px] font-black text-slate-300">
                               Uleste meldinger
                             </p>
                             <p className="mt-1 text-2xl font-black text-white">
                               {unreadMessageCount}
                             </p>
-                            <p className="mt-1 text-[10px] text-slate-500">
+                            <p className="mt-1 text-xs text-slate-300">
                               Nye svar fra kunder
                             </p>
                           </div>
-                          <ChevronRight className="h-4 w-4 text-slate-700 transition group-hover:text-slate-400" />
+                          <ChevronRight className="h-4 w-4 text-slate-400 transition group-hover:text-slate-200" />
                         </button>
                       </section>
+
+                      {approvalQueue.length > 0 && (
+                        <section className="rounded-2xl border border-orange-400/50 bg-gradient-to-r from-[#4c2812] to-[#2b1a12] p-5 shadow-[0_12px_30px_rgba(251,146,60,0.12)]" aria-label="Rapporter som krever faglig godkjenning">
+                          <div className="mb-3 flex items-center gap-2">
+                            <AlertTriangle className="h-5 w-5 text-amber-300" />
+                            <h3 className="text-sm font-black text-white">{onBackToAdmin ? "Rapporter som venter på prosjektansvarlig" : "Rapporter som venter på din godkjenning"} ({approvalQueue.length})</h3>
+                          </div>
+                          <div className="space-y-2">
+                            {approvalQueue.map((inquiry) => (
+                              <div key={String(inquiry.id)} className="flex flex-col gap-3 rounded-xl border border-amber-500/20 bg-slate-950/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                  <p className="text-xs font-black text-white">Oppdrag #{inquiry.id} – {customerName(inquiry)}</p>
+                                  <p className="mt-1 text-[13px] text-amber-200">{onBackToAdmin ? "Rapport 1 venter på prosjektansvarliges faglige kontroll." : "Rapport 1 er sendt fra administrator. Faglig godkjenning kreves."}</p>
+                                </div>
+                                <button type="button" onClick={() => openApproval(inquiry)} className="shrink-0 rounded-xl bg-[#ff951a] px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-orange-400">
+                                  {onBackToAdmin ? "Se rapport (kun visning)" : "Åpne til godkjenning"} <ArrowUpRight className="ml-1 inline h-4 w-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      )}
+                      {approvalLoadError && (
+                        <p role="alert" className="text-xs text-amber-300">{approvalLoadError}</p>
+                      )}
 
                       {inquiryError && (
                         <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-300">
@@ -5864,37 +5895,37 @@ export default function ProjectManagerDashboard({
                       )}
 
                       {loadingInquiries ? (
-                        <div className="flex items-center justify-center gap-2 py-16 text-xs text-slate-500">
+                        <div className="flex items-center justify-center gap-2 py-16 text-xs text-slate-300">
                           <Loader2 className="h-4 w-4 animate-spin" />
                           Laster oppdrag...
                         </div>
                       ) : (
                         <>
-                          <section id="pm-top-tabs" className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0b1725]">
+                          <section id="pm-top-tabs" className="overflow-hidden rounded-2xl border border-orange-900/45 bg-gradient-to-br from-[#302019] to-[#211510] shadow-[0_10px_30px_rgba(0,0,0,0.12)]">
                             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3 sm:px-5">
                               <div className="flex flex-wrap gap-2" role="tablist" aria-label="Oppdrag og oppfølging">
                                 <button type="button" role="tab" aria-selected={overviewTopTab === "upcoming"}
                                   onClick={() => setOverviewTopTab("upcoming")}
-                                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${overviewTopTab === "upcoming" ? "border border-amber-500/40 bg-amber-500/10 text-[#F5B800]" : "border border-transparent text-slate-400 hover:bg-slate-900 hover:text-white"}`}>
+                                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${overviewTopTab === "upcoming" ? "border border-amber-500/40 bg-amber-500/10 text-orange-300" : "border border-transparent text-slate-200 hover:bg-slate-900 hover:text-white"}`}>
                                   <CalendarDays className="h-4 w-4" /> I dag / neste oppdrag
-                                  <span className="rounded-full border border-slate-700 px-2 py-0.5 text-[10px]">{upcomingItems.length}</span>
+                                  <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs">{upcomingItems.length}</span>
                                 </button>
                                 <button type="button" role="tab" aria-selected={overviewTopTab === "actions"}
                                   onClick={() => setOverviewTopTab("actions")}
-                                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${overviewTopTab === "actions" ? "border border-amber-500/40 bg-amber-500/10 text-[#F5B800]" : "border border-transparent text-slate-400 hover:bg-slate-900 hover:text-white"}`}>
+                                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${overviewTopTab === "actions" ? "border border-amber-500/40 bg-amber-500/10 text-orange-300" : "border border-transparent text-slate-200 hover:bg-slate-900 hover:text-white"}`}>
                                   <AlertTriangle className="h-4 w-4" /> Krever handling
-                                  <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-300">{actionableInquiries.length}</span>
+                                  <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-xs text-red-300">{actionableInquiries.length}</span>
                                 </button>
                               </div>
                               {overviewTopTab === "upcoming" && (
                                 <button type="button" onClick={() => setOverviewDisplay("kalender")}
-                                  className="inline-flex items-center gap-1.5 text-[10px] font-bold text-blue-400 hover:text-blue-300">
+                                  className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-400 hover:text-blue-300">
                                   <CalendarDays className="h-3.5 w-3.5" /> Se kalender
                                 </button>
                               )}
                             </div>
                             <div role="tabpanel" hidden={overviewTopTab !== "upcoming"}>
-                              <p className="px-5 pt-4 text-[11px] text-slate-500">Planlagte avtaler og kommende oppdrag.</p>
+                              <p className="px-5 pt-4 text-[13px] text-slate-300">Planlagte avtaler og kommende oppdrag.</p>
 <div className="divide-y divide-slate-800/80">
                                 {upcomingItems.map(({ inquiry, booking }) => {
                                   const initials = customerName(inquiry)
@@ -5918,7 +5949,7 @@ export default function ProjectManagerDashboard({
                                         })}
                                       </p>
 
-                                      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-blue-500/20 bg-blue-500/10 text-[10px] font-black text-blue-300">
+                                      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-blue-500/20 bg-blue-500/10 text-xs font-black text-blue-300">
                                         {initials || "—"}
                                       </div>
 
@@ -5927,7 +5958,7 @@ export default function ProjectManagerDashboard({
                                           <p className="truncate text-xs font-black text-white">
                                             {customerName(inquiry)}
                                           </p>
-                                          <span className="hidden rounded-md border border-slate-700 bg-slate-950/60 px-2 py-0.5 text-[9px] font-bold text-slate-400 sm:inline-flex">
+                                          <span className="hidden rounded-md border border-slate-700 bg-slate-950/60 px-2 py-0.5 text-[11px] font-bold text-slate-200 sm:inline-flex">
                                             {inquiry.stage === "digital_befaring"
                                               ? "Digital befaring"
                                               : serviceLabel(
@@ -5935,21 +5966,21 @@ export default function ProjectManagerDashboard({
                                                 )}
                                           </span>
                                         </div>
-                                        <p className="mt-1 truncate text-[10px] text-slate-500">
+                                        <p className="mt-1 truncate text-xs text-slate-300">
                                           {fullAddress(inquiry) ||
                                             "Adresse ikke oppgitt"}
                                         </p>
                                       </div>
 
-                                      <ChevronRight className="h-4 w-4 shrink-0 text-slate-700 transition group-hover:text-slate-400" />
+                                      <ChevronRight className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:text-slate-200" />
                                     </button>
                                   );
                                 })}
 
                                 {upcomingItems.length === 0 && (
                                   <div className="px-5 py-10 text-center">
-                                    <CalendarDays className="mx-auto h-7 w-7 text-slate-700" />
-                                    <p className="mt-3 text-xs text-slate-500">
+                                    <CalendarDays className="mx-auto h-7 w-7 text-slate-400" />
+                                    <p className="mt-3 text-xs text-slate-300">
                                       Ingen kommende oppdrag.
                                     </p>
                                   </div>
@@ -5957,7 +5988,7 @@ export default function ProjectManagerDashboard({
                               </div>
                             </div>
                             <div role="tabpanel" hidden={overviewTopTab !== "actions"}>
-                              <p className="px-5 pt-4 text-[11px] text-slate-500">Oppgaver prosjektleder bør ta tak i nå.</p>
+                              <p className="px-5 pt-4 text-[13px] text-slate-300">Oppgaver prosjektleder bør ta tak i nå.</p>
 <div className="divide-y divide-slate-800/80">
                                 {actionableInquiries.map((inquiry) => {
                                   const tone = actionTone(inquiry);
@@ -5980,32 +6011,32 @@ export default function ProjectManagerDashboard({
                                         <div className="min-w-0 flex-1">
                                           <div className="flex flex-wrap items-start justify-between gap-3">
                                             <div className="min-w-0">
-                                              <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                                              <p className="text-xs font-black uppercase tracking-wider text-slate-300">
                                                 Sak #{inquiry.id}
                                               </p>
                                               <h4 className="mt-1 truncate text-sm font-black text-white">
                                                 {customerName(inquiry)}
                                               </h4>
-                                              <p className="mt-1 truncate text-[10px] text-slate-500">
+                                              <p className="mt-1 truncate text-xs text-slate-300">
                                                 {fullAddress(inquiry) || "Adresse ikke oppgitt"}
                                               </p>
                                             </div>
 
                                             <span
-                                              className={`rounded-lg border px-2.5 py-1 text-[9px] font-black ${tone.badgeClass}`}
+                                              className={`rounded-lg border px-2.5 py-1 text-[11px] font-black ${tone.badgeClass}`}
                                             >
                                               {tone.badge}
                                             </span>
                                           </div>
 
                                           <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/35 px-4 py-3">
-                                            <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                                            <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">
                                               Neste handling
                                             </p>
                                             <p className="mt-1 text-xs font-black text-slate-200">
                                               {nextAction}
                                             </p>
-                                            <p className="mt-1 text-[10px] text-slate-500">
+                                            <p className="mt-1 text-xs text-slate-300">
                                               {inquiry.stage === "digital_befaring"
                                                 ? "Digital befaring"
                                                 : serviceLabel(inquiry.recommended_service)}
@@ -6018,8 +6049,8 @@ export default function ProjectManagerDashboard({
                                           <div className="mt-4 flex flex-wrap items-center gap-2">
                                             <button
                                               type="button"
-                                              onClick={() => openInquiry(inquiry)}
-                                              className="inline-flex items-center gap-2 rounded-xl bg-[#F5B800] px-4 py-2.5 text-[10px] font-black text-slate-950 transition hover:bg-amber-400"
+                                              onClick={() => approvalStates[String(normalizeInquiryId(inquiry.id))] === "awaiting_pm" ? openApproval(inquiry) : openInquiry(inquiry)}
+                                              className="inline-flex items-center gap-2 rounded-xl bg-[#ff951a] px-4 py-2.5 text-xs font-black text-slate-950 transition hover:bg-orange-400"
                                             >
                                               {nextAction}
                                               <ArrowUpRight className="h-3.5 w-3.5" />
@@ -6028,7 +6059,7 @@ export default function ProjectManagerDashboard({
                                             <button
                                               type="button"
                                               onClick={() => openInquiry(inquiry)}
-                                              className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950/40 px-4 py-2.5 text-[10px] font-black text-slate-300 transition hover:border-slate-600 hover:text-white"
+                                              className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950/40 px-4 py-2.5 text-xs font-black text-slate-300 transition hover:border-slate-600 hover:text-white"
                                             >
                                               Åpne oppdrag
                                               <ChevronRight className="h-3.5 w-3.5" />
@@ -6052,32 +6083,32 @@ export default function ProjectManagerDashboard({
                             </div>
                           </section>
 
-                          <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0b1725] shadow-[0_12px_38px_rgba(0,0,0,0.12)]">
+                          <section className="overflow-hidden rounded-2xl border border-orange-900/45 bg-gradient-to-br from-[#302019] to-[#211510] shadow-[0_12px_38px_rgba(0,0,0,0.12)]">
                             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3 sm:px-5">
                               <div className="flex gap-2" role="tablist" aria-label="Saksoversikt">
                                 <button type="button" role="tab" aria-selected={overviewBottomTab === "active"}
                                   onClick={() => setOverviewBottomTab("active")}
-                                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${overviewBottomTab === "active" ? "border border-amber-500/40 bg-amber-500/10 text-[#F5B800]" : "border border-transparent text-slate-400 hover:bg-slate-900 hover:text-white"}`}>
+                                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${overviewBottomTab === "active" ? "border border-amber-500/40 bg-amber-500/10 text-orange-300" : "border border-transparent text-slate-200 hover:bg-slate-900 hover:text-white"}`}>
                                   <Briefcase className="h-4 w-4" /> Aktive saker
-                                  <span className="rounded-full bg-amber-400 px-2 py-0.5 text-[10px] text-slate-950">{visibleActive.length}</span>
+                                  <span className="rounded-full bg-amber-400 px-2 py-0.5 text-xs text-slate-950">{visibleActive.length}</span>
                                 </button>
                                 <button type="button" role="tab" aria-selected={overviewBottomTab === "activity"}
                                   onClick={() => setOverviewBottomTab("activity")}
-                                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${overviewBottomTab === "activity" ? "border border-amber-500/40 bg-amber-500/10 text-[#F5B800]" : "border border-transparent text-slate-400 hover:bg-slate-900 hover:text-white"}`}>
+                                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${overviewBottomTab === "activity" ? "border border-amber-500/40 bg-amber-500/10 text-orange-300" : "border border-transparent text-slate-200 hover:bg-slate-900 hover:text-white"}`}>
                                   <Clock3 className="h-4 w-4" /> Siste aktivitet
                                 </button>
                               </div>
                               <button type="button" onClick={() => setOverviewStatusFilter(null)}
-                                className="text-[11px] font-bold text-blue-400 hover:text-blue-300">Se alle saker →</button>
+                                className="text-[13px] font-bold text-blue-400 hover:text-blue-300">Se alle saker →</button>
                             </div>
-                            <div className="px-5 py-3 text-[11px] text-slate-500">
+                            <div className="px-5 py-3 text-[13px] text-slate-300">
                               {overviewBottomTab === "active" ? "Status og neste handling på aktive oppdrag." : "Nyeste registrerte hendelser for planlagte oppdrag."}
                             </div>
 
                             {overviewBottomTab === "active" && (
                             <div>
 
-                              <div className="hidden grid-cols-[minmax(180px,1.15fr)_115px_155px_minmax(180px,1fr)_90px] border-b border-slate-800 bg-slate-950/20 px-5 py-3 text-[9px] font-black uppercase tracking-wider text-slate-600 lg:grid">
+                              <div className="hidden grid-cols-[minmax(180px,1.15fr)_115px_155px_minmax(180px,1fr)_90px] border-b border-slate-800 bg-slate-950/20 px-5 py-3 text-[11px] font-black uppercase tracking-wider text-slate-400 lg:grid">
                                 <span>Kunde</span>
                                 <span>Tjeneste</span>
                                 <span>Status</span>
@@ -6100,6 +6131,8 @@ export default function ProjectManagerDashboard({
                                     .slice(0, 2)
                                     .map((part) => part.charAt(0).toUpperCase())
                                     .join("");
+
+                                  const rowTone = caseRowTone(progress.key);
 
                                   const progressClass =
                                     progress.key === "planned" ||
@@ -6125,23 +6158,23 @@ export default function ProjectManagerDashboard({
                                       key={inquiry.id}
                                       type="button"
                                       onClick={() => openInquiry(inquiry)}
-                                      className="grid w-full gap-3 px-5 py-4 text-left transition hover:bg-slate-900/30 lg:grid-cols-[minmax(180px,1.15fr)_115px_155px_minmax(180px,1fr)_90px] lg:items-center"
+                                      className={`relative grid w-full gap-3 border-l-4 px-5 py-4 text-left transition-colors lg:grid-cols-[minmax(180px,1.15fr)_115px_155px_minmax(180px,1fr)_90px] lg:items-center ${rowTone.row}`}
                                     >
                                       <div className="flex min-w-0 items-center gap-3">
-                                        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-blue-500/20 bg-blue-500/10 text-[10px] font-black text-blue-300">
+                                        <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-full border text-xs font-black ${rowTone.avatar}`}>
                                           {initials || "—"}
                                         </div>
                                         <div className="min-w-0">
                                           <p className="truncate text-xs font-black text-white">
                                             {customerName(inquiry)}
                                           </p>
-                                          <p className="mt-1 truncate text-[9px] text-slate-600">
+                                          <p className={`mt-1 truncate text-[11px] ${rowTone.detail}`}>
                                             Sak #{inquiry.id}
                                           </p>
                                         </div>
                                       </div>
 
-                                      <span className="w-fit rounded-lg border border-slate-700 bg-slate-950/50 px-2.5 py-1 text-[9px] font-bold text-slate-300">
+                                      <span className="w-fit rounded-lg border border-slate-700 bg-slate-950/50 px-2.5 py-1 text-[11px] font-bold text-slate-300">
                                         {inquiry.stage === "digital_befaring"
                                           ? "Digital"
                                           : serviceLabel(
@@ -6151,16 +6184,16 @@ export default function ProjectManagerDashboard({
                                       </span>
 
                                       <span
-                                        className={`w-fit rounded-lg border px-2.5 py-1 text-[9px] font-bold ${progressClass}`}
+                                        className={`w-fit rounded-lg border px-2.5 py-1 text-[11px] font-bold ${progressClass}`}
                                       >
                                         {progress.label}
                                       </span>
 
-                                      <p className="truncate text-[10px] font-bold text-slate-300">
+                                      <p className="truncate text-xs font-bold text-slate-300">
                                         {progressNextAction(inquiry, booking)}
                                       </p>
 
-                                      <p className="text-[10px] text-slate-400">
+                                      <p className="text-xs text-slate-200">
                                         {booking
                                           ? booking.toLocaleTimeString("nb-NO", {
                                               hour: "2-digit",
@@ -6174,17 +6207,17 @@ export default function ProjectManagerDashboard({
 
                                 {visibleActive.length === 0 && (
                                   <div className="px-5 py-12 text-center">
-                                    <Briefcase className="mx-auto h-8 w-8 text-slate-700" />
-                                    <p className="mt-3 text-xs text-slate-500">
+                                    <Briefcase className="mx-auto h-8 w-8 text-slate-400" />
+                                    <p className="mt-3 text-xs text-slate-300">
                                       Ingen aktive oppdrag i valgt filter.
                                     </p>
                                   </div>
                                 )}
                               </div>
 
-                              <div className="flex items-center justify-between border-t border-slate-800 px-5 py-3 text-[10px] text-slate-500">
+                              <div className="flex items-center justify-between border-t border-slate-800 px-5 py-3 text-xs text-slate-300">
                                 <span>
-                                  Viser inntil 5 aktive saker
+                                  Viser alle {visibleActive.length} aktive saker
                                 </span>
                                 <button
                                   type="button"
@@ -6225,19 +6258,19 @@ export default function ProjectManagerDashboard({
                                         </div>
 
                                         <div className="min-w-0 flex-1">
-                                          <p className="truncate text-[10px] font-black text-slate-200">
+                                          <p className="truncate text-xs font-black text-slate-200">
                                             {progress.label}
                                           </p>
-                                          <p className="mt-1 truncate text-[9px] text-slate-600">
+                                          <p className="mt-1 truncate text-[11px] text-slate-400">
                                             {customerName(inquiry)} · Sak #{inquiry.id}
                                           </p>
                                         </div>
 
                                         <div className="shrink-0 text-right">
-                                          <p className="text-[9px] text-slate-400">
+                                          <p className="text-[11px] text-slate-200">
                                             {booking.toLocaleDateString("nb-NO")}
                                           </p>
-                                          <p className="mt-1 text-[9px] text-slate-600">
+                                          <p className="mt-1 text-[11px] text-slate-400">
                                             {booking.toLocaleTimeString("nb-NO", {
                                               hour: "2-digit",
                                               minute: "2-digit",
@@ -6250,7 +6283,7 @@ export default function ProjectManagerDashboard({
 
                                 {scheduledInquiries.length === 0 && (
                                   <div className="px-5 py-10 text-center">
-                                    <p className="text-xs text-slate-500">
+                                    <p className="text-xs text-slate-300">
                                       Ingen aktivitet å vise.
                                     </p>
                                   </div>
@@ -6266,9 +6299,9 @@ export default function ProjectManagerDashboard({
                 })()}
               </>
             ) : (
-              <section className="bg-[#091423] border border-slate-800 rounded-2xl p-5 md:p-6 space-y-5">
-                <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-800/80 pb-4"><div><h2 className="text-xl font-black flex items-center gap-2"><CalendarDays className="w-5 h-5 text-[#F5B800]" /> Kalender</h2><p className="text-[11px] text-slate-400 mt-1">Alle avtalte oppdrag med dato og klokkeslett.</p></div><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => setOverviewDisplay("liste")} className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-slate-300 hover:text-white">Til liste</button><button type="button" onClick={() => setCalendarCursor(new Date())} className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-slate-300 hover:text-white">I dag</button><div className="flex items-center bg-slate-950 border border-slate-800 rounded-xl overflow-hidden"><button type="button" onClick={() => moveCalendar(-1)} className="p-2.5 text-slate-400 hover:text-white hover:bg-slate-900"><ChevronLeft className="w-4 h-4" /></button><div className="min-w-[180px] px-3 text-center text-xs font-extrabold capitalize">{calendarTitle}</div><button type="button" onClick={() => moveCalendar(1)} className="p-2.5 text-slate-400 hover:text-white hover:bg-slate-900"><ChevronRight className="w-4 h-4" /></button></div><div className="flex items-center bg-slate-950 border border-slate-800 rounded-xl p-1">{([ ["maaned", "Måned"], ["uke", "Uke"], ["dag", "Dag"] ] as [CalendarView, string][]).map(([value, label]) => <button key={value} type="button" onClick={() => setCalendarView(value)} className={`px-3 py-1.5 rounded-lg text-[11px] font-extrabold transition-all ${calendarView === value ? "bg-[#F5B800] text-slate-950" : "text-slate-400 hover:text-white"}`}>{label}</button>)}</div></div></div>
-                {scheduledInquiries.length === 0 ? <div className="py-10 text-center text-xs text-slate-500">Ingen avtalte oppdrag med dato og klokkeslett.</div> : calendarView === "maaned" ? <div><div className="grid grid-cols-7 border-b border-slate-800 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold">{["Man","Tir","Ons","Tor","Fre","Lør","Søn"].map((day) => <div key={day} className="px-2 py-2">{day}</div>)}</div><div className="grid grid-cols-7 border-l border-t border-slate-800">{monthDays.map((day) => { const events = scheduledInquiries.filter((item) => sameDay(item.booking, day)); const isCurrentMonth = day.getMonth() === calendarCursor.getMonth(); const isToday = sameDay(day, new Date()); return <div key={day.toISOString()} className={`min-h-[112px] border-r border-b border-slate-800 p-2 ${isCurrentMonth ? "bg-slate-950/30" : "bg-slate-950/10"}`}><div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold ${isToday ? "bg-[#F5B800] text-slate-950" : isCurrentMonth ? "text-slate-300" : "text-slate-700"}`}>{day.getDate()}</div><div className="space-y-1 mt-1">{events.slice(0,3).map(({inquiry,booking}) => <button key={inquiry.id} type="button" onClick={() => openInquiry(inquiry)} className="w-full text-left rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-1.5 hover:bg-amber-500/20"><div className="text-[10px] font-black text-amber-400">{booking.toLocaleTimeString("nb-NO", {hour:"2-digit",minute:"2-digit"})} · #{inquiry.id}</div><div className="text-[10px] text-slate-200 truncate mt-0.5">{customerName(inquiry)}</div></button>)}</div></div>; })}</div></div> : calendarView === "uke" ? <div className="grid grid-cols-1 md:grid-cols-7 gap-2">{weekDays.map((day) => { const events = scheduledInquiries.filter((item) => sameDay(item.booking, day)); const isToday = sameDay(day, new Date()); return <div key={day.toISOString()} className={`rounded-2xl border p-3 min-h-[180px] ${isToday ? "border-amber-500/40 bg-amber-500/5" : "border-slate-800 bg-slate-950/40"}`}><div className="border-b border-slate-800 pb-2 mb-2"><div className="text-[10px] uppercase font-extrabold text-slate-500">{new Intl.DateTimeFormat("nb-NO", {weekday:"short"}).format(day)}</div><div className="text-lg font-black">{day.getDate()}</div></div><div className="space-y-2">{events.length === 0 ? <p className="text-[10px] text-slate-600">Ingen avtaler</p> : events.map(({inquiry,booking}) => <button key={inquiry.id} type="button" onClick={() => openInquiry(inquiry)} className="w-full text-left rounded-xl bg-slate-900 border border-slate-800 p-2 hover:border-amber-500/40"><div className="text-[10px] font-black text-amber-400">{booking.toLocaleTimeString("nb-NO", {hour:"2-digit",minute:"2-digit"})}</div><div className="text-[10px] font-bold text-white truncate mt-1">{customerName(inquiry)}</div></button>)}</div></div>; })}</div> : <div className="space-y-2">{scheduledInquiries.filter((item) => sameDay(item.booking, calendarCursor)).map(({inquiry,booking}) => <button key={inquiry.id} type="button" onClick={() => openInquiry(inquiry)} className="w-full bg-slate-950 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-4 text-left"><div className="w-20 shrink-0"><div className="text-xl font-black text-amber-400">{booking.toLocaleTimeString("nb-NO", {hour:"2-digit",minute:"2-digit"})}</div></div><div className="flex-1 min-w-0"><div className="font-extrabold text-sm text-white">{customerName(inquiry)} · Oppdrag #{inquiry.id}</div><div className="text-[11px] text-slate-400 mt-1">{fullAddress(inquiry)}</div></div><ArrowUpRight className="w-4 h-4 text-slate-500" /></button>)}</div>}
+              <section className="bg-[#241610] border border-slate-800 rounded-2xl p-5 md:p-6 space-y-5">
+                <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-800/80 pb-4"><div><h2 className="text-xl font-black flex items-center gap-2"><CalendarDays className="w-5 h-5 text-orange-300" /> Kalender</h2><p className="text-[13px] text-slate-200 mt-1">Alle avtalte oppdrag med dato og klokkeslett.</p></div><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => setOverviewDisplay("liste")} className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-slate-300 hover:text-white">Til liste</button><button type="button" onClick={() => setCalendarCursor(new Date())} className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-slate-300 hover:text-white">I dag</button><div className="flex items-center bg-slate-950 border border-slate-800 rounded-xl overflow-hidden"><button type="button" onClick={() => moveCalendar(-1)} className="p-2.5 text-slate-200 hover:text-white hover:bg-slate-900"><ChevronLeft className="w-4 h-4" /></button><div className="min-w-[180px] px-3 text-center text-xs font-extrabold capitalize">{calendarTitle}</div><button type="button" onClick={() => moveCalendar(1)} className="p-2.5 text-slate-200 hover:text-white hover:bg-slate-900"><ChevronRight className="w-4 h-4" /></button></div><div className="flex items-center bg-slate-950 border border-slate-800 rounded-xl p-1">{([ ["maaned", "Måned"], ["uke", "Uke"], ["dag", "Dag"] ] as [CalendarView, string][]).map(([value, label]) => <button key={value} type="button" onClick={() => setCalendarView(value)} className={`px-3 py-1.5 rounded-lg text-[13px] font-extrabold transition-all ${calendarView === value ? "bg-[#ff951a] text-slate-950" : "text-slate-200 hover:text-white"}`}>{label}</button>)}</div></div></div>
+                {scheduledInquiries.length === 0 ? <div className="py-10 text-center text-xs text-slate-300">Ingen avtalte oppdrag med dato og klokkeslett.</div> : calendarView === "maaned" ? <div><div className="grid grid-cols-7 border-b border-slate-800 text-xs uppercase tracking-wider text-slate-300 font-extrabold">{["Man","Tir","Ons","Tor","Fre","Lør","Søn"].map((day) => <div key={day} className="px-2 py-2">{day}</div>)}</div><div className="grid grid-cols-7 border-l border-t border-slate-800">{monthDays.map((day) => { const events = scheduledInquiries.filter((item) => sameDay(item.booking, day)); const isCurrentMonth = day.getMonth() === calendarCursor.getMonth(); const isToday = sameDay(day, new Date()); return <div key={day.toISOString()} className={`min-h-[112px] border-r border-b border-slate-800 p-2 ${isCurrentMonth ? "bg-slate-950/30" : "bg-slate-950/10"}`}><div className={`w-7 h-7 rounded-full flex items-center justify-center text-[13px] font-bold ${isToday ? "bg-[#ff951a] text-slate-950" : isCurrentMonth ? "text-slate-300" : "text-slate-400"}`}>{day.getDate()}</div><div className="space-y-1 mt-1">{events.slice(0,3).map(({inquiry,booking}) => <button key={inquiry.id} type="button" onClick={() => openInquiry(inquiry)} className="w-full text-left rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-1.5 hover:bg-amber-500/20"><div className="text-xs font-black text-amber-400">{booking.toLocaleTimeString("nb-NO", {hour:"2-digit",minute:"2-digit"})} · #{inquiry.id}</div><div className="text-xs text-slate-200 truncate mt-0.5">{customerName(inquiry)}</div></button>)}</div></div>; })}</div></div> : calendarView === "uke" ? <div className="grid grid-cols-1 md:grid-cols-7 gap-2">{weekDays.map((day) => { const events = scheduledInquiries.filter((item) => sameDay(item.booking, day)); const isToday = sameDay(day, new Date()); return <div key={day.toISOString()} className={`rounded-2xl border p-3 min-h-[180px] ${isToday ? "border-amber-500/40 bg-amber-500/5" : "border-slate-800 bg-slate-950/40"}`}><div className="border-b border-slate-800 pb-2 mb-2"><div className="text-xs uppercase font-extrabold text-slate-300">{new Intl.DateTimeFormat("nb-NO", {weekday:"short"}).format(day)}</div><div className="text-lg font-black">{day.getDate()}</div></div><div className="space-y-2">{events.length === 0 ? <p className="text-xs text-slate-400">Ingen avtaler</p> : events.map(({inquiry,booking}) => <button key={inquiry.id} type="button" onClick={() => openInquiry(inquiry)} className="w-full text-left rounded-xl bg-slate-900 border border-slate-800 p-2 hover:border-amber-500/40"><div className="text-xs font-black text-amber-400">{booking.toLocaleTimeString("nb-NO", {hour:"2-digit",minute:"2-digit"})}</div><div className="text-xs font-bold text-white truncate mt-1">{customerName(inquiry)}</div></button>)}</div></div>; })}</div> : <div className="space-y-2">{scheduledInquiries.filter((item) => sameDay(item.booking, calendarCursor)).map(({inquiry,booking}) => <button key={inquiry.id} type="button" onClick={() => openInquiry(inquiry)} className="w-full bg-slate-950 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-4 text-left"><div className="w-20 shrink-0"><div className="text-xl font-black text-amber-400">{booking.toLocaleTimeString("nb-NO", {hour:"2-digit",minute:"2-digit"})}</div></div><div className="flex-1 min-w-0"><div className="font-extrabold text-sm text-white">{customerName(inquiry)} · Oppdrag #{inquiry.id}</div><div className="text-[13px] text-slate-200 mt-1">{fullAddress(inquiry)}</div></div><ArrowUpRight className="w-4 h-4 text-slate-300" /></button>)}</div>}
               </section>
             )}
 
@@ -6279,17 +6312,17 @@ export default function ProjectManagerDashboard({
                   if (e.currentTarget === e.target) setDetailInquiry(null);
                 }}
               >
-                <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-[#0b0f17] border border-slate-700 rounded-3xl shadow-2xl">
-                  <div className="sticky top-0 bg-[#0b0f17] border-b border-slate-800 px-6 py-5 flex items-start justify-between gap-4 z-10">
+                <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-[#211612] border border-slate-700 rounded-3xl shadow-2xl">
+                  <div className="sticky top-0 bg-[#211612] border-b border-slate-800 px-6 py-5 flex items-start justify-between gap-4 z-10">
                     <div>
-                      <p className="text-[10px] uppercase tracking-widest text-amber-400 font-extrabold">Oppdrag #{detailInquiry.id}</p>
+                      <p className="text-xs uppercase tracking-widest text-amber-400 font-extrabold">Oppdrag #{detailInquiry.id}</p>
                       <h3 className="text-xl font-extrabold text-white mt-1">{customerName(detailInquiry)}</h3>
-                      <p className="text-xs text-slate-400 mt-1">{serviceLabel(fieldServiceForInquiry(detailInquiry))}</p>
+                      <p className="text-xs text-slate-200 mt-1">{serviceLabel(fieldServiceForInquiry(detailInquiry))}</p>
                     </div>
                     <button
                       type="button"
                       onClick={() => setDetailInquiry(null)}
-                      className="w-9 h-9 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 hover:text-white hover:border-slate-600 text-xl leading-none"
+                      className="w-9 h-9 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 hover:text-white hover:border-slate-600 text-xl leading-none"
                       aria-label="Lukk detaljer"
                     >
                       ×
@@ -6299,15 +6332,15 @@ export default function ProjectManagerDashboard({
                   <div className="p-6 space-y-5">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
-                        <span className="text-[9px] uppercase tracking-wider text-slate-500 font-extrabold">Dato og tid</span>
+                        <span className="text-[11px] uppercase tracking-wider text-slate-300 font-extrabold">Dato og tid</span>
                         <p className="text-sm text-amber-400 font-extrabold mt-1">{formatBooking(parseInquiryBooking(detailInquiry))}</p>
                       </div>
                       <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
-                        <span className="text-[9px] uppercase tracking-wider text-slate-500 font-extrabold">Fase / status</span>
+                        <span className="text-[11px] uppercase tracking-wider text-slate-300 font-extrabold">Fase / status</span>
                         <p className="text-sm text-white font-bold mt-1">{stageLabel(detailInquiry.stage)} · {detailInquiry.status || "planlagt"}</p>
                       </div>
                       <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 sm:col-span-2">
-                        <span className="text-[9px] uppercase tracking-wider text-slate-500 font-extrabold">Adresse</span>
+                        <span className="text-[11px] uppercase tracking-wider text-slate-300 font-extrabold">Adresse</span>
                         <p className="text-sm text-slate-200 font-bold mt-1">
                           {streetAddress(detailInquiry) || "Ikke oppgitt"}
                         </p>
@@ -6318,26 +6351,26 @@ export default function ProjectManagerDashboard({
                         )}
                       </div>
                       <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
-                        <span className="text-[9px] uppercase tracking-wider text-slate-500 font-extrabold">Telefon</span>
+                        <span className="text-[11px] uppercase tracking-wider text-slate-300 font-extrabold">Telefon</span>
                         <p className="text-sm text-slate-200 font-bold mt-1">{detailInquiry.phone || "Ikke oppgitt"}</p>
                       </div>
                       <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
-                        <span className="text-[9px] uppercase tracking-wider text-slate-500 font-extrabold">E-post</span>
+                        <span className="text-[11px] uppercase tracking-wider text-slate-300 font-extrabold">E-post</span>
                         <p className="text-sm text-slate-200 font-bold mt-1 break-all">{detailInquiry.email || "Ikke oppgitt"}</p>
                       </div>
                       <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
-                        <span className="text-[9px] uppercase tracking-wider text-slate-500 font-extrabold">Taktype</span>
+                        <span className="text-[11px] uppercase tracking-wider text-slate-300 font-extrabold">Taktype</span>
                         <p className="text-sm text-slate-200 font-bold mt-1">{detailInquiry.roof_type || detailInquiry.roofType || "Ikke oppgitt"}</p>
                       </div>
                       <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
-                        <span className="text-[9px] uppercase tracking-wider text-slate-500 font-extrabold">Bygningstype</span>
+                        <span className="text-[11px] uppercase tracking-wider text-slate-300 font-extrabold">Bygningstype</span>
                         <p className="text-sm text-slate-200 font-bold mt-1">{detailInquiry.building_type || "Ikke oppgitt"}</p>
                       </div>
                     </div>
 
                     {detailInquiry.notes && (
                       <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
-                        <span className="text-[9px] uppercase tracking-wider text-slate-500 font-extrabold">Oppdragsnotater</span>
+                        <span className="text-[11px] uppercase tracking-wider text-slate-300 font-extrabold">Oppdragsnotater</span>
                         <p className="text-xs text-slate-300 whitespace-pre-wrap leading-5 mt-2">{detailInquiry.notes}</p>
                       </div>
                     )}
@@ -6373,7 +6406,7 @@ export default function ProjectManagerDashboard({
                           setDetailInquiry(null);
                           openInquiry(inquiry);
                         }}
-                        className="px-4 py-2.5 rounded-xl bg-[#F5B800] hover:bg-amber-400 text-slate-950 text-xs font-extrabold flex items-center justify-center gap-2"
+                        className="px-4 py-2.5 rounded-xl bg-[#ff951a] hover:bg-orange-400 text-slate-950 text-xs font-extrabold flex items-center justify-center gap-2"
                       >
                         Åpne oppdrag
                         <ArrowUpRight className="w-4 h-4" />
@@ -6408,10 +6441,53 @@ export default function ProjectManagerDashboard({
               </button>
             </div>
 
+            {!isDigitalInspection && (
+              <section
+                aria-label="Arbeidsstatus og navigasjon"
+                className="sticky top-[76px] z-30 flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-[#1e1411]/95 p-3 shadow-[0_12px_35px_rgba(0,0,0,0.16)] backdrop-blur-xl"
+              >
+                <button
+                  type="button"
+                  onClick={() => setFieldWorkspaceTab("oversikt")}
+                  aria-current={fieldWorkspaceTab === "oversikt" ? "page" : undefined}
+                  title="Gå tilbake til oppdragsoversikten"
+                  className={`mr-2 rounded-lg px-1 py-2 text-xs font-black uppercase tracking-wide transition-colors ${fieldWorkspaceTab === "oversikt" ? "text-orange-300" : "text-stone-200 hover:text-orange-300"}`}
+                >
+                  Arbeidsstatus
+                </button>
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-teal-500/10 px-3 py-2 text-xs font-semibold text-teal-200">
+                  <ClipboardCheck className="h-3.5 w-3.5" />{checklistDone}/{checklistTotal} kontrollpunkter
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-200">
+                  <AlertTriangle className="h-3.5 w-3.5" />{checklistDeviations} avvik
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-violet-500/10 px-3 py-2 text-xs font-semibold text-violet-200">
+                  <FileText className="h-3.5 w-3.5" />{documentOverview[String(normalizeInquiryId(overviewInquiry.id))] ?? 0} bilder
+                </span>
+                <div className="ml-auto flex flex-wrap gap-2">
+                  {([
+                    { key: "kontroll", title: overviewInquiry.recommended_service === "service" ? "Arbeid" : "Kontroll", icon: Wrench },
+                    { key: "dokumentasjon", title: "Dokumentasjon", icon: Camera },
+                    { key: "rapport", title: "Rapport", icon: FileText },
+                  ] as const).map(({ key, title, icon: Icon }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setFieldWorkspaceTab(key)}
+                      aria-current={fieldWorkspaceTab === key ? "page" : undefined}
+                      className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition-colors ${fieldWorkspaceTab === key ? "border-orange-400/55 bg-orange-500/15 text-orange-200" : "border-white/15 bg-black/10 text-white hover:border-orange-400/40 hover:bg-white/10"}`}
+                    >
+                      <Icon className="h-4 w-4" />{title}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+
             {overviewInquiry &&
               (isDigitalInspection || fieldWorkspaceTab === "oversikt") && (
               <div className="space-y-5">
-                <section className="overflow-hidden rounded-[28px] border border-slate-800 bg-gradient-to-br from-[#0b1b2c] via-[#0a1726] to-[#08121f] shadow-[0_24px_80px_rgba(0,0,0,0.22)]">
+                <section className="overflow-hidden rounded-[28px] border border-slate-800 bg-gradient-to-br from-[#322017] via-[#251813] to-[#1d120f] shadow-[0_24px_80px_rgba(0,0,0,0.22)]">
                   <div className="grid lg:grid-cols-[minmax(0,1fr)_320px]">
                     <div className="flex flex-col gap-5 p-5 sm:flex-row sm:items-center md:p-6">
                       {propertyImage?.image_url ? (
@@ -6639,214 +6715,23 @@ export default function ProjectManagerDashboard({
                 </section>
 
 
-                <section className="overflow-hidden rounded-[26px] border border-cyan-500/25 bg-[#0a1624]">
-                  <div className="flex flex-col gap-3 border-b border-slate-800/80 px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-6">
-                    <div>
-                      <p className="text-[9px] font-black uppercase tracking-[0.16em] text-cyan-400">
-                        Kundens bestilling
-                      </p>
-                      <h3 className="mt-1 text-base font-black text-white">
-                        Opprinnelige opplysninger fra kunden
-                      </h3>
-                      <p className="mt-1 text-[10px] text-slate-500">
-                        Dette er informasjonen som ble sendt inn da saken ble opprettet.
-                      </p>
-                    </div>
-
-                    <span className="self-start rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1.5 text-[10px] font-black text-cyan-300">
-                      {inquiryTypeLabel(overviewInquiry.inquiry_type)}
-                    </span>
-                  </div>
-
-                  <div className="p-5 md:p-6">
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
-                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
-                          Kundetype
-                        </p>
-                        <p className="mt-1 text-xs font-black text-slate-200">
-                          {overviewInquiry.customer_type || "Ikke oppgitt"}
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
-                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
-                          Bygning
-                        </p>
-                        <p className="mt-1 text-xs font-black text-slate-200">
-                          {humanizeOrderValue(
-                            overviewOrderNotes?.building ||
-                              overviewInquiry.building_type
-                          )}
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
-                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
-                          Taktype
-                        </p>
-                        <p className="mt-1 text-xs font-black text-slate-200">
-                          {overviewOrderNotes?.roofType ||
-                            overviewInquiry.roof_type ||
-                            overviewInquiry.roofType ||
-                            "Ikke oppgitt"}
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
-                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
-                          Skadested
-                        </p>
-                        <p className="mt-1 text-xs font-black text-slate-200">
-                          {humanizeOrderValue(
-                            overviewOrderNotes?.damageLocation
-                          )}
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
-                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
-                          Bilder / dokumentasjon
-                        </p>
-                        <p className="mt-1 text-xs font-black text-slate-200">
-                          {overviewOrderNotes?.documentation || "Ikke oppgitt"}
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
-                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
-                          Pris oppgitt ved bestilling
-                        </p>
-                        <p className="mt-1 text-xs font-black text-amber-300">
-                          {overviewInquiry.estimated_price || "Ikke oppgitt"}
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
-                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
-                          Telefon
-                        </p>
-                        <p className="mt-1 text-xs font-black text-slate-200">
-                          {overviewInquiry.phone || "Ikke oppgitt"}
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4">
-                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
-                          Registrert
-                        </p>
-                        <p className="mt-1 text-xs font-black text-slate-200">
-                          {formatOrderDateTime(overviewInquiry.created_at)}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-                      <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.035] p-5">
-                        <p className="text-[9px] font-black uppercase tracking-wider text-amber-400">
-                          Kundens beskrivelse
-                        </p>
-
-                        <p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-slate-200">
-                          {overviewOrderNotes?.description ||
-                            overviewInquiry.notes ||
-                            "Ingen beskrivelse registrert."}
-                        </p>
-                      </div>
-
-                      <div className="space-y-3">
-                        <div className="rounded-2xl border border-slate-800 bg-slate-950/45 p-4">
-                          <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
-                            Kontakt
-                          </p>
-                          <p className="mt-2 text-xs font-black text-white">
-                            {customerName(overviewInquiry)}
-                          </p>
-                          <p className="mt-1 text-[11px] text-slate-400">
-                            {overviewInquiry.phone || "Telefon ikke oppgitt"}
-                          </p>
-                          <p className="mt-1 break-all text-[11px] text-slate-400">
-                            {overviewInquiry.email || "E-post ikke oppgitt"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-slate-800 bg-slate-950/45 p-4">
-                          <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
-                            Adresse oppgitt i saken
-                          </p>
-                          <p className="mt-2 text-xs font-black text-white">
-                            {streetAddress(overviewInquiry) || "Ikke oppgitt"}
-                          </p>
-                          <p className="mt-1 text-[11px] text-slate-400">
-                            {postalPlace(overviewInquiry)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {overviewOrderNotes?.changeLog && (
-                      <div className="mt-4 rounded-2xl border border-violet-500/25 bg-violet-500/[0.04] p-4">
-                        <p className="text-[9px] font-black uppercase tracking-wider text-violet-300">
-                          Endringer registrert etter bestilling
-                        </p>
-                        <p className="mt-2 whitespace-pre-wrap text-[11px] leading-5 text-slate-300">
-                          {overviewOrderNotes.changeLog}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </section>
-
-                <section className="rounded-2xl border border-slate-800 bg-[#0a1624] p-3">
-                  <div className="flex gap-2 overflow-x-auto">
-                    {[
-                      {
-                        id: "oversikt",
-                        label: "Oversikt",
-                        icon: <Briefcase className="h-4 w-4" />,
-                      },
-                      {
-                        id: "kontroll",
-                        label: overviewInquiry.recommended_service === "service"
-                          ? "Arbeid"
-                          : "Kontroll",
-                        icon: <Wrench className="h-4 w-4" />,
-                      },
-                      {
-                        id: "dokumentasjon",
-                        label: "Dokumentasjon",
-                        icon: <FolderOpen className="h-4 w-4" />,
-                      },
-                      {
-                        id: "rapport",
-                        label: completionReport ? "Rapport 2" : "Rapport",
-                        icon: <FileText className="h-4 w-4" />,
-                      },
-                    ].map((item) => {
-                      const active = fieldWorkspaceTab === item.id;
-
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() =>
-                            setFieldWorkspaceTab(
-                              item.id as FieldWorkspaceTab
-                            )
-                          }
-                          className={`inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-3 text-xs font-black transition ${
-                            active
-                              ? "border-blue-500/35 bg-blue-500/10 text-blue-300"
-                              : "border-slate-800 bg-slate-950/50 text-slate-400 hover:border-slate-700 hover:text-white"
-                          }`}
-                        >
-                          {item.icon}
-                          {item.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </section>
+                <InquiryWorkflowOverview
+                  hideWorkStatus
+                  inquiry={overviewInquiry}
+                  approvalState={approvalStates[String(normalizeInquiryId(overviewInquiry.id))]}
+                  reportStatus={report?.status}
+                  canReviewReport={!onBackToAdmin && Boolean(window.localStorage.getItem("taklekkasjevakten_project_manager_session"))}
+                  checklistCompleted={checklistDone}
+                  checklistTotal={checklistTotal}
+                  deviations={checklistDeviations}
+                  photosCount={documentOverview[String(normalizeInquiryId(overviewInquiry.id))] ?? 0}
+                  bookingLabel={confirmedBooking(overviewInquiry) ? formatBooking(confirmedBooking(overviewInquiry)) : null}
+                  onOpenApproval={() => openApproval(overviewInquiry)}
+                  onOpenReport={() => setFieldWorkspaceTab("rapport")}
+                  onOpenControl={() => setFieldWorkspaceTab("kontroll")}
+                  onOpenDocumentation={() => setFieldWorkspaceTab("dokumentasjon")}
+                  onOpenSchedule={() => setFieldWorkspaceTab("oversikt")}
+                />
               </div>
             )}
 
@@ -6860,7 +6745,7 @@ export default function ProjectManagerDashboard({
               overviewStandardTemplate &&
               (overviewInquiryStatus === "tildelt_prosjektansvarlig" ||
                 !fieldSchedule) && (
-                <section className="overflow-hidden rounded-[26px] border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.07] via-[#0a1624] to-[#08111d]">
+                <section className="overflow-hidden rounded-[26px] border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.07] via-[#241711] to-[#211410]">
                   <div className="border-b border-slate-800/80 p-5 md:p-6">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div>
@@ -7127,7 +7012,7 @@ export default function ProjectManagerDashboard({
                                   scheduleStartTime
                             ))
                         }
-                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-5 py-3 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#ff951a] px-5 py-3 text-xs font-black text-slate-950 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {sendingStandardOffer ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -7178,11 +7063,12 @@ export default function ProjectManagerDashboard({
               )}
 
                         {overviewInquiry.recommended_service &&
+              !initialFieldworkFinished &&
               (isDigitalInspection || fieldWorkspaceTab === "oversikt") &&
               ["tilbud_akseptert", "planlagt"].includes(
                 overviewInquiryStatus
               ) && (
-                <section className="relative overflow-hidden rounded-[26px] border border-slate-800 bg-[#0a1421] shadow-[0_18px_60px_rgba(0,0,0,0.18)]">
+                <section className="relative overflow-hidden rounded-[26px] border border-slate-800 bg-[#261812] shadow-[0_18px_60px_rgba(0,0,0,0.18)]">
                   <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-400/70" />
                   <div className="p-5 md:p-6 md:pl-7">
                     <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -7456,7 +7342,7 @@ export default function ProjectManagerDashboard({
                                 !scheduleDate ||
                                 !scheduleStartTime
                               }
-                              className="px-5 py-3 bg-[#F5B800] hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black flex items-center justify-center gap-2 disabled:opacity-50"
+                              className="px-5 py-3 bg-[#ff951a] hover:bg-orange-400 text-slate-950 rounded-xl text-xs font-black flex items-center justify-center gap-2 disabled:opacity-50"
                             >
                               {savingFieldSchedule ? (
                                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -7474,204 +7360,6 @@ export default function ProjectManagerDashboard({
                   )}
                 </section>
               )}
-
-            {!isDigitalInspection && (
-              <>
-                <section className="sticky top-[76px] z-30 rounded-2xl border border-slate-800/90 bg-[#08111d]/95 p-1.5 backdrop-blur-xl shadow-[0_12px_35px_rgba(0,0,0,0.16)]">
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                    {([
-                      {
-                        key: "oversikt",
-                        label: "Oversikt",
-                        icon: Briefcase,
-                        meta:
-                          overviewInquiryStatus ===
-                          "planlagt"
-                            ? "Planlagt"
-                            : stageLabel(overviewInquiry.stage),
-                      },
-                      {
-                        key: "kontroll",
-                        label:
-                          overviewInquiry.recommended_service === "service"
-                            ? "Arbeid"
-                            : "Kontroll",
-                        icon:
-                          overviewInquiry.recommended_service === "service"
-                            ? Wrench
-                            : ClipboardCheck,
-                        meta:
-                          overviewInquiry.recommended_service === "service"
-                            ? "Tiltak og sluttkontroll"
-                            : `${checklistDone} registrert`,
-                      },
-                      {
-                        key: "rapport",
-                        label: "Rapport & videre",
-                        icon: FileText,
-                        meta:
-                          report?.status === "publisert"
-                            ? "Velg neste steg"
-                            : reportStatusLabel(report?.status),
-                      },
-                    ] as {
-                      key: FieldWorkspaceTab;
-                      label: string;
-                      icon: typeof Briefcase;
-                      meta: string;
-                    }[]).map((item) => {
-                      const Icon = item.icon;
-                      const active = fieldWorkspaceTab === item.key;
-
-                      return (
-                        <button
-                          key={item.key}
-                          type="button"
-                          onClick={() => setFieldWorkspaceTab(item.key)}
-                          className={`rounded-xl px-3 py-3 text-left transition-all border ${
-                            active
-                              ? "bg-blue-500/10 border-blue-500/50"
-                              : "bg-slate-950/55 border-transparent hover:border-slate-700"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <Icon
-                              className={`w-4 h-4 ${
-                                active ? "text-blue-400" : "text-slate-500"
-                              }`}
-                            />
-                            <span
-                              className={`text-xs font-black ${
-                                active ? "text-white" : "text-slate-400"
-                              }`}
-                            >
-                              {item.label}
-                            </span>
-                          </div>
-                          <p className="text-[9px] text-slate-600 mt-1.5 truncate">
-                            {item.meta}
-                          </p>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </section>
-
-                {fieldWorkspaceTab === "oversikt" && (
-                  <section className="bg-[#0b0f17] border border-blue-500/25 rounded-2xl p-5">
-                    <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-5">
-                      <div>
-                        <p className="text-[9px] uppercase tracking-wider font-black text-amber-400">
-                          Neste handling
-                        </p>
-                        <h3 className="text-lg font-black text-white mt-1">
-                          {report?.status === "utkast"
-                            ? "Ferdigstill rapport og videre anbefaling"
-                            : report?.status === "sendt_til_admin" ||
-                              report?.status === "under_gjennomgang"
-                            ? "Venter på admin-gjennomgang"
-                            : report?.status === "returnert_til_prosjektansvarlig"
-                            ? "Rapport returnert – korrigering kreves"
-                            : report?.status === "godkjent"
-                            ? "Rapport godkjent – klar for publisering"
-                            : report?.status === "publisert"
-                            ? followUpWorkAuthorized
-                              ? `${serviceLabel(
-                                  fieldSchedule?.service ||
-                                    followUpOffer?.service ||
-                                    "service"
-                                )} er avtalt – fortsett til arbeid`
-                              : followUpWaitingForCustomer
-                              ? "Videre oppfølging sendt – venter på kunden"
-                              : "Rapport publisert – velg videre oppfølging"
-                            : checklistComplete
-                            ? "Kontrollen er ferdig – opprett rapport"
-                            : overviewInquiryStatus === "planlagt"
-                            ? `${serviceLabel(fieldServiceForInquiry(overviewInquiry))} er klar for gjennomføring`
-                            : `Fortsett ${serviceLabel(fieldServiceForInquiry(overviewInquiry)).toLowerCase()}`}
-                        </h3>
-                        <p className="text-xs text-slate-400 mt-1">
-                          Systemet viser neste relevante steg i saken.
-                        </p>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-                        <span className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-[#08111d] px-3 py-2 text-[10px] font-bold text-slate-400">
-                          <ClipboardCheck className="h-3.5 w-3.5 text-cyan-400" />
-                          {overviewInquiry.recommended_service === "service"
-                            ? "Arbeid registreres mot rapporttiltak"
-                            : `${checklistDone}/${checklistTotal || 0} kontrollert`}
-                        </span>
-
-                        {overviewInquiry.recommended_service !== "service" && (
-                          <span className="inline-flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] px-3 py-2 text-[10px] font-bold text-amber-300">
-                            <AlertTriangle className="h-3.5 w-3.5" />
-                            {checklistDeviations} avvik
-                          </span>
-                        )}
-
-                        <span className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-[#08111d] px-3 py-2 text-[10px] font-bold text-slate-400">
-                          <FileText className="h-3.5 w-3.5 text-blue-400" />
-                          {reportStatusLabel(report?.status)}
-                        </span>
-                        {reportPublished && loadingFollowUpOffer && (
-                          <span className="inline-flex items-center gap-1.5 rounded-xl border border-slate-800 bg-[#08111d] px-3 py-2 text-[10px] font-bold text-slate-500">
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Sjekker oppfølging
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="mt-6 pt-5 border-t border-slate-800/80 flex flex-col sm:flex-row gap-2.5 sm:justify-end">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setFieldWorkspaceTab(
-                            report?.status === "publisert" && followUpWorkAuthorized
-                              ? "kontroll"
-                              : report?.status === "publisert" ||
-                                report ||
-                                checklistComplete
-                              ? "rapport"
-                              : "kontroll"
-                          )
-                        }
-                        className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black flex items-center justify-center gap-2"
-                      >
-                        {report || checklistComplete ? (
-                          <FileText className="w-4 h-4" />
-                        ) : overviewInquiry.recommended_service === "service" ? (
-                          <Wrench className="w-4 h-4" />
-                        ) : (
-                          <ClipboardCheck className="w-4 h-4" />
-                        )}
-                        {report?.status === "publisert"
-                          ? followUpWorkAuthorized
-                            ? "Fortsett til arbeid"
-                            : followUpWaitingForCustomer
-                            ? "Se oppfølgingsstatus"
-                            : "Velg videre oppfølging"
-                          : report || checklistComplete
-                          ? "Fortsett rapportarbeid"
-                          : overviewInquiry.recommended_service === "service"
-                          ? "Åpne arbeidsnotater"
-                          : "Åpne teknisk kontroll"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setFieldWorkspaceTab("dokumentasjon")}
-                        className="px-5 py-3 rounded-xl bg-slate-950/70 border border-slate-700 hover:border-slate-600 text-slate-200 text-xs font-extrabold flex items-center justify-center gap-2 transition-colors"
-                      >
-                        <Camera className="w-4 h-4" />
-                        Dokumentasjon
-                      </button>
-                    </div>
-                  </section>
-                )}
-
-              </>
-            )}
 
             {!isDigitalInspection ? (
               fieldWorkspaceTab === "kontroll" ? (
@@ -7754,7 +7442,7 @@ export default function ProjectManagerDashboard({
               <section className="rounded-3xl border border-slate-200 bg-white p-5 md:p-6 text-slate-950 shadow-sm">
                 <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-start lg:justify-between">
                   <div>
-                    <p className="text-[9px] font-black uppercase tracking-wider text-[#F5B800]">
+                    <p className="text-[9px] font-black uppercase tracking-wider text-orange-300">
                       Kontrolloppsummering
                     </p>
                     <h3 className="mt-1 text-lg font-black">
@@ -7847,7 +7535,7 @@ export default function ProjectManagerDashboard({
                       type="button"
                       disabled={!checklistComplete || generatingPdf}
                       onClick={openPdfPreview}
-                      className="rounded-xl bg-[#F5B800] px-5 py-2.5 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40 flex items-center justify-center gap-2"
+                      className="rounded-xl bg-[#ff951a] px-5 py-2.5 text-xs font-black text-slate-950 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-40 flex items-center justify-center gap-2"
                     >
                       {generatingPdf ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -7869,7 +7557,7 @@ export default function ProjectManagerDashboard({
                   !digitalInspectionSlots.some(
                     (slot) => slot.status === "valgt"
                   ) && (
-                  <section className="bg-[#0b0f17] border border-amber-500/30 rounded-3xl p-6 space-y-5">
+                  <section className="bg-[#211612] border border-amber-500/30 rounded-3xl p-6 space-y-5">
                     <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 border-b border-slate-800/80 pb-4">
                       <div>
                         <div className="flex items-center gap-2">
@@ -7973,7 +7661,7 @@ export default function ProjectManagerDashboard({
                             savingDigitalSlots ||
                             selectedDigitalSlotKeys.length < 3
                           }
-                          className="px-5 py-2.5 rounded-xl bg-[#F5B800] hover:bg-amber-400 text-slate-950 text-xs font-black flex items-center justify-center gap-2 disabled:opacity-50"
+                          className="px-5 py-2.5 rounded-xl bg-[#ff951a] hover:bg-orange-400 text-slate-950 text-xs font-black flex items-center justify-center gap-2 disabled:opacity-50"
                         >
                           {savingDigitalSlots ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -7987,7 +7675,7 @@ export default function ProjectManagerDashboard({
                   </section>
                 )}
 
-                <section className="bg-[#0b0f17] border border-emerald-500/20 rounded-3xl overflow-hidden">
+                <section className="bg-[#211612] border border-emerald-500/20 rounded-3xl overflow-hidden">
                   <button
                     type="button"
                     onClick={() => setShowDigitalAssessment((prev) => !prev)}
@@ -8114,8 +7802,8 @@ export default function ProjectManagerDashboard({
                   if (e.currentTarget === e.target) setShowCustomerInfo(false);
                 }}
               >
-                <div className="w-full max-w-5xl max-h-[90vh] overflow-y-auto bg-[#0b0f17] border border-cyan-500/30 rounded-3xl shadow-2xl">
-                  <div className="sticky top-0 z-10 bg-[#0b0f17]/95 backdrop-blur border-b border-slate-800 px-5 md:px-6 py-4 flex items-start justify-between gap-4">
+                <div className="w-full max-w-5xl max-h-[90vh] overflow-y-auto bg-[#211612] border border-cyan-500/30 rounded-3xl shadow-2xl">
+                  <div className="sticky top-0 z-10 bg-[#211612]/95 backdrop-blur border-b border-slate-800 px-5 md:px-6 py-4 flex items-start justify-between gap-4">
                     <div>
                       <p className="text-[10px] uppercase tracking-wider font-black text-cyan-400">
                         Oppdrag #{overviewInquiry.id}
@@ -8262,9 +7950,45 @@ export default function ProjectManagerDashboard({
             {!isDigitalInspection &&
               fieldWorkspaceTab === "rapport" && (
               <>
+              {/* Rapport 1-godkjenning er uavhengig av den gamle rapportutkast-visningen.
+                  Core er autoritativ, og admin kan bare forhåndsvise. */}
+              {activeInquiryId && (
+                approvalStates[String(activeInquiryId)] === "awaiting_pm" ||
+                (reportLocked && Boolean(report))
+              ) && (
+                <ProjectManagerReportApproval
+                  key={`rapport1-review-${activeInquiryId}`}
+                  inquiryId={activeInquiryId}
+                  previewMode={Boolean(onBackToAdmin)}
+                  onUpdated={() => {
+                    setApprovalRefresh((value) => value + 1);
+                    void fetchInquiries();
+                    void fetchReport(activeInquiryId);
+                  }}
+                />
+              )}
+            {/* Når Rapport 1 ligger til faglig kontroll, er godkjenningspanelet
+                den eneste primære rapportflaten. Det gamle utkastkortet
+                skjules for å unngå dobbelt PDF, motstridende status og støy. */}
+            {approvalStates[String(normalizeInquiryId(overviewInquiry.id))] === "awaiting_pm" ? (
+              <div className="flex flex-col gap-3 rounded-2xl border border-orange-900/35 bg-[#211611] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" />
+                  <div>
+                    <p className="text-sm font-extrabold text-white">Rapporten er låst for faglig kontroll</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-300">PDF, gjennomgang, godkjenning og retur håndteres i panelet over. Kontrollgrunnlag og dokumentasjon finner du her.</p>
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <button type="button" onClick={() => setFieldWorkspaceTab("kontroll")} className="rounded-xl border border-slate-700 bg-[#30221b] px-4 py-2.5 text-xs font-bold text-white hover:border-amber-500/50">Se kontroll</button>
+                  <button type="button" onClick={() => setFieldWorkspaceTab("dokumentasjon")} className="rounded-xl border border-slate-700 bg-[#30221b] px-4 py-2.5 text-xs font-bold text-white hover:border-amber-500/50">Se dokumentasjon</button>
+                </div>
+              </div>
+            ) : (
+              <>
             {overviewInquiry.recommended_service === "service" && (
               <section className="space-y-4">
-                <div className="rounded-2xl border border-slate-800 bg-[#0b0f17] p-5">
+                <div className="rounded-2xl border border-slate-800 bg-[#211612] p-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">
@@ -8285,7 +8009,7 @@ export default function ProjectManagerDashboard({
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-cyan-500/30 bg-[#0b0f17] p-6">
+                <div className="rounded-2xl border border-cyan-500/30 bg-[#211612] p-6">
                   <div className="flex flex-col gap-4 border-b border-slate-800 pb-5 lg:flex-row lg:items-start lg:justify-between">
                     <div>
                       <p className="text-[9px] font-black uppercase tracking-[0.14em] text-cyan-300">
@@ -8406,7 +8130,7 @@ export default function ProjectManagerDashboard({
                           "publisert",
                         ].includes(completionReport.status)}
                         rows={24}
-                        className="w-full resize-y rounded-xl border border-slate-800 bg-[#08111d] p-4 text-xs leading-6 text-slate-200 outline-none focus:border-cyan-500/50 read-only:cursor-default read-only:opacity-90"
+                        className="w-full resize-y rounded-xl border border-slate-800 bg-[#211410] p-4 text-xs leading-6 text-slate-200 outline-none focus:border-cyan-500/50 read-only:cursor-default read-only:opacity-90"
                       />
 
                       <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
@@ -8489,7 +8213,7 @@ export default function ProjectManagerDashboard({
                               sendingCompletionReport ||
                               !completionReportDraft.trim()
                             }
-                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-5 py-2.5 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#ff951a] px-5 py-2.5 text-xs font-black text-slate-950 hover:bg-orange-400 disabled:opacity-50"
                           >
                             {sendingCompletionReport ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -8506,13 +8230,13 @@ export default function ProjectManagerDashboard({
               </section>
             )}
 
-            <section className={`bg-[#0b0f17] border border-amber-500/30 rounded-2xl p-6 space-y-5 ${
+            <section className={`bg-[#211612] border border-amber-500/30 rounded-2xl p-6 space-y-5 ${
               overviewInquiry.recommended_service === "service" ? "hidden" : ""
             }`}>
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-slate-800/80 pb-4">
                 <div>
                   <h3 className="font-extrabold text-base flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-[#F5B800]" />
+                    <FileText className="w-5 h-5 text-orange-300" />
                     Rapportutkast
                   </h3>
                   <p className="text-[11px] text-slate-400 mt-1 max-w-2xl">
@@ -8600,7 +8324,7 @@ export default function ProjectManagerDashboard({
 
                   {reportDraft ? (
                     <div className="space-y-4">
-                      <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#081522]">
+                      <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#291a15]">
                         <div className="flex flex-col gap-4 border-b border-slate-800 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
                           <div className="flex items-center gap-3">
                             <div
@@ -8772,7 +8496,9 @@ export default function ProjectManagerDashboard({
                                       ? "Oppfølgingstilbudet er sendt. Arbeid åpnes først når kunden har akseptert."
                                       : "Velg én handling. Bare det valgte løpet åpnes, slik at du slipper unødvendige felter."
                                     : reportLocked
-                                    ? "Ingen handling kreves før admin returnerer eller publiserer rapporten."
+                                    ? approvalStates[String(normalizeInquiryId(overviewInquiry.id))] === "awaiting_pm"
+                                     ? onBackToAdmin ? "Rapport 1 venter på prosjektansvarlig. Se godkjenningspanelet øverst." : "Rapport 1 venter på din faglige gjennomgang. Se panelet øverst."
+                                     : "Rapporten er under behandling. Se status i godkjenningspanelet øverst."
                                     : "Velg anbefalingen som skal følge rapporten videre."}
                                 </p>
                               </div>
@@ -8932,7 +8658,7 @@ export default function ProjectManagerDashboard({
                                               Number(event.target.value) as MaintenanceInterval
                                             )
                                           }
-                                          className="w-full rounded-xl border border-violet-500/20 bg-[#08111d] px-3 py-2.5 text-xs font-bold text-violet-200 outline-none focus:border-violet-400"
+                                          className="w-full rounded-xl border border-violet-500/20 bg-[#211410] px-3 py-2.5 text-xs font-bold text-violet-200 outline-none focus:border-violet-400"
                                         >
                                           <option value={3}>Om 3 måneder</option>
                                           <option value={6}>Om 6 måneder</option>
@@ -8974,7 +8700,7 @@ export default function ProjectManagerDashboard({
                                       onChange={(event) => setFollowUpReason(event.target.value)}
                                       rows={3}
                                       placeholder="Kort faglig begrunnelse for valgt oppfølging..."
-                                      className="w-full resize-y rounded-xl border border-slate-800 bg-[#08111d] px-3 py-3 text-xs leading-5 text-slate-200 outline-none focus:border-cyan-500/50"
+                                      className="w-full resize-y rounded-xl border border-slate-800 bg-[#211410] px-3 py-3 text-xs leading-5 text-slate-200 outline-none focus:border-cyan-500/50"
                                     />
 
                                     <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end">
@@ -9009,7 +8735,7 @@ export default function ProjectManagerDashboard({
                                             setOfferGeneratorOpen(true);
                                           }}
                                           disabled={!followUpReason.trim()}
-                                          className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:opacity-40"
+                                          className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#ff951a] px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-orange-400 disabled:opacity-40"
                                         >
                                           <Plus className="h-4 w-4" />
                                           {followUpOfferPrepared
@@ -9075,8 +8801,11 @@ export default function ProjectManagerDashboard({
                               </>
                             ) : (
                               <div className="mt-4 rounded-xl border border-blue-500/20 bg-blue-500/[0.05] px-4 py-4 text-[11px] leading-5 text-blue-200">
-                                Rapporten er låst i godkjenningsflyten. Ingen handling kreves fra
-                                prosjektansvarlig nå.
+                                {approvalStates[String(normalizeInquiryId(overviewInquiry.id))] === "awaiting_pm"
+                                  ? onBackToAdmin
+                                    ? "Rapport 1 venter på prosjektansvarliges faglige gjennomgang. Se godkjenningspanelet øverst."
+                                    : "Rapport 1 venter på din faglige gjennomgang. Åpne PDF-en og godkjenn eller returner rapporten i panelet øverst."
+                                  : "Rapporten er låst mens den behandles. Følg godkjenningsstatusen øverst."}
                               </div>
                             )}
 
@@ -9102,7 +8831,7 @@ export default function ProjectManagerDashboard({
                                     !report ||
                                     !reportDraft.trim()
                                   }
-                                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-5 py-3 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+                                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#ff951a] px-5 py-3 text-xs font-black text-slate-950 hover:bg-orange-400 disabled:opacity-50"
                                 >
                                   {sendingReport ? (
                                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -9117,6 +8846,7 @@ export default function ProjectManagerDashboard({
                             )}
                           </div>
                         </div>
+
 
                         {reportDetailsOpen && (
                           <div className="border-t border-slate-800 bg-slate-950/20 p-5">
@@ -9156,7 +8886,7 @@ export default function ProjectManagerDashboard({
                                         body: section.body,
                                       })
                                     }
-                                    className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-[#08111d] px-4 py-3 text-left transition hover:border-slate-700"
+                                    className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-[#211410] px-4 py-3 text-left transition hover:border-slate-700"
                                   >
                                     <div className="flex min-w-0 items-center gap-3">
                                       <div
@@ -9216,6 +8946,8 @@ export default function ProjectManagerDashboard({
             </section>
 
               </>
+              )}
+              </>
             )}
 
 
@@ -9224,7 +8956,9 @@ export default function ProjectManagerDashboard({
 
         {view === "rapporter" && (
           <div className="space-y-4">
-            <section className="rounded-2xl border border-slate-800 bg-[#0b0f17] p-5">
+            {activeInquiryId && <ProjectManagerReportApproval inquiryId={activeInquiryId} previewMode={Boolean(onBackToAdmin)} onUpdated={() => { setApprovalRefresh((v) => v + 1); void fetchInquiries(); }} />}
+
+            <section className="rounded-2xl border border-slate-800 bg-[#211612] p-5">
               <div className="flex items-center justify-between gap-4 border-b border-slate-800 pb-4">
                 <div>
                   <h2 className="text-base font-black text-white">Rapporter</h2>
@@ -9279,7 +9013,7 @@ export default function ProjectManagerDashboard({
 
         {view === "sjekklister" && (
           <div className="space-y-4">
-            <section className="rounded-2xl border border-slate-800 bg-[#0b0f17] p-5">
+            <section className="rounded-2xl border border-slate-800 bg-[#211612] p-5">
               <div className="border-b border-slate-800 pb-4">
                 <h2 className="text-base font-black text-white">Sjekklister</h2>
                 <p className="mt-1 text-[11px] text-slate-500">
@@ -9349,7 +9083,7 @@ export default function ProjectManagerDashboard({
 
         {view === "dokumenter" && (
           <div className="space-y-4">
-            <section className="rounded-2xl border border-slate-800 bg-[#0b0f17] p-5">
+            <section className="rounded-2xl border border-slate-800 bg-[#211612] p-5">
               <div className="border-b border-slate-800 pb-4">
                 <h2 className="text-base font-black text-white">Dokumenter</h2>
                 <p className="mt-1 text-[11px] text-slate-500">
@@ -9400,7 +9134,7 @@ export default function ProjectManagerDashboard({
 
         {view === "team" && (
           <div className="space-y-4">
-            <section className="rounded-2xl border border-slate-800 bg-[#0b0f17] p-5">
+            <section className="rounded-2xl border border-slate-800 bg-[#211612] p-5">
               <div className="flex flex-col gap-3 border-b border-slate-800 pb-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="text-base font-black text-white">
@@ -9508,7 +9242,7 @@ export default function ProjectManagerDashboard({
                       </div>
 
                       <div className="mt-4 grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-                        <section className="rounded-2xl border border-cyan-500/15 bg-[#08111d] p-4">
+                        <section className="rounded-2xl border border-cyan-500/15 bg-[#211410] p-4">
                           <div className="flex items-center gap-2">
                             <UserCheck className="h-4 w-4 text-cyan-400" />
                             <div>
@@ -9581,7 +9315,7 @@ export default function ProjectManagerDashboard({
                           </button>
                         </section>
 
-                        <section className="rounded-2xl border border-amber-500/15 bg-[#08111d] p-4">
+                        <section className="rounded-2xl border border-amber-500/15 bg-[#211410] p-4">
                           <div className="flex items-center gap-2">
                             <CalendarDays className="h-4 w-4 text-amber-400" />
                             <div>
@@ -9672,7 +9406,7 @@ export default function ProjectManagerDashboard({
                               type="button"
                               onClick={() => saveTeamSchedule(inquiry)}
                               disabled={scheduleBusy}
-                              className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-4 py-2.5 text-[10px] font-black text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#ff951a] px-4 py-2.5 text-[10px] font-black text-slate-950 transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               {scheduleBusy ? (
                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -9726,7 +9460,7 @@ export default function ProjectManagerDashboard({
         )}
 
         {view === "eiendom" && !overviewInquiry && !loadingInquiries && (
-          <div className="bg-[#0b0f17] border border-slate-800 rounded-3xl p-12 text-center">
+          <div className="bg-[#211612] border border-slate-800 rounded-3xl p-12 text-center">
             <Building2 className="w-8 h-8 text-slate-700 mx-auto mb-3" />
             <p className="font-bold text-slate-300">
               Ingen aktivt oppdrag er valgt.
@@ -9734,7 +9468,7 @@ export default function ProjectManagerDashboard({
             <button
               type="button"
               onClick={() => setView("oversikt")}
-              className="mt-4 px-4 py-2 bg-[#F5B800] text-slate-950 rounded-xl text-xs font-extrabold"
+              className="mt-4 px-4 py-2 bg-[#ff951a] text-slate-950 rounded-xl text-xs font-extrabold"
             >
               Gå til oversikten
             </button>
@@ -9742,7 +9476,7 @@ export default function ProjectManagerDashboard({
         )}
 
         {view === "felt" && !overviewInquiry && !loadingInquiries && (
-          <div className="bg-[#0b0f17] border border-slate-800 rounded-3xl p-12 text-center">
+          <div className="bg-[#211612] border border-slate-800 rounded-3xl p-12 text-center">
             <Wrench className="w-8 h-8 text-slate-700 mx-auto mb-3" />
             <p className="font-bold text-slate-300">
               Ingen aktivt oppdrag er valgt.
@@ -9750,7 +9484,7 @@ export default function ProjectManagerDashboard({
             <button
               type="button"
               onClick={() => setView("oversikt")}
-              className="mt-4 px-4 py-2 bg-[#F5B800] text-slate-950 rounded-xl text-xs font-extrabold"
+              className="mt-4 px-4 py-2 bg-[#ff951a] text-slate-950 rounded-xl text-xs font-extrabold"
             >
               Gå til oversikten
             </button>
@@ -9827,7 +9561,7 @@ export default function ProjectManagerDashboard({
             if (e.currentTarget === e.target) setReportSectionEditor(null);
           }}
         >
-          <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-slate-700 bg-[#08111d] shadow-2xl">
+          <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-slate-700 bg-[#211410] shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-5 py-4 md:px-6">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.14em] text-amber-400">
@@ -9896,7 +9630,7 @@ export default function ProjectManagerDashboard({
                   type="button"
                   onClick={persistReportSection}
                   disabled={savingReportSection}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-5 py-2.5 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+                  className="flex items-center justify-center gap-2 rounded-xl bg-[#ff951a] px-5 py-2.5 text-xs font-black text-slate-950 hover:bg-orange-400 disabled:opacity-50"
                 >
                   {savingReportSection ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -9918,7 +9652,7 @@ export default function ProjectManagerDashboard({
             if (e.currentTarget === e.target) setPdfPreviewOpen(false);
           }}
         >
-          <div className="flex h-[92vh] w-full max-w-7xl flex-col overflow-hidden rounded-3xl border border-slate-700 bg-[#08111d] shadow-2xl">
+          <div className="flex h-[92vh] w-full max-w-7xl flex-col overflow-hidden rounded-3xl border border-slate-700 bg-[#211410] shadow-2xl">
             <div className="flex items-center justify-between gap-4 border-b border-slate-800 px-5 py-4">
               <div>
                 <p className="text-sm font-black text-white">PDF-forhåndsvisning</p>
@@ -9991,3 +9725,4 @@ export default function ProjectManagerDashboard({
 
 
 export { InquiryPhotosManager };
+

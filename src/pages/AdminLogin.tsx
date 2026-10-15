@@ -1,21 +1,44 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Lock, ShieldCheck } from "lucide-react";
+import { Lock, ShieldCheck, Mail } from "lucide-react";
+import { apiUrl } from "../lib/api";
+
+const ADMIN_AUTH_URL = apiUrl("/tlv_admin_auth.php");
 
 interface AdminLoginProps {
   onLogin: () => void;
 }
 
 export default function AdminLogin({ onLogin }: AdminLoginProps) {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (password === "perun2026" || password === "admin") {
+    if (loading) return;
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch(`${ADMIN_AUTH_URL}?action=login`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
+      const result: { success?: boolean; authenticated?: boolean; message?: string } =
+        await response.json();
+      if (!response.ok || result.success !== true || result.authenticated !== true) {
+        throw new Error(result.message || "Innlogging mislyktes.");
+      }
+      setPassword("");
       onLogin();
-    } else {
-      setError(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Kunne ikke logge inn.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -27,37 +50,32 @@ export default function AdminLogin({ onLogin }: AdminLoginProps) {
             <ShieldCheck className="w-8 h-8" />
           </div>
           <h1 className="text-2xl font-extrabold text-white">Taklekkasjevakten</h1>
-          <p className="text-xs text-amber-500 font-bold mt-1">Admin Portal — Perun AS</p>
+          <p className="text-xs text-amber-500 font-bold mt-1">Admin Portal — Taklekkasjevakten</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">
-              Passord
-            </label>
+            <label htmlFor="tlv-admin-email" className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">E-postadresse</label>
             <div className="relative">
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  setError(false);
-                }}
-                placeholder="Skriv inn admin-passord"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-amber-500 transition-colors pl-10"
-              />
+              <input id="tlv-admin-email" type="email" autoComplete="username" required value={email}
+                onChange={(e) => { setEmail(e.target.value); setError(""); }}
+                placeholder="E-postadresse" className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-amber-500 transition-colors pl-10" />
+              <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5" />
+            </div>
+          </div>
+          <div>
+            <label htmlFor="tlv-admin-password" className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Passord</label>
+            <div className="relative">
+              <input id="tlv-admin-password" type="password" autoComplete="current-password" required value={password}
+                onChange={(e) => { setPassword(e.target.value); setError(""); }}
+                placeholder="Skriv inn passord" className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-amber-500 transition-colors pl-10" />
               <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5" />
             </div>
-            {error && (
-              <p className="text-xs text-red-400 mt-2 font-semibold">Feil passord. Prøv igjen.</p>
-            )}
           </div>
-
-          <button
-            type="submit"
-            className="w-full bg-[#F5B800] hover:bg-[#e0a800] text-slate-950 font-black py-3.5 rounded-xl text-sm transition-all shadow-lg cursor-pointer"
-          >
-            Logg inn på kontrollpanel
+          {error && <p role="alert" className="text-xs text-red-400 font-semibold">{error}</p>}
+          <button type="submit" disabled={loading}
+            className="w-full bg-[#F5B800] hover:bg-[#e0a800] disabled:opacity-60 text-slate-950 font-black py-3.5 rounded-xl text-sm transition-all shadow-lg cursor-pointer">
+            {loading ? "Logger inn..." : "Logg inn på kontrollpanel"}
           </button>
         </form>
       </div>

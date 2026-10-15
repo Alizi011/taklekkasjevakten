@@ -4,9 +4,7 @@ import {
   CirclePlus,
   Trash2,
 } from "lucide-react";
-
 export type PricingMode = "hourly" | "fixed";
-
 export interface CalculationLine {
   id: string;
   category: "labor" | "material" | "equipment" | "subcontractor" | "other";
@@ -16,7 +14,6 @@ export interface CalculationLine {
   unit_cost: number;
   markup_percent: number;
 }
-
 export interface OfferCalculation {
   pricingMode: PricingMode;
   lines: CalculationLine[];
@@ -25,12 +22,10 @@ export interface OfferCalculation {
   discountPercent: number;
   vatPercent: number;
 }
-
 interface OfferCalculatorProps {
   value: OfferCalculation;
   onChange: (value: OfferCalculation) => void;
 }
-
 const categoryLabel: Record<CalculationLine["category"], string> = {
   labor: "Arbeid",
   material: "Materialer",
@@ -38,21 +33,16 @@ const categoryLabel: Record<CalculationLine["category"], string> = {
   subcontractor: "Underentreprenør",
   other: "Annet",
 };
-
 const money = (value: number) =>
   Math.round(Number.isFinite(value) ? value : 0).toLocaleString("nb-NO");
-
 export function calculateOffer(value: OfferCalculation) {
   const lineResults = value.lines.map((line) => {
     const isHourlyLabor =
       value.pricingMode === "hourly" && line.category === "labor";
-
     const cost = isHourlyLabor
       ? 0
       : Math.max(0, line.quantity) * Math.max(0, line.unit_cost);
-
     const markup = cost * (Math.max(0, line.markup_percent) / 100);
-
     return {
       ...line,
       cost,
@@ -60,7 +50,6 @@ export function calculateOffer(value: OfferCalculation) {
       sell: isHourlyLabor ? Math.max(0, line.unit_cost) : cost + markup,
     };
   });
-
   const directCost = lineResults.reduce((sum, line) => sum + line.cost, 0);
   const beforeOverhead = lineResults.reduce((sum, line) => sum + line.sell, 0);
   const overhead = beforeOverhead * (Math.max(0, value.overheadPercent) / 100);
@@ -74,7 +63,6 @@ export function calculateOffer(value: OfferCalculation) {
   const inclVat = exclVat + vat;
   const grossProfit = exclVat - directCost;
   const grossMarginPercent = exclVat > 0 ? (grossProfit / exclVat) * 100 : 0;
-
   return {
     lineResults,
     directCost,
@@ -88,7 +76,6 @@ export function calculateOffer(value: OfferCalculation) {
     grossMarginPercent,
   };
 }
-
 function newLine(category: CalculationLine["category"] = "labor"): CalculationLine {
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -100,7 +87,6 @@ function newLine(category: CalculationLine["category"] = "labor"): CalculationLi
     markup_percent: category === "labor" ? 0 : 15,
   };
 }
-
 export const EMPTY_CALCULATION: OfferCalculation = {
   pricingMode: "hourly",
   lines: [
@@ -128,13 +114,11 @@ export const EMPTY_CALCULATION: OfferCalculation = {
   discountPercent: 0,
   vatPercent: 25,
 };
-
 export default function OfferCalculator({
   value,
   onChange,
 }: OfferCalculatorProps) {
   const totals = useMemo(() => calculateOffer(value), [value]);
-
   const patchLine = (id: string, patch: Partial<CalculationLine>) => {
     onChange({
       ...value,
@@ -143,14 +127,15 @@ export default function OfferCalculator({
       ),
     });
   };
-
   const removeLine = (id: string) => {
+    const line = value.lines.find((item) => item.id === id);
+    if (!line) return;
+    if (!window.confirm(`Fjerne «${line.description || categoryLabel[line.category]}» fra kalkulasjonen?`)) return;
     onChange({
       ...value,
-      lines: value.lines.filter((line) => line.id !== id),
+      lines: value.lines.filter((item) => item.id !== id),
     });
   };
-
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-950/45 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -167,7 +152,6 @@ export default function OfferCalculator({
               : "Ved fastpris kan timer og øvrige kostnader kalkuleres internt uten at kunden ser timegrunnlaget."}
           </p>
         </div>
-
         <div className="grid grid-cols-2 rounded-xl border border-slate-800 bg-[#08111d] p-1">
           <button
             type="button"
@@ -193,30 +177,25 @@ export default function OfferCalculator({
           </button>
         </div>
       </div>
-
       <div className="overflow-hidden rounded-2xl border border-slate-800">
-        <div className="hidden grid-cols-[130px_minmax(220px,1fr)_90px_90px_120px_100px_44px] gap-2 border-b border-slate-800 bg-slate-950/70 px-3 py-2 lg:grid">
-          {["Kategori", "Beskrivelse", "Mengde", "Enhet", "Kost/enhet", "Påslag %", ""].map(
-            (label) => (
-              <span
-                key={label}
-                className="text-[9px] font-black uppercase tracking-wider text-slate-600"
-              >
-                {label}
-              </span>
-            )
-          )}
-        </div>
-
+        <div className="border-b border-slate-800 bg-slate-950/70 px-3 py-2 text-[10px] font-bold text-slate-400">Kalkulasjonsposter – velg kategori, beskrivelse, mengde, enhet, sats og påslag</div>
         <div className="divide-y divide-slate-800">
           {value.lines.map((line) => {
             const result = totals.lineResults.find((item) => item.id === line.id);
-
             return (
               <div
                 key={line.id}
-                className="grid grid-cols-1 gap-2 bg-[#0b0f17] p-3 lg:grid-cols-[130px_minmax(220px,1fr)_90px_90px_120px_100px_44px]"
+                className="relative grid min-w-0 grid-cols-1 gap-2 bg-[#0b0f17] px-3 pb-3 pt-12 sm:grid-cols-2 xl:grid-cols-3"
               >
+                <button
+                  type="button"
+                  onClick={() => removeLine(line.id)}
+                  aria-label={`Fjern ${line.description || categoryLabel[line.category]} fra kalkulasjonen`}
+                  title="Fjern kalkulasjonspost"
+                  className="absolute right-3 top-2 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-500/35 bg-red-500/10 text-red-300 transition hover:border-red-400 hover:bg-red-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-400"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
                 <select
                   value={line.category}
                   onChange={(event) =>
@@ -232,7 +211,6 @@ export default function OfferCalculator({
                     </option>
                   ))}
                 </select>
-
                 <input
                   value={line.description}
                   onChange={(event) =>
@@ -241,7 +219,6 @@ export default function OfferCalculator({
                   placeholder="Arbeid eller kostnadspost"
                   className="rounded-xl border border-slate-800 bg-[#08111d] px-3 py-2 text-[11px] text-slate-200 outline-none"
                 />
-
                 {value.pricingMode === "hourly" &&
                 line.category === "labor" ? (
                   <>
@@ -266,7 +243,6 @@ export default function OfferCalculator({
                       }
                       className="rounded-xl border border-slate-800 bg-[#08111d] px-2.5 py-2 text-[11px] text-slate-200 outline-none"
                     />
-
                     <input
                       value={line.unit}
                       onChange={(event) =>
@@ -276,7 +252,6 @@ export default function OfferCalculator({
                     />
                   </>
                 )}
-
                 <input
                   type="number"
                   min={0}
@@ -288,7 +263,6 @@ export default function OfferCalculator({
                   }
                   className="rounded-xl border border-slate-800 bg-[#08111d] px-2.5 py-2 text-[11px] text-slate-200 outline-none"
                 />
-
                 <input
                   type="number"
                   min={0}
@@ -300,27 +274,13 @@ export default function OfferCalculator({
                   }
                   className="rounded-xl border border-slate-800 bg-[#08111d] px-2.5 py-2 text-[11px] text-slate-200 outline-none"
                 />
-
-                <button
-                  type="button"
-                  onClick={() => removeLine(line.id)}
-                  className="flex items-center justify-center rounded-xl border border-red-500/15 bg-red-500/[0.04] text-red-300 hover:bg-red-500/10"
-                  title="Fjern post"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-
-                <div className="col-span-full flex justify-end text-[10px] text-slate-500">
-                  Salgsverdi post:{" "}
-                  <strong className="ml-1 text-slate-300">
-                    kr {money(result?.sell || 0)}
-                  </strong>
+                <div className="col-span-full flex justify-end text-[10px] text-slate-400">
+                  Salgsverdi post: <strong className="ml-1 text-slate-200">kr {money(result?.sell || 0)}</strong>
                 </div>
               </div>
             );
           })}
         </div>
-
         <div className="flex flex-wrap gap-2 border-t border-slate-800 bg-slate-950/55 p-3">
           {(
             [
@@ -348,7 +308,6 @@ export default function OfferCalculator({
           ))}
         </div>
       </div>
-
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
           ["overheadPercent", "Administrasjon / overhead %"],
@@ -378,7 +337,6 @@ export default function OfferCalculator({
           </label>
         ))}
       </div>
-
       {value.pricingMode === "hourly" && (
         <div className="rounded-xl border border-blue-500/20 bg-blue-500/[0.04] px-4 py-3 text-[11px] leading-5 text-slate-400">
           Ved timesats er arbeidets varighet ikke kalkulert. Total prosjektpris og endelig
@@ -386,7 +344,6 @@ export default function OfferCalculator({
           øvrige kostnader kommer i tillegg etter faktisk forbruk dersom ikke annet er avtalt.
         </div>
       )}
-
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <Summary label="Direkte kost" value={`kr ${money(totals.directCost)}`} />
         <Summary label="Overhead" value={`kr ${money(totals.overhead)}`} />
@@ -404,7 +361,6 @@ export default function OfferCalculator({
     </div>
   );
 }
-
 function Summary({
   label,
   value,

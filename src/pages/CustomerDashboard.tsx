@@ -174,6 +174,11 @@ interface CustomerOffer {
   inquiry_id: number;
   service: string;
   title: string;
+  offer_number?: string | null;
+  pdf_url?: string | null;
+  calculated_ex_vat?: number | string | null;
+  calculated_inc_vat?: number | string | null;
+  price_breakdown?: Array<{ category: string; label: string; amount_ex_vat: number }>;
   description?: string | null;
   pricing_mode?: "hourly" | "fixed" | string | null;
   fixed_price?: number | string | null;
@@ -189,6 +194,13 @@ interface CustomerOffer {
   rejected_at?: string | null;
   expires_at?: string | null;
   is_expired?: boolean;
+}
+
+interface CustomerNextStep {
+  title: string;
+  status: "registered" | "offer_in_progress" | "offer_ready" | "offer_accepted" | string;
+  message: string;
+  annual_roof_inspection_recommended: boolean;
 }
 
 type YesNoValue = "" | "yes" | "no";
@@ -615,6 +627,37 @@ function DigitalReportBody({ body }: { body: string }) {
   );
 }
 
+/** Read-only formatting of the exact stored offer text; no clauses are rewritten. */
+function OfferDescriptionDocument({ value }: { value?: string | null }) {
+  const raw = String(value || "").replace(/\r\n?/g, "\n").trim();
+  if (!raw) return <p className="text-sm text-slate-400">Se tilbudsdokumentet for arbeidsomfang.</p>;
+  const lines = raw.split("\n").map((line) => line.trim());
+  const section = /^\d+[.)]\s+\S/;
+  const subheadings = /^(?:Følgende arbeider inngår:?|Forberedelse og rengjøring|Reparasjon av murverk|Reparasjon av murpuss og overflatebehandling|Utbedring av rotbeslag og tetting mot taktekking|Montering av pipehetter|Kvalitet og gjennomføring|Forutsetninger og avgrensninger)$/i;
+  return (
+    <div className="space-y-0 text-[13px] leading-7 text-slate-200 md:text-sm">
+      {lines.map((line, index) => {
+        if (!line) return <div key={index} className="h-3" aria-hidden="true" />;
+        if (section.test(line)) return (
+          <h4 key={index} className="mb-3 mt-7 border-l-[3px] border-amber-400 bg-slate-800/45 px-4 py-3 text-base font-extrabold leading-snug text-white first:mt-1">
+            {line}
+          </h4>
+        );
+        if (subheadings.test(line)) return (
+          <h5 key={index} className="mb-2 mt-5 text-sm font-bold text-amber-200">{line}</h5>
+        );
+        if (/^(?:TILBUD\s*[–-]|TILBYDER:|PROSJEKT:)/i.test(line)) return (
+          <p key={index} className="mb-2 text-xs font-semibold tracking-wide text-slate-300">{line}</p>
+        );
+        if (/^[•▪‣*-]\s+/.test(line)) return (
+          <div key={index} className="flex gap-3 pl-2"><span className="mt-3 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" /><p className="min-w-0 flex-1">{line.replace(/^[•▪‣*-]\s+/, "")}</p></div>
+        );
+        return <p key={index} className="break-words leading-7 text-slate-300">{line}</p>;
+      })}
+    </div>
+  );
+}
+
 const CUSTOMER_PORTAL_SESSION_STORAGE_KEY = "taklekkasjevakten_customer_session";
 
 export default function CustomerDashboard({
@@ -641,6 +684,7 @@ export default function CustomerDashboard({
     return Boolean(magicToken || savedSession);
   });
   const [tokenLoginError, setTokenLoginError] = useState("");
+  const [customerNextStep, setCustomerNextStep] = useState<CustomerNextStep | null>(null);
   const [inquiryData, setInquiryData] = useState<any>(null);
   const [verificationSent, setVerificationSent] = useState(false);
   const [verificationId, setVerificationId] = useState("");
@@ -650,6 +694,7 @@ export default function CustomerDashboard({
   const [offer, setOffer] = useState<CustomerOffer | null>(null);
   const [offers, setOffers] = useState<CustomerOffer[]>([]);
   const [expandedOfferId, setExpandedOfferId] = useState<number | null>(null);
+  const [offersTab, setOffersTab] = useState<"current" | "history" | "appointments">("current");
   const [reportExpanded, setReportExpanded] = useState(false);
   const [completionReportExpanded, setCompletionReportExpanded] = useState(false);
   const [completionReport, setCompletionReport] =
@@ -1615,6 +1660,40 @@ export default function CustomerDashboard({
     }
   };
 
+  // Oppfølging leses kun med verifisert kundeportaløkt. Admin-forhåndsvisning
+  // skal ikke bruke en eventuell kundeøkt som ligger lagret i nettleseren.
+  const fetchCustomerNextStep = async () => {
+    const sessionToken = previewMode ? null : window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY);
+    if (!previewMode && !sessionToken) {
+      setCustomerNextStep(null);
+      return;
+    }
+    const previewId = Number(previewInquiryId || 0);
+    if (previewMode && !previewId) {
+      setCustomerNextStep(null);
+      return;
+    }
+    try {
+      const response = await fetch(
+        previewMode ? apiUrl(`/tlv_customer_next_step_admin.php?inquiry_id=${previewId}`) : apiUrl("/customer_next_step.php"),
+        previewMode ? { method: "GET", credentials: "include" } : {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_token: sessionToken }),
+        }
+      );
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        setCustomerNextStep(null);
+        return;
+      }
+      setCustomerNextStep(result.next_step || null);
+    } catch (error) {
+      console.error("Kunne ikke hente neste tiltak:", error);
+      setCustomerNextStep(null);
+    }
+  };
+
   const fetchCustomerData = async (inquiryId: number) => {
     try {
       const res = await fetch(
@@ -1743,7 +1822,10 @@ export default function CustomerDashboard({
         }
       })();
 
+      // Hent kun kundetilpasset tiltak; aldri hent interne oppfølgingsnotater.
+      setCustomerNextStep(null);
       const enrichmentTasks: Promise<unknown>[] = [
+        fetchCustomerNextStep(),
         reportTask,
         completionTask,
         fetchPreinspection(currentInquiryId),
@@ -1775,6 +1857,14 @@ export default function CustomerDashboard({
     stage: string,
     recommendedService?: string | null
   ) => {
+    // Ikke vis aktivt feltarbeid etter at sluttrapporten er publisert.
+    if (inquiryData?.report?.status === "publisert" && inquiryData?.report?.pdf_url) {
+      return (
+        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-bold text-emerald-300">
+          {followupInProgress ? "Videre oppfølging" : "Lekkasjesøk gjennomført"}
+        </span>
+      );
+    }
     switch (stage) {
       case "digital_befaring":
         return (
@@ -1937,6 +2027,11 @@ export default function CustomerDashboard({
   };
 
   const getCustomerStatusMessage = () => {
+    if (reportPublished && followupOfferAccepted) return currentFollowupDescription;
+    if (reportPublished && followupOfferReady) return currentFollowupDescription;
+    if (reportPublished && followupOfferRejected) return currentFollowupDescription;
+    if (reportPublished && followupUnderPreparation) return currentFollowupDescription;
+    if (customerNextStep && reportPublished) return customerNextStep.message;
     if (completionReportPublished) {
       return "Servicearbeidet er fullført og Rapport 2 er publisert. Saken er avsluttet med oppdatert dokumentasjon.";
     }
@@ -1998,7 +2093,7 @@ export default function CustomerDashboard({
     }
 
     if (reportPublished && followupSchedule?.status === "bekreftet") {
-      return "Rapporten er klar og videre oppfølging er bekreftet.";
+      return "Lekkasjesøket er gjennomført og rapporten er publisert. Vi oppdaterer saken når videre oppfølging er avklart.";
     }
 
     if (reportPublished && followupSchedule) {
@@ -2644,6 +2739,44 @@ export default function CustomerDashboard({
   ].includes(initialScheduleStatus);
   const initialServiceLabel = getServiceLabel(initialFieldService);
   const initialServiceLabelLower = initialServiceLabel.toLowerCase();
+  // Publisert sluttrapport markerer at opprinnelig tjeneste er gjennomført.
+  // Dato fra den opprinnelige avtalen brukes som oppdragsdato, ikke som
+  // en oppdiktet/selvstendig verifisert ferdigstillelsesdato.
+  const originalWorkFinished = reportPublished || completionReportPublished;
+  const originalWorkDate = String(followupSchedule?.schedule_date || inq.booking_date || "");
+  const originalWorkLabel = initialServiceLabel === "Taklekkasjesøk" ? "Lekkasjesøk" : initialServiceLabel;
+  // Tilbudshistorikken inneholder bare kundesynlige tilbud. Interne utkast
+  // skal kun gi status via kundeautorisert next_step-API, aldri via offers.php.
+  const visibleFollowupOffers = offers.filter((item) => item.offer_context === "followup");
+  const newestFollowupOffer = visibleFollowupOffers[0] || null;
+  const followupStatus = String(newestFollowupOffer?.status || "").toLowerCase();
+  const nextStepStatus = String(customerNextStep?.status || "").toLowerCase();
+  const followupUnderPreparation = reportPublished && nextStepStatus === "offer_in_progress";
+  const followupOfferReady = reportPublished && (
+    (followupStatus === "publisert" && !!newestFollowupOffer && !offerExpired(newestFollowupOffer)) ||
+    nextStepStatus === "offer_ready"
+  );
+  const followupOfferAccepted = reportPublished && (
+    followupStatus === "akseptert" || nextStepStatus === "offer_accepted"
+  );
+  const followupOfferRejected = reportPublished && followupStatus === "avvist";
+  const followupInProgress = followupUnderPreparation || followupOfferReady || followupOfferAccepted || followupOfferRejected ||
+    (reportPublished && Boolean(customerNextStep) && nextStepStatus !== "registered");
+  const currentFollowupHeadline = followupOfferAccepted ? "Tilbud på videre utbedring er akseptert"
+    : followupOfferReady ? "Nytt tilbud på utbedring er klart"
+    : followupOfferRejected ? "Tilbud på videre utbedring er avslått"
+    : followupUnderPreparation ? "Vi utarbeider et tilbud på varig utbedring"
+    : customerNextStep?.title || "Rapporten er klar";
+  const currentFollowupDescription = followupOfferAccepted
+    ? "Du har akseptert tilbudet. Vi kontakter deg om den videre planleggingen."
+    : followupOfferReady
+    ? "Et nytt tilbud er publisert. Du kan se priser og vilkår og svare under Tilbud og avtaler."
+    : followupOfferRejected
+    ? "Svaret ditt er registrert. Rapporten fra lekkasjesøket er fortsatt tilgjengelig."
+    : followupUnderPreparation
+    ? "Lekkasjesøket er gjennomført og Rapport 1 er publisert. Vi utarbeider videre tilbud basert på funnene."
+    : customerNextStep?.message || "Lekkasjesøket er gjennomført og Rapport 1 er publisert. Vi oppdaterer saken når videre oppfølging er avklart.";
+
 
 
 
@@ -3156,7 +3289,6 @@ export default function CustomerDashboard({
           <nav className="space-y-2">
             {[
               { key: "overview" as const, label: "Oversikt", icon: Home },
-              { key: "report" as const, label: "Rapport", icon: FileText },
               { key: "offers" as const, label: "Tilbud og avtaler", icon: ShieldCheck },
               { key: "schedule" as const, label: "Avtalt service", icon: CalendarCheck },
               { key: "documents" as const, label: "Dokumenter", icon: Paperclip },
@@ -3338,192 +3470,109 @@ export default function CustomerDashboard({
               )}
 
               {customerPortalView === "offers" && (
-                <div className="mt-6 space-y-3">
-                  {pendingOfferExpired && (
-                    <div className="rounded-2xl border border-amber-500/30 bg-amber-500/[0.05] p-5">
-                      <p className="text-sm font-black text-white">Tidligere tilbud er utløpt</p>
-                      <p className="mt-2 text-xs text-slate-400">Du kan be om nytt tidspunkt. Vi vurderer tilgjengelighet og sender et nytt tilbud ved behov. Ingen ny avtale opprettes automatisk.</p>
-                      {newTimeRequestError && <p className="mt-3 text-xs text-red-300">{newTimeRequestError}</p>}
-                      {newTimeRequestSent ? <p className="mt-3 text-xs text-emerald-300">Forespørselen er registrert hos administrator.</p> :
-                        <button type="button" onClick={requestNewTime} disabled={requestingNewTime} className="mt-4 rounded-xl bg-[#F5B800] px-4 py-3 text-xs font-black text-slate-950 disabled:opacity-50">{requestingNewTime ? "Sender…" : "Be om nytt tidspunkt"}</button>}
-                    </div>
-                  )}
-                  {offers.length === 0 ? (
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-8 text-center">
-                      <ShieldCheck className="mx-auto h-8 w-8 text-slate-700" />
-                      <p className="mt-3 text-sm font-black text-white">Ingen tilbud tilgjengelig ennå</p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Kundesynlige tilbud vises her så snart de er publisert.
-                      </p>
-                    </div>
+                <div className="mt-6 space-y-5">
+                  <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-4">
+                    {([ ["current", "Aktuelle tilbud"], ["history", "Tidligere avtaler"], ["appointments", "Avtaler og oppdrag"] ] as const).map(([key, label]) => (
+                      <button key={key} type="button" onClick={() => setOffersTab(key)} className={`rounded-xl border px-4 py-2.5 text-xs font-bold transition ${offersTab === key ? "border-amber-500/50 bg-amber-500/10 text-amber-200" : "border-slate-700 bg-slate-950/55 text-slate-400 hover:text-white"}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {offerError && <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-xs text-red-200">{offerError}</div>}
+                  {offerMessage && <div role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-xs text-emerald-200">{offerMessage}</div>}
+                  {offersTab === "appointments" ? (
+                    followupSchedule ? (
+                      <div className="rounded-2xl border border-slate-700 bg-slate-950/55 p-5">
+                        <h3 className="text-sm font-bold text-white">{originalWorkLabel}</h3>
+                        <p className="mt-2 text-xs text-slate-300">{originalWorkFinished ? "Gjennomført" : "Registrert avtale"} · {formatBookingDate(followupSchedule.schedule_date)} kl. {String(followupSchedule.start_time || "").slice(0,5)}</p>
+                        <p className="mt-2 text-xs text-slate-500">{originalWorkFinished ? "Tidligere oppdrag er bevart i sakshistorikken." : "Gjeldende avtale og planlegging."}</p>
+                      </div>
+                    ) : <p className="rounded-2xl border border-slate-800 p-6 text-sm text-slate-400">Ingen registrerte avtaler.</p>
                   ) : (
-                    offers.map((item) => {
-                      const isOpen = item.status === "publisert" && !offerExpired(item);
-                      const expanded = isOpen || expandedOfferId === item.id;
-                      const isAccepted = item.status === "akseptert";
-
-                      return (
-                        <article
-                          key={`portal-offer-${item.id}`}
-                          className={`overflow-hidden rounded-2xl border ${
-                            isOpen
-                              ? "border-amber-500/35 bg-amber-500/[0.035]"
-                              : isAccepted
-                              ? "border-emerald-500/25 bg-emerald-500/[0.035]"
-                              : "border-slate-800 bg-slate-950/45"
-                          }`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (!isOpen) {
-                                setExpandedOfferId(expanded ? null : item.id);
-                              }
-                            }}
-                            className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left md:px-5"
-                          >
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-xs font-black text-white">
-                                  Tilbud #{item.id}
-                                </span>
-                                <span
-                                  className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase ${
-                                    isOpen
-                                      ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
-                                      : isAccepted
-                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                                      : "border-slate-700 bg-slate-900 text-slate-400"
-                                  }`}
-                                >
-                                  {isOpen ? "Åpent" : isAccepted ? "Akseptert" : offerExpired(item) ? "Utløpt" : "Avvist"}
-                                </span>
+                    <div className="space-y-5">
+                      {offersTab === "current" && pendingOfferExpired && !offers.some(item => item.status === "publisert" && !offerExpired(item)) && (
+                        <div className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.05] p-5">
+                          <h3 className="text-sm font-black text-white">Tidligere tilbud er utløpt</h3>
+                          <p className="mt-2 text-xs text-slate-400">Kontakt oss for et oppdatert tilbud eller be om nytt tidspunkt.</p>
+                          {newTimeRequestError && <p className="mt-2 text-xs text-red-300">{newTimeRequestError}</p>}
+                          {newTimeRequestSent ? <p className="mt-3 text-xs text-emerald-300">Forespørselen er registrert.</p> : <button type="button" onClick={requestNewTime} disabled={requestingNewTime} className="mt-3 rounded-xl bg-amber-400 px-4 py-2.5 text-xs font-black text-slate-950 disabled:opacity-50">{requestingNewTime ? "Sender…" : "Be om nytt tidspunkt"}</button>}
+                        </div>
+                      )}
+                      {offers.filter(item => offersTab === "history" ? item.status !== "publisert" || offerExpired(item) : item.status === "publisert" && !offerExpired(item)).length === 0 ? (
+                        <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-8 text-center">
+                          <ShieldCheck className="mx-auto h-8 w-8 text-slate-600" />
+                          <p className="mt-3 text-sm font-black">{offersTab === "history" ? "Ingen tidligere avtaler" : "Ingen åpne tilbud akkurat nå"}</p>
+                          <p className="mt-2 text-xs text-slate-400">Publiserte tilbud vises her når de er tilgjengelige.</p>
+                        </div>
+                      ) : offers.filter(item => offersTab === "history" ? item.status !== "publisert" || offerExpired(item) : item.status === "publisert" && !offerExpired(item)).map(item => {
+                        const isOpen = item.status === "publisert" && !offerExpired(item);
+                        const isFollowup = item.offer_context === "followup";
+                        const expanded = isOpen || expandedOfferId === item.id;
+                        const fixed = String(item.pricing_mode || "").toLowerCase() === "fixed";
+                        const fixedPrice = formatOfferAmount(item.fixed_price ?? item.calculated_ex_vat);
+                        const incPrice = formatOfferAmount(item.calculated_inc_vat);
+                        return (
+                          <article key={`offer-design-${item.id}`} className={`overflow-hidden rounded-3xl border shadow-xl ${isOpen ? "border-amber-500/35 bg-[#0b1422]" : "border-slate-700 bg-[#0b1422]"}`}>
+                            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 p-5 md:p-7">
+                              <div className="min-w-0 flex-1">
+                                <span className={`inline-flex rounded-full px-3 py-1 text-[10px] font-black ${isOpen ? "bg-emerald-400 text-slate-950" : "bg-slate-800 text-slate-200"}`}>{isOpen ? "Nytt tilbud" : item.status === "akseptert" ? "Akseptert avtale" : offerExpired(item) ? "Utløpt tilbud" : "Tidligere tilbud"}</span>
+                                <h2 className="mt-3 text-xl font-black leading-tight md:text-2xl">{item.title || (isFollowup ? "Tilbud på videre utbedring" : getServiceLabel(item.service))}</h2>
+                                <p className="mt-2 text-xs leading-6 text-slate-400">{isFollowup ? "Et nytt tilbud om videre utbedring. Den opprinnelige avtalen og rapporten er bevart." : "Gjennomgå pris, arbeidsbeskrivelse og avtalte vilkår."}</p>
                               </div>
-                              <p className="mt-1 truncate text-sm text-slate-300">
-                                {item.title || getServiceLabel(item.service)}
-                              </p>
+                              <div className="text-left text-xs text-slate-400 md:text-right">
+                                {item.offer_number && <p className="font-black text-slate-200">{item.offer_number}</p>}
+                                {item.published_at && <p className="mt-1">Publisert {new Date(String(item.published_at).replace(" ", "T")).toLocaleDateString("nb-NO")}</p>}
+                                {item.expires_at && <p className="mt-1">Gyldig til {new Date(String(item.expires_at).replace(" ", "T")).toLocaleDateString("nb-NO")}</p>}
+                              </div>
                             </div>
-                            <ChevronRight
-                              className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${
-                                expanded ? "rotate-90" : ""
-                              }`}
-                            />
-                          </button>
-
-                          {expanded && (
-                            <div className="border-t border-slate-800 p-4 md:p-5">
-                              <div className="grid gap-3 text-xs sm:grid-cols-2">
-                                {String(item.pricing_mode || "").toLowerCase() === "fixed" &&
-                                formatOfferAmount(item.fixed_price) ? (
-                                  <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                                    <span className="text-slate-500">Fastpris</span>
-                                    <strong className="mt-1 block text-white">
-                                      kr {formatOfferAmount(item.fixed_price)},- eks. mva
-                                    </strong>
+                            {!isOpen && <button type="button" className="flex w-full items-center justify-between px-5 py-3 text-left text-xs font-bold text-cyan-200 hover:bg-white/5" onClick={() => setExpandedOfferId(expanded ? null : item.id)}>{expanded ? "Skjul detaljer" : "Vis tidligere tilbud og vilkår"}<ChevronRight className={`h-4 w-4 ${expanded ? "rotate-90" : ""}`} /></button>}
+                            {expanded && <>
+                              <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(280px,.7fr)] md:p-7">
+                                <div className="space-y-5">
+                                  <div className="rounded-2xl border border-slate-700/70 bg-slate-950/40 p-5">
+                                    <div className="flex items-center gap-2 text-sm font-black"><ClipboardList className="h-5 w-5 text-amber-400" /> Beskrivelse av arbeidet</div>
+                                    <div className="mt-5 border-t border-white/10 pt-3"><OfferDescriptionDocument value={item.description} /></div>
                                   </div>
-                                ) : (
-                                  <>
-                                    {(formatOfferAmount(item.team_rate) ||
-                                      formatOfferAmount(item.hourly_rate)) && (
-                                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                                        <span className="text-slate-500">
-                                          {formatOfferAmount(item.team_rate)
-                                            ? "Team (2 personer)"
-                                            : "Timesats"}
-                                        </span>
-                                        <strong className="mt-1 block text-white">
-                                          kr {formatOfferAmount(item.team_rate ?? item.hourly_rate)},- eks. mva / time
-                                        </strong>
-                                      </div>
-                                    )}
-                                    {formatOfferAmount(item.vehicle_rate) && (
-                                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                                        <span className="text-slate-500">Bil / drift</span>
-                                        <strong className="mt-1 block text-white">
-                                          kr {formatOfferAmount(item.vehicle_rate)},- eks. mva
-                                        </strong>
-                                      </div>
-                                    )}
-                                  </>
-                                )}
-                              </div>
-
-                              {item.description && (
-                                <p className="mt-4 whitespace-pre-wrap text-xs leading-5 text-slate-300">
-                                  {item.description}
-                                </p>
-                              )}
-                              {item.terms && (
-                                <div className="mt-4 rounded-xl border border-amber-500/15 bg-amber-500/[0.04] p-4">
-                                  <p className="text-[10px] font-black uppercase tracking-wider text-amber-300">
-                                    Betingelser
-                                  </p>
-                                  <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-slate-300">
-                                    {item.terms}
-                                  </p>
+                                  {item.material_note?.trim() && <div className="rounded-2xl border border-slate-700/70 bg-slate-950/40 p-5"><p className="flex items-center gap-2 text-sm font-black"><Hammer className="h-4 w-4 text-amber-400" /> Materialer og tillegg</p><p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-slate-300">{item.material_note}</p></div>}
+                                  {item.terms?.trim() && <div className="rounded-2xl border border-slate-700/70 bg-slate-950/40 p-5"><p className="flex items-center gap-2 text-sm font-black"><ShieldCheck className="h-4 w-4 text-amber-400" /> Betingelser</p><p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-slate-300">{item.terms}</p></div>}
+                                  {item.pdf_url && <a href={apiAssetUrl(item.pdf_url)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/35 bg-cyan-500/10 px-4 py-3 text-xs font-black text-cyan-100 hover:bg-cyan-500/20"><Download className="h-4 w-4" /> Åpne tilbud som PDF</a>}
                                 </div>
-                              )}
-
-                              {isOpen && (
-                                <div className="mt-5 border-t border-slate-800 pt-4">
-                                  <label
-                                    className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${
-                                      expandedOfferId === item.id && offerTermsConfirmed
-                                        ? "border-emerald-500/35 bg-emerald-500/[0.06]"
-                                        : "border-amber-400/70 bg-amber-500/[0.08] ring-2 ring-amber-400/40 shadow-[0_0_24px_rgba(245,184,0,0.35)] animate-pulse"
-                                    }`}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={
-                                        expandedOfferId === item.id &&
-                                        offerTermsConfirmed
-                                      }
-                                      onChange={(e) => {
-                                        setExpandedOfferId(item.id);
-                                        setOfferTermsConfirmed(e.target.checked);
-                                        if (e.target.checked) setOfferError("");
-                                      }}
-                                      className="mt-0.5 h-4 w-4 accent-[#F5B800]"
-                                    />
-                                    <span className="text-[11px] font-bold leading-5 text-slate-200">
-                                      Jeg har lest og godtar oppgitte priser og betingelser.
-                                    </span>
-                                  </label>
-
-                                  <div className="mt-4 flex flex-wrap justify-end gap-2">
-                                    <button
-                                      type="button"
-                                      disabled={updatingOffer}
-                                      onClick={() => respondToOffer(item.id, "reject")}
-                                      className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-bold text-slate-300 disabled:opacity-50"
-                                    >
-                                      Avvis
-                                    </button>
-                                    <button
-                                      type="button"
-                                      disabled={
-                                        updatingOffer ||
-                                        !offerTermsConfirmed ||
-                                        expandedOfferId !== item.id
-                                      }
-                                      onClick={() => respondToOffer(item.id, "accept")}
-                                      className={`rounded-xl bg-[#F5B800] px-4 py-2.5 text-xs font-black text-slate-950 disabled:opacity-40 ${
-                                        expandedOfferId === item.id && offerTermsConfirmed && !updatingOffer
-                                          ? "animate-pulse ring-2 ring-amber-300/70 shadow-[0_0_28px_rgba(245,184,0,0.45)]"
-                                          : ""
-                                      }`}
-                                    >
-                                      Aksepter tilbud
-                                    </button>
+                                <div className="space-y-4">
+                                  {propertyImage?.image_url && <img src={propertyImage.image_url} alt="Eiendommen tilbudet gjelder" className="h-44 w-full rounded-2xl border border-slate-700 object-cover" />}
+                                  <div className="rounded-2xl border border-slate-700 bg-[#0d2034] p-5">
+                                    <p className="flex items-center gap-2 text-sm font-black"><FileText className="h-5 w-5 text-amber-400" /> Prisoversikt</p>
+                                    {fixed && fixedPrice ? <>
+                                      {Array.isArray(item.price_breakdown) && item.price_breakdown.length > 0 && (
+                                        <div className="mt-4 overflow-hidden rounded-xl border border-white/10">
+                                          <div className="border-b border-white/10 bg-white/[0.06] px-3 py-2 text-[10px] font-black uppercase tracking-wider text-amber-300">Prisspesifikasjon – fordelt fastpris</div>
+                                          <div className="divide-y divide-white/10 px-3">
+                                            {item.price_breakdown.map(row => (
+                                              <div key={row.category} className="flex items-start justify-between gap-3 py-2.5 text-[11px]">
+                                                <span className="text-slate-300">{row.label}</span>
+                                                <strong className="shrink-0 text-right tabular-nums text-slate-100">kr {formatOfferAmount(row.amount_ex_vat)},-</strong>
+                                              </div>
+                                            ))}
+                                          </div>
+                                          <p className="border-t border-white/10 px-3 py-2 text-[10px] leading-4 text-slate-400">Fordeling av avtalt fastpris per kalkylekategori, som i tilbuds-PDF-en.</p>
+                                        </div>
+                                      )}
+                                      <p className="mt-5 text-[11px] text-slate-400">Fastpris eks. mva.</p><p className="mt-1 text-2xl font-black text-emerald-300">kr {fixedPrice},-</p>{incPrice && <div className="mt-3 border-t border-white/10 pt-3 text-[11px] text-slate-300">Mva.: kr {formatOfferAmount(Number(item.calculated_inc_vat) - Number(item.fixed_price ?? item.calculated_ex_vat))},-</div>}{incPrice && <p className="mt-2 text-sm font-bold text-white">Inkl. mva.: kr {incPrice},-</p>}</> : <div className="mt-4 space-y-3 text-xs">{(item.team_rate != null || item.hourly_rate != null) && <div className="flex justify-between gap-2"><span className="text-slate-400">{item.team_rate != null ? "Team per time" : "Timesats"}</span><strong>kr {formatOfferAmount(item.team_rate ?? item.hourly_rate)},- eks. mva.</strong></div>}{item.vehicle_rate != null && <div className="flex justify-between gap-2 border-t border-white/10 pt-3"><span className="text-slate-400">Bil / drift</span><strong>kr {formatOfferAmount(item.vehicle_rate)},- eks. mva.</strong></div>}{item.team_rate == null && item.hourly_rate == null && item.vehicle_rate == null && <p className="text-slate-400">Se avtalt pris i tilbudsdokumentet.</p>}</div>}
                                   </div>
                                 </div>
-                              )}
-                            </div>
-                          )}
-                        </article>
-                      );
-                    })
+                              </div>
+                              {isOpen && <div className="grid gap-4 border-t border-slate-700/70 p-5 md:grid-cols-[minmax(0,1fr)_minmax(270px,.8fr)] md:p-7">
+                                <div><p className="text-sm font-black">Før du svarer</p><p className="mt-2 text-xs leading-6 text-slate-400">Les hele tilbudet, omfanget og vilkårene. Aksepten gjelder dette tilbudet, ikke den tidligere avtalen.</p></div>
+                                <div className="rounded-2xl border border-slate-700 bg-slate-950/50 p-4">
+                                  <label className="flex cursor-pointer items-start gap-3 text-xs leading-5 text-slate-200"><input type="checkbox" className="mt-0.5 h-4 w-4 accent-emerald-500" checked={expandedOfferId === item.id && offerTermsConfirmed} onChange={event => { setExpandedOfferId(item.id); setOfferTermsConfirmed(event.target.checked); if (event.target.checked) setOfferError(""); }} /><span>Jeg har lest og godtar oppgitte priser, betingelser og arbeidsomfang.</span></label>
+                                  <button type="button" disabled={updatingOffer || !offerTermsConfirmed || expandedOfferId !== item.id} onClick={() => respondToOffer(item.id, "accept")} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-xs font-black text-slate-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"><CheckCircle2 className="h-4 w-4" /> Aksepter tilbud</button>
+                                  <button type="button" disabled={updatingOffer} onClick={() => { if (window.confirm("Vil du avvise dette tilbudet?")) void respondToOffer(item.id, "reject"); }} className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/60 bg-rose-500/15 px-4 py-3 text-xs font-black text-rose-200 hover:bg-rose-500/25 disabled:opacity-40"><X className="h-4 w-4" /> Avvis tilbud</button>
+                                </div>
+                              </div>}
+                            </>}
+                          </article>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               )}
@@ -3794,7 +3843,7 @@ export default function CustomerDashboard({
                   {reportPublished && (
                     <button
                       type="button"
-                      onClick={() => openCustomerPortalView("report")}
+                      onClick={() => openCustomerPortalView("documents")}
                       className="inline-flex items-center gap-2 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1.5 text-xs font-black text-emerald-300"
                     >
                       <FileCheck2 className="h-3.5 w-3.5" />
@@ -3822,15 +3871,15 @@ export default function CustomerDashboard({
               </div>
 
               <div className="pt-6">
-                <div className="flex items-start gap-3">
-                  <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-purple-500/10 text-purple-300">
-                    <Info className="h-4 w-4" />
+                <div className={`flex items-start gap-3 rounded-2xl border p-4 md:p-5 ${followupInProgress ? "border-amber-400/30 bg-gradient-to-r from-amber-500/15 to-amber-500/[0.035]" : "border-slate-700/60 bg-slate-900/40"}`}>
+                  <div className={`mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl ${followupInProgress ? "bg-amber-400/15 text-amber-300" : "bg-purple-500/10 text-purple-300"}`}>
+                    {followupInProgress ? <FileText className="h-5 w-5" /> : <Info className="h-5 w-5" />}
                   </div>
                   <div>
-                    <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Status akkurat nå</p>
-                    <p className="mt-1 max-w-3xl text-sm font-semibold leading-6 text-slate-100">
-                      {getCustomerStatusMessage()}
-                    </p>
+                    <p className="text-[9px] font-black uppercase tracking-[0.14em] text-amber-300">Status akkurat nå</p>
+                    {reportPublished && followupInProgress && <h3 className="mt-1 text-base font-black text-white">{currentFollowupHeadline}</h3>}
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200">{getCustomerStatusMessage()}</p>
+                    {followupOfferReady && <button type="button" onClick={() => { setOffersTab("current"); openCustomerPortalView("offers"); }} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-amber-400 px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-amber-300">Se og svar på tilbudet <ArrowRight className="h-4 w-4" /></button>}
                   </div>
                 </div>
               </div>
@@ -3839,46 +3888,53 @@ export default function CustomerDashboard({
             <aside className="border-t border-slate-800/80 bg-slate-950/35 p-6 lg:border-l lg:border-t-0 md:p-7">
               <p className="text-[9px] font-black uppercase tracking-[0.16em] text-amber-400">Neste steg</p>
               <h3 className="mt-2 text-lg font-black text-white">
-                {offer?.status === "publisert" && !offerExpired(offer)
-                  ? "Godkjenn oppdraget"
-                  : initialSchedulePending
-                  ? "Bekreft tidspunkt"
-                  : initialScheduleConfirmed && !preinspection?.submitted_at
-                  ? "Send inn opplysninger"
-                  : reportPublished
-                  ? "Rapporten er klar"
+                {originalWorkFinished
+                  ? currentFollowupHeadline
+                  : offer?.status === "publisert" && !offerExpired(offer) ? "Godkjenn oppdraget"
+                  : initialSchedulePending ? "Bekreft tidspunkt"
+                  : initialScheduleConfirmed && !preinspection?.submitted_at ? "Send inn opplysninger"
                   : "Følg saken videre"}
               </h3>
               <p className="mt-2 text-xs leading-5 text-slate-400">
-                {offer?.status === "publisert" && !offerExpired(offer)
+                {originalWorkFinished
+                  ? currentFollowupDescription
+                  : offer?.status === "publisert" && !offerExpired(offer)
                   ? "Pris og vilkår er klare. Åpne tilbudet og godkjenn når alt ser riktig ut."
-                  : initialSchedulePending
-                  ? "Prosjektansvarlig har foreslått et tidspunkt som venter på ditt svar."
+                  : initialSchedulePending ? "Prosjektansvarlig har foreslått et tidspunkt som venter på ditt svar."
                   : initialScheduleConfirmed && !preinspection?.submitted_at
                   ? "Tidspunktet er registrert. Legg inn bilder og opplysninger slik at teamet kan forberede besøket."
-                  : reportPublished
-                  ? "Den ferdige rapporten ligger tilgjengelig i kundeportalen."
                   : "Du kan følge status, avtaler og dokumentasjon fra menyen."}
               </p>
 
-              {followupSchedule?.schedule_date && (
-                <div className="mt-5 border-t border-slate-800/80 pt-4">
-                  <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-600">
-                    {initialScheduleConfirmed ? "Registrert tidspunkt" : "Foreslått tidspunkt"}
-                  </p>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-black text-white">
-                      {formatBookingDate(followupSchedule.schedule_date)}
-                    </span>
-                    <span className="rounded-lg bg-cyan-500/10 px-2.5 py-1 text-xs font-black text-cyan-300">
-                      kl. {String(followupSchedule.start_time || "").substring(0, 5)}
-                    </span>
-                  </div>
-                </div>
-              )}
+               {originalWorkFinished ? (
+                 <div className="mt-5 border-t border-slate-800/80 pt-4">
+                   <p className="text-[10px] font-black uppercase tracking-wide text-emerald-300">
+                     {originalWorkLabel} fullført
+                   </p>
+                   {originalWorkDate && (
+                     <p className="mt-2 text-sm font-black text-white">
+                       {formatBookingDate(originalWorkDate)}
+                       <span className="ml-2 text-[10px] font-medium text-slate-500">(oppdragsdato)</span>
+                     </p>
+                   )}
+                 </div>
+               ) : followupSchedule?.schedule_date ? (
+                 <div className="mt-5 border-t border-slate-800/80 pt-4">
+                   <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-600">
+                     {initialScheduleConfirmed ? "Registrert tidspunkt" : "Foreslått tidspunkt"}
+                   </p>
+                   <div className="mt-2 flex flex-wrap items-center gap-2">
+                     <span className="text-sm font-black text-white">{formatBookingDate(followupSchedule.schedule_date)}</span>
+                     <span className="rounded-lg bg-cyan-500/10 px-2.5 py-1 text-xs font-black text-cyan-300">
+                       kl. {String(followupSchedule.start_time || "").substring(0, 5)}
+                     </span>
+                   </div>
+                 </div>
+               ) : null}
 
               <div className="mt-6 grid gap-2">
-                {offer?.status === "publisert" && !offerExpired(offer) && (
+                {followupOfferReady && <button type="button" onClick={() => { setOffersTab("current"); openCustomerPortalView("offers"); }} className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-400 px-4 py-3 text-xs font-black text-slate-950 hover:bg-amber-300"><FileText className="h-4 w-4" />Se nytt tilbud</button>}
+                {!originalWorkFinished && offer?.status === "publisert" && !offerExpired(offer) && (
                   <button
                     type="button"
                     onClick={() => openCustomerPortalView("offers")}
@@ -3888,10 +3944,10 @@ export default function CustomerDashboard({
                     Åpne tilbudet
                   </button>
                 )}
-                {pendingOfferExpired && !newTimeRequestSent && (
+                {!originalWorkFinished && pendingOfferExpired && !newTimeRequestSent && (
                   <button type="button" onClick={() => openCustomerPortalView("offers")} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-4 py-3 text-xs font-black text-slate-950">Be om nytt tidspunkt</button>
                 )}
-                {initialSchedulePending && !pendingOfferExpired && (
+                {!originalWorkFinished && initialSchedulePending && !pendingOfferExpired && (
                   <button
                     type="button"
                     onClick={() => openCustomerPortalView("schedule")}
@@ -3901,7 +3957,7 @@ export default function CustomerDashboard({
                     Se tidspunkt
                   </button>
                 )}
-                {initialScheduleConfirmed && !preinspection?.submitted_at && (
+                {!originalWorkFinished && initialScheduleConfirmed && !preinspection?.submitted_at && (
                   <button
                     type="button"
                     onClick={() => setShowPreinspectionForm(true)}
@@ -3914,11 +3970,11 @@ export default function CustomerDashboard({
                 {reportPublished && (
                   <button
                     type="button"
-                    onClick={() => openCustomerPortalView("report")}
+                    onClick={() => openCustomerPortalView("documents")}
                     className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs font-black text-emerald-200"
                   >
                     <FileText className="h-4 w-4" />
-                    Se rapport
+                    Se rapport i dokumenter
                   </button>
                 )}
               </div>
@@ -3932,18 +3988,20 @@ export default function CustomerDashboard({
                 <p className="mt-1 text-xs text-slate-400">Hele prosessen samlet på én linje.</p>
               </div>
               <span className="text-[10px] font-bold text-slate-500">
-                Steg {Math.min(getCustomerProcessStep(), isInitialFieldFlow ? 6 : 6)} av 6
+                Steg {Math.min(originalWorkFinished ? (followupInProgress ? 6 : 5) : getCustomerProcessStep(), 6)} av 6
               </span>
             </div>
 
             <div className="overflow-x-auto pb-1">
               <div className="flex min-w-[720px] items-start">
-                {(isInitialFieldFlow
+                {(originalWorkFinished
+                  ? ["Bestilling", "Tilbud og avtale", "Avtalt tid", originalWorkLabel, "Rapport publisert", "Videre tiltak"]
+                  : isInitialFieldFlow
                   ? ["Bestilling", "Pris og vilkår", "Tidspunkt", "Opplysninger", initialServiceLabel, "Rapport"]
                   : ["Opplysninger", "Digital befaring", "Tilbud & plan", "Feltarbeid", "Rapport", "Videre oppfølging"]
                 ).map((title, index, arr) => {
                   const step = index + 1;
-                  const current = getCustomerProcessStep();
+                   const current = originalWorkFinished ? (followupInProgress ? 6 : 5) : getCustomerProcessStep();
                   const complete = step < current;
                   const active = step === current;
 
@@ -4619,7 +4677,7 @@ export default function CustomerDashboard({
         </section>
 
 
-        {reportPublished && (loadingFollowup || followupSchedule || followupError) && (
+        {!originalWorkFinished && reportPublished && !customerNextStep && (loadingFollowup || followupSchedule || followupError) && (
           <section className="rounded-3xl border border-cyan-500/30 bg-[#0b0f17] p-5 md:p-7 shadow-xl">
             <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-5">
               <div className="max-w-2xl">
@@ -4929,7 +4987,7 @@ export default function CustomerDashboard({
           </section>
         )}
 
-        {reportPublished && (
+        {false && reportPublished && (
           <section id="customer-report" className="scroll-mt-24 relative overflow-hidden rounded-3xl border border-emerald-500/35 bg-[#0b0f17] p-5 md:p-7 shadow-2xl">
             <div className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-emerald-500/[0.06] blur-3xl" />
 
@@ -4980,7 +5038,7 @@ export default function CustomerDashboard({
                       <p className="mt-1 text-xs font-extrabold text-white">
                         {report?.updated_at
                           ? new Date(
-                              String(report.updated_at).replace(" ", "T")
+                              String(report?.updated_at).replace(" ", "T")
                             ).toLocaleDateString("nb-NO", {
                               day: "2-digit",
                               month: "2-digit",
@@ -5112,7 +5170,39 @@ export default function CustomerDashboard({
           </section>
         )}
 
-        {completionReportPublished && (
+        {false && reportPublished && customerNextStep && (
+          <section className="mb-6 rounded-3xl border border-amber-500/30 bg-[#0b0f17] p-5 shadow-xl md:p-7" aria-label="Neste tiltak">
+            <div className="flex items-start gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-amber-500/25 bg-amber-500/10 text-amber-300">
+                <ClipboardList className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-amber-300">Neste tiltak etter Rapport 1</p>
+                <h2 className="mt-2 text-lg font-black text-white">{customerNextStep?.title}</h2>
+                <p className="mt-2 text-xs font-bold text-amber-200">
+                  {customerNextStep?.status === "offer_in_progress" ? "Pristilbud under utarbeidelse" :
+                   customerNextStep?.status === "offer_ready" ? "Pristilbud klart" :
+                   customerNextStep?.status === "offer_accepted" ? "Pristilbud akseptert" : "Videre oppfølging registrert"}
+                </p>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">{customerNextStep?.message}</p>
+                {customerNextStep?.annual_roof_inspection_recommended && (
+                  <p className="mt-4 border-t border-slate-800 pt-3 text-xs leading-5 text-slate-400">
+                    Vi anbefaler også årlig takkontroll som forebyggende vedlikehold, uavhengig av videre utbedring.
+                  </p>
+                )}
+                {customerNextStep?.status === "offer_ready" && (
+                  <button type="button" onClick={() => openCustomerPortalView("offers")}
+                    className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#F5B800] px-4 py-2.5 text-xs font-black text-slate-950">
+                    Se pristilbud <ArrowRight className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+
+        {false && completionReportPublished && (
           <section
             id="customer-report-2"
             className="scroll-mt-24 relative overflow-hidden rounded-3xl border border-cyan-500/30 bg-[#0b0f17] p-5 md:p-7 shadow-2xl"
@@ -5137,7 +5227,7 @@ export default function CustomerDashboard({
                   <p className="mt-2 text-[10px] text-slate-500">
                     Publisert {completionReportPublishedDate || "Tilgjengelig nå"}
                     {completionReport?.revision_no
-                      ? ` · Revisjon ${completionReport.revision_no}`
+                      ? ` · Revisjon ${completionReport?.revision_no}`
                       : ""}
                   </p>
                 </div>
@@ -5662,7 +5752,7 @@ export default function CustomerDashboard({
           </section>
         )}
 
-        {(offers.length > 0 || recommendedService) &&
+        {!originalWorkFinished && (offers.length > 0 || recommendedService) &&
           inq.stage !== "digital_befaring" && (
             <section id="customer-offers" className="scroll-mt-24 relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0b0f17] p-5 md:p-7 shadow-2xl">
               <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-amber-500/[0.04] blur-3xl" />
@@ -5763,7 +5853,7 @@ export default function CustomerDashboard({
                             >
                               <div className="flex min-w-0 items-center gap-3">
                                 <span className="text-sm font-black text-amber-300">
-                                  Tilbud #{item.id}
+                                  {item.offer_number || "Tilbud"}
                                 </span>
                                 <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-amber-300">
                                   Åpent
@@ -6015,7 +6105,7 @@ export default function CustomerDashboard({
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                               <div className="flex min-w-0 items-center gap-3">
                                 <span className="text-xs font-black text-slate-300">
-                                  Tilbud #{item.id}
+                                  {item.offer_number || "Tilbud"}
                                 </span>
                                 <span
                                   className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${
@@ -6075,16 +6165,16 @@ export default function CustomerDashboard({
             </section>
           )}
 
-        <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0b0f17] p-6 md:p-8 shadow-xl">
+        <section aria-label="Flere tjenester fra Taklekkasjevakten" className="relative mt-20 overflow-hidden rounded-[30px] border border-cyan-200/30 bg-gradient-to-br from-[#e5f8f8] via-[#eef4ff] to-[#fff0d8] p-6 text-slate-900 shadow-xl md:mt-36 md:p-8">
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-amber-400">
-                Videre oppfølging
+              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-teal-700">
+                Våre tjenester
               </p>
-              <h2 className="mt-2 text-xl md:text-2xl font-black text-white">
+              <h2 className="mt-2 text-xl md:text-2xl font-black text-slate-950">
                 Ta vare på taket videre
               </h2>
-              <p className="mt-2 text-xs md:text-sm text-slate-400">
+              <p className="mt-2 text-xs md:text-sm text-slate-600">
                 Tjenester som kan være aktuelle basert på arbeidet vi har utført.
               </p>
             </div>
@@ -6094,7 +6184,7 @@ export default function CustomerDashboard({
                 type="button"
                 onClick={() => setServiceSlide((prev) => Math.max(0, prev - 1))}
                 disabled={serviceSlide === 0}
-                className="w-10 h-10 rounded-xl border border-slate-700 bg-slate-950 text-slate-300 hover:text-white hover:border-slate-600 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition-all"
+                className="w-10 h-10 rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-teal-50 hover:border-teal-500 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition-all"
                 aria-label="Forrige tjenester"
               >
                 <ChevronLeft className="w-5 h-5" />
@@ -6104,7 +6194,7 @@ export default function CustomerDashboard({
                 type="button"
                 onClick={() => setServiceSlide((prev) => Math.min(1, prev + 1))}
                 disabled={serviceSlide === 1}
-                className="w-10 h-10 rounded-xl border border-slate-700 bg-slate-950 text-slate-300 hover:text-white hover:border-slate-600 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition-all"
+                className="w-10 h-10 rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-teal-50 hover:border-teal-500 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition-all"
                 aria-label="Neste tjenester"
               >
                 <ChevronRight className="w-5 h-5" />
@@ -6205,7 +6295,7 @@ export default function CustomerDashboard({
                   {visibleServices.map((service) => (
                     <article
                       key={service.title}
-                      className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/70 flex flex-col min-h-[430px]"
+                      className="overflow-hidden rounded-2xl border border-white/80 bg-white shadow-md flex flex-col min-h-[430px] transition-transform hover:-translate-y-1 hover:shadow-xl"
                     >
                       <div className="relative h-56 overflow-hidden bg-slate-950">
                         <img
@@ -6235,7 +6325,7 @@ export default function CustomerDashboard({
                           {service.highlights.map((item) => (
                             <li
                               key={item}
-                              className="flex items-start gap-2 text-[11px] leading-5 text-slate-300"
+                              className="flex items-start gap-2 text-[11px] leading-5 text-slate-700"
                             >
                               <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />
                               <span>{item}</span>
