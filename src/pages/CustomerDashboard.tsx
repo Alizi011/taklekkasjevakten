@@ -1,3 +1,10 @@
+import CustomerAgreementSchedule from "@/components/CustomerAgreementSchedule";
+import CustomerFollowupTimeline from "@/components/CustomerFollowupTimeline";
+import CustomerAgreementSigners from "../components/CustomerAgreementSigners";
+import { UsersRound } from "lucide-react";
+import CustomerMemberActivation from "../components/CustomerMemberActivation";
+import CustomerBoardAccess from "../components/CustomerBoardAccess";
+import CustomerAccountSwitcher from "@/components/CustomerAccountSwitcher";
 import { useEffect, useState } from "react";
 import LiveInspectionRoom from "../components/LiveInspectionRoom";
 import CustomerInquiryMessages from "../components/CustomerInquiryMessages";
@@ -192,6 +199,8 @@ interface CustomerOffer {
   published_at?: string | null;
   accepted_at?: string | null;
   rejected_at?: string | null;
+  revision_parent_offer_id?: number | null;
+  revision_resolution?: string | null;
   expires_at?: string | null;
   is_expired?: boolean;
 }
@@ -672,6 +681,7 @@ export default function CustomerDashboard({
   const [emailOrPhone, setEmailOrPhone] = useState("");
   const [accessCode, setAccessCode] = useState("");
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [boardViewOpen, setBoardViewOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [tokenLoginLoading, setTokenLoginLoading] = useState(() => {
     if (previewMode || typeof window === "undefined") return false;
@@ -686,6 +696,10 @@ export default function CustomerDashboard({
   const [tokenLoginError, setTokenLoginError] = useState("");
   const [customerNextStep, setCustomerNextStep] = useState<CustomerNextStep | null>(null);
   const [inquiryData, setInquiryData] = useState<any>(null);
+  const [projectManagerContact, setProjectManagerContact] = useState<{
+    name: string;
+    phone: string;
+  } | null>(null);
   const [verificationSent, setVerificationSent] = useState(false);
   const [verificationId, setVerificationId] = useState("");
   const [verificationInquiryId, setVerificationInquiryId] = useState<number | null>(null);
@@ -693,6 +707,7 @@ export default function CustomerDashboard({
   const [bookingSuccess, setBookingSuccess] = useState(false);
   const [offer, setOffer] = useState<CustomerOffer | null>(null);
   const [offers, setOffers] = useState<CustomerOffer[]>([]);
+  const [agreementSignerRefresh, setAgreementSignerRefresh] = useState(0);
   const [expandedOfferId, setExpandedOfferId] = useState<number | null>(null);
   const [offersTab, setOffersTab] = useState<"current" | "history" | "appointments">("current");
   const [reportExpanded, setReportExpanded] = useState(false);
@@ -1255,12 +1270,36 @@ export default function CustomerDashboard({
       (file) => file.category === category
     );
 
-  const formatBookingDate = (dateString: string) =>
-    new Intl.DateTimeFormat("nb-NO", {
+  const formatBookingDate = (dateString: string) => {
+    const raw = String(dateString ?? "").trim();
+
+    if (!raw || raw === "0000-00-00") {
+      return "Dato ikke registrert";
+    }
+
+    const datePart = raw.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+
+    if (!datePart) {
+      return "Dato ikke registrert";
+    }
+
+    const date = new Date(`${datePart}T12:00:00`);
+
+    if (
+      !Number.isFinite(date.getTime()) ||
+      date.getFullYear() !== Number(datePart.slice(0, 4)) ||
+      date.getMonth() + 1 !== Number(datePart.slice(5, 7)) ||
+      date.getDate() !== Number(datePart.slice(8, 10))
+    ) {
+      return "Dato ikke registrert";
+    }
+
+    return new Intl.DateTimeFormat("nb-NO", {
       weekday: "long",
       day: "numeric",
       month: "long",
-    }).format(new Date(`${dateString}T12:00:00`));
+    }).format(date);
+  };
 
   const fetchDigitalInspectionSlots = async (inquiryId: number) => {
     setLoadingDigitalSlots(true);
@@ -1465,20 +1504,7 @@ export default function CustomerDashboard({
         rawOffers = [];
       }
 
-      if (rawOffers.length === 0) {
-        const res = await fetch(apiUrl(`/offers.php?inquiry_id=${inquiryId}`));
-        const data = await res.json();
 
-        if (!res.ok || !data.success) {
-          throw new Error(data.message || "Kunne ikke hente tilbud.");
-        }
-
-        rawOffers = Array.isArray(data.offers)
-          ? data.offers
-          : data.offer
-          ? [data.offer]
-          : [];
-      }
 
       // Interne utkast skal aldri vises i kundeportalen.
       const customerOffers = rawOffers
@@ -1536,6 +1562,12 @@ export default function CustomerDashboard({
       return;
     }
 
+    if (action === "accept" && offers.some((other) =>
+      other.id !== targetOffer.id && other.status === "publisert" &&
+      ((targetOffer.revision_parent_offer_id || targetOffer.id) ===
+        (other.revision_parent_offer_id || other.id))
+    ) && !window.confirm(`Akseptere ${targetOffer.offer_number || "det valgte tilbudet"}? Andre publiserte revisjoner av samme tilbud blir automatisk avvist.`)) return;
+
     if (action === "accept" && !offerTermsConfirmed) {
       setOfferError(
         "Bekreft oppgitte satser og betingelser før du aksepterer tilbudet."
@@ -1554,6 +1586,7 @@ export default function CustomerDashboard({
         body: JSON.stringify({
           id: targetOffer.id,
           action,
+          session_token: window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY),
         }),
       });
 
@@ -1850,77 +1883,6 @@ export default function CustomerDashboard({
       await Promise.allSettled(enrichmentTasks);
     } catch (err) {
       console.error("Feil ved henting av kundedata:", err);
-    }
-  };
-
-  const getStageBadge = (
-    stage: string,
-    recommendedService?: string | null
-  ) => {
-    // Ikke vis aktivt feltarbeid etter at sluttrapporten er publisert.
-    if (inquiryData?.report?.status === "publisert" && inquiryData?.report?.pdf_url) {
-      return (
-        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-bold text-emerald-300">
-          {followupInProgress ? "Videre oppfølging" : "Lekkasjesøk gjennomført"}
-        </span>
-      );
-    }
-    switch (stage) {
-      case "digital_befaring":
-        return (
-          <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-full text-xs font-bold">
-            1. Digital befaring
-          </span>
-        );
-
-      case "utfonring_felt": {
-        const offerAccepted =
-          offer?.status === "akseptert" ||
-          String(inq.status || "").toLowerCase() === "tilbud_akseptert";
-
-        return (
-          <span
-            className={`px-3 py-1 rounded-full text-xs font-bold border ${
-              offerAccepted
-                ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
-                : "bg-purple-500/10 text-purple-300 border-purple-500/30"
-            }`}
-          >
-            {offerAccepted ? "3. Feltarbeid" : "2. Tilbud & plan"}
-            {recommendedService
-              ? ` · ${getServiceLabel(recommendedService)}`
-              : ""}
-          </span>
-        );
-      }
-
-      case "rapport_funn":
-        return (
-          <span className="px-3 py-1 bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 rounded-full text-xs font-bold">
-            3. Rapport & funn
-          </span>
-        );
-
-      case "varige_tiltak":
-        return (
-          <span className="px-3 py-1 bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded-full text-xs font-bold">
-            4. Varige tiltak
-          </span>
-        );
-
-      case "garanti_5ar":
-        return (
-          <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-full text-xs font-bold">
-            5. 5 års garanti
-          </span>
-        );
-
-      default:
-        return (
-          <span className="px-3 py-1 bg-slate-800 text-slate-400 border border-slate-700 rounded-full text-xs font-bold">
-            Under behandling
-          </span>
-        );
     }
   };
 
@@ -2498,6 +2460,103 @@ export default function CustomerDashboard({
     inquiryData?.inquiry?.booking_time,
   ]);
 
+  useEffect(() => {
+    const inquiryId = Number(inquiryData?.inquiry?.id || 0);
+
+    setProjectManagerContact(null);
+
+    if (!isLoggedIn || !inquiryId) return;
+
+    const controller = new AbortController();
+
+    const fetchProjectManager = async () => {
+      try {
+        const token = previewMode
+          ? ""
+          : window.localStorage.getItem(
+              CUSTOMER_PORTAL_SESSION_STORAGE_KEY
+            ) || "";
+
+        if (!previewMode && !token) return;
+
+        const response = await fetch(
+          apiUrl("/customer_project_manager.php"),
+          {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            signal: controller.signal,
+            body: JSON.stringify({
+              inquiry_id: inquiryId,
+              preview_mode: previewMode,
+              session_token: token
+            })
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(
+            data.message || "Kunne ikke hente prosjektansvarlig."
+          );
+        }
+
+        if (!controller.signal.aborted) {
+          setProjectManagerContact(data.project_manager || null);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error("Prosjektansvarlig:", error);
+        }
+      }
+    };
+
+    void fetchProjectManager();
+
+    return () => controller.abort();
+  }, [isLoggedIn, inquiryData?.inquiry?.id, previewMode]);
+  const memberParams = new URLSearchParams(window.location.search);
+  const activationInquiryId = Number(
+    memberParams.get("member_inquiry") || 0
+  );
+  const activationMemberId = Number(
+    memberParams.get("member_id") || 0
+  );
+
+  if (
+    !previewMode &&
+    Number.isSafeInteger(activationInquiryId) &&
+    Number.isSafeInteger(activationMemberId) &&
+    activationInquiryId > 0 &&
+    activationMemberId > 0
+  ) {
+    return (
+      <CustomerMemberActivation
+        inquiryId={activationInquiryId}
+        memberId={activationMemberId}
+        endpoint={apiUrl("/customer_member_login.php")}
+        onSuccess={async (token, inquiryId) => {
+          window.localStorage.setItem(
+            CUSTOMER_PORTAL_SESSION_STORAGE_KEY,
+            token
+          );
+
+          await fetchCustomerData(inquiryId);
+
+          window.history.replaceState(
+            {},
+            document.title,
+            window.location.pathname
+          );
+
+          setIsLoggedIn(true);
+        }}
+      />
+    );
+  }
   if (tokenLoginLoading) {
     return (
       <div className="min-h-screen bg-[#070a11] text-white flex flex-col justify-center items-center px-4">
@@ -2760,15 +2819,13 @@ export default function CustomerDashboard({
     followupStatus === "akseptert" || nextStepStatus === "offer_accepted"
   );
   const followupOfferRejected = reportPublished && followupStatus === "avvist";
-  const followupInProgress = followupUnderPreparation || followupOfferReady || followupOfferAccepted || followupOfferRejected ||
-    (reportPublished && Boolean(customerNextStep) && nextStepStatus !== "registered");
-  const currentFollowupHeadline = followupOfferAccepted ? "Tilbud på videre utbedring er akseptert"
+  const currentFollowupHeadline = followupOfferAccepted ? "Bekreft oppstartsdato"
     : followupOfferReady ? "Nytt tilbud på utbedring er klart"
     : followupOfferRejected ? "Tilbud på videre utbedring er avslått"
     : followupUnderPreparation ? "Vi utarbeider et tilbud på varig utbedring"
     : customerNextStep?.title || "Rapporten er klar";
   const currentFollowupDescription = followupOfferAccepted
-    ? "Du har akseptert tilbudet. Vi kontakter deg om den videre planleggingen."
+    ? "Prosjektansvarlig har valgt oppstartsdato for utbedringsarbeidet. Kontroller datoen og forventet varighet, og bekreft at opplysningene stemmer. Deretter går du videre til arbeidsavtalen."
     : followupOfferReady
     ? "Et nytt tilbud er publisert. Du kan se priser og vilkår og svare under Tilbud og avtaler."
     : followupOfferRejected
@@ -3252,7 +3309,8 @@ export default function CustomerDashboard({
               <p className="text-[10px] text-slate-500">Kundeportal</p>
             </div>
 
-            {previewMode && onBackToMain ? (
+
+{previewMode && onBackToMain ? (
               <button
                 type="button"
                 onClick={onBackToMain}
@@ -3286,7 +3344,14 @@ export default function CustomerDashboard({
 
       <div className="mx-auto grid max-w-[1440px] grid-cols-1 md:grid-cols-[190px_minmax(0,1fr)]">
         <aside className="hidden min-h-[calc(100vh-73px)] border-r border-slate-800/80 bg-[#071321] px-3 py-6 md:block">
-          <nav className="space-y-2">
+          <CustomerAccountSwitcher
+              inquiryId={Number(inq.id)}
+              endpoint={apiUrl("/customer_accounts.php")}
+              previewMode={previewMode}
+              currentAccountName={String(inq.customer_name || '')}
+            />
+
+<nav className="space-y-2">
             {[
               { key: "overview" as const, label: "Oversikt", icon: Home },
               { key: "offers" as const, label: "Tilbud og avtaler", icon: ShieldCheck },
@@ -3300,7 +3365,7 @@ export default function CustomerDashboard({
                 <button
                   key={key}
                   type="button"
-                  onClick={() => openCustomerPortalView(key)}
+                  onClick={() => { setBoardViewOpen(false); openCustomerPortalView(key); }}
                   className={`flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3 text-left text-xs font-bold transition ${
                     active
                       ? "border border-amber-500/15 bg-amber-500/10 text-amber-300"
@@ -3343,6 +3408,33 @@ export default function CustomerDashboard({
         </aside>
 
         <main className="space-y-8 px-4 py-6 md:px-7 lg:px-10">
+        {boardViewOpen && (
+          <section className="space-y-5">
+            <div>
+              <h1 className="text-2xl font-black text-white">
+                Styret og tilganger
+              </h1>
+              <p className="mt-2 text-sm text-slate-400">
+                Hent styremedlemmer fra Brreg, administrer tilganger
+                og inviter medlemmer til kundeportalen.
+              </p>
+            </div>
+
+            <CustomerBoardAccess
+              inquiryId={Number(inq.id)}
+              sessionToken={window.localStorage.getItem(
+                CUSTOMER_PORTAL_SESSION_STORAGE_KEY
+              ) || ""}
+              boardEndpoint={apiUrl("/customer_board_candidates.php")}
+              membersEndpoint={apiUrl("/customer_case_members.php")}
+              previewMode={previewMode}
+              embedded
+            />
+          </section>
+        )}
+
+        <div className={boardViewOpen ? "hidden" : "contents"}>
+        
 
           {customerPortalView !== "overview" && (
             <section className="rounded-3xl border border-slate-800 bg-[#0b0f17] p-6 shadow-xl md:p-8">
@@ -3366,7 +3458,7 @@ export default function CustomerDashboard({
                     {customerPortalView === "report"
                       ? "Rapporter og faglig dokumentasjon som er publisert i saken."
                       : customerPortalView === "offers"
-                      ? "Alle kundesynlige tilbud, priser, vilkår og tidligere svar."
+                      ? "Bekreft oppstartsdato, administrer signatarer og se tilbud og avtaledokumenter."
                       : customerPortalView === "schedule"
                       ? "Gjeldende avtale, tidspunkt og status for oppdraget."
                       : customerPortalView === "documents"
@@ -3470,6 +3562,35 @@ export default function CustomerDashboard({
               )}
 
               {customerPortalView === "offers" && (
+  <>
+  
+  {followupOfferAccepted && (
+    <div className="mb-4 rounded-xl border border-slate-700 bg-slate-900/30 p-4 text-xs text-slate-300">
+      Registrert oppstart og kundens bekreftelse finner du i høyrepanelet på oversikten.
+      <button type="button" onClick={() => openCustomerPortalView("overview")}
+        className="ml-2 font-bold text-amber-300 hover:underline">Gå til oppstart</button>
+    </div>
+  )}
+  {!followupOfferAccepted && (
+    <CustomerAgreementSchedule
+      inquiryId={Number(inq.id)}
+      sessionToken={previewMode ? "" : (window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || "")}
+      endpoint={apiUrl("/customer_agreement_schedule.php")}
+      previewMode={previewMode}
+      onAgreementCreated={() => setAgreementSignerRefresh(n => n + 1)}
+    />
+  )}
+<CustomerAgreementSigners
+    key={agreementSignerRefresh}
+    inquiryId={Number(inq.id)}
+    sessionToken={window.localStorage.getItem(
+      CUSTOMER_PORTAL_SESSION_STORAGE_KEY
+    ) || ""}
+    previewMode={previewMode}
+  />
+</>
+)}
+{customerPortalView === "offers" && (
                 <div className="mt-6 space-y-5">
                   <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-4">
                     {([ ["current", "Aktuelle tilbud"], ["history", "Tidligere avtaler"], ["appointments", "Avtaler og oppdrag"] ] as const).map(([key, label]) => (
@@ -3498,16 +3619,16 @@ export default function CustomerDashboard({
                           {newTimeRequestSent ? <p className="mt-3 text-xs text-emerald-300">Forespørselen er registrert.</p> : <button type="button" onClick={requestNewTime} disabled={requestingNewTime} className="mt-3 rounded-xl bg-amber-400 px-4 py-2.5 text-xs font-black text-slate-950 disabled:opacity-50">{requestingNewTime ? "Sender…" : "Be om nytt tidspunkt"}</button>}
                         </div>
                       )}
-                      {offers.filter(item => offersTab === "history" ? item.status !== "publisert" || offerExpired(item) : item.status === "publisert" && !offerExpired(item)).length === 0 ? (
+                      {offers.filter(item => offersTab === "history" ? (item.status !== "publisert" || offerExpired(item)) && !(followupOfferAccepted && item.id === newestFollowupOffer?.id && item.status === "akseptert") : (item.status === "publisert" && !offerExpired(item)) || (followupOfferAccepted && item.id === newestFollowupOffer?.id && item.status === "akseptert")).length === 0 ? (
                         <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-8 text-center">
                           <ShieldCheck className="mx-auto h-8 w-8 text-slate-600" />
                           <p className="mt-3 text-sm font-black">{offersTab === "history" ? "Ingen tidligere avtaler" : "Ingen åpne tilbud akkurat nå"}</p>
                           <p className="mt-2 text-xs text-slate-400">Publiserte tilbud vises her når de er tilgjengelige.</p>
                         </div>
-                      ) : offers.filter(item => offersTab === "history" ? item.status !== "publisert" || offerExpired(item) : item.status === "publisert" && !offerExpired(item)).map(item => {
+                      ) : offers.filter(item => offersTab === "history" ? (item.status !== "publisert" || offerExpired(item)) && !(followupOfferAccepted && item.id === newestFollowupOffer?.id && item.status === "akseptert") : (item.status === "publisert" && !offerExpired(item)) || (followupOfferAccepted && item.id === newestFollowupOffer?.id && item.status === "akseptert")).map(item => {
                         const isOpen = item.status === "publisert" && !offerExpired(item);
                         const isFollowup = item.offer_context === "followup";
-                        const expanded = isOpen || expandedOfferId === item.id;
+                        const expanded = isOpen || (followupOfferAccepted && item.id === newestFollowupOffer?.id && item.status === "akseptert") || expandedOfferId === item.id;
                         const fixed = String(item.pricing_mode || "").toLowerCase() === "fixed";
                         const fixedPrice = formatOfferAmount(item.fixed_price ?? item.calculated_ex_vat);
                         const incPrice = formatOfferAmount(item.calculated_inc_vat);
@@ -3515,7 +3636,7 @@ export default function CustomerDashboard({
                           <article key={`offer-design-${item.id}`} className={`overflow-hidden rounded-3xl border shadow-xl ${isOpen ? "border-amber-500/35 bg-[#0b1422]" : "border-slate-700 bg-[#0b1422]"}`}>
                             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 p-5 md:p-7">
                               <div className="min-w-0 flex-1">
-                                <span className={`inline-flex rounded-full px-3 py-1 text-[10px] font-black ${isOpen ? "bg-emerald-400 text-slate-950" : "bg-slate-800 text-slate-200"}`}>{isOpen ? "Nytt tilbud" : item.status === "akseptert" ? "Akseptert avtale" : offerExpired(item) ? "Utløpt tilbud" : "Tidligere tilbud"}</span>
+                                <span className={`inline-flex rounded-full px-3 py-1 text-[10px] font-black ${isOpen ? "bg-emerald-400 text-slate-950" : "bg-slate-800 text-slate-200"}`}>{isOpen ? (item.revision_parent_offer_id ? "Revidert tilbud – kan aksepteres" : "Tilbud – kan aksepteres") : item.status === "akseptert" ? "Akseptert tilbud" : offerExpired(item) ? "Utløpt tilbud" : "Tidligere tilbud"}</span>
                                 <h2 className="mt-3 text-xl font-black leading-tight md:text-2xl">{item.title || (isFollowup ? "Tilbud på videre utbedring" : getServiceLabel(item.service))}</h2>
                                 <p className="mt-2 text-xs leading-6 text-slate-400">{isFollowup ? "Et nytt tilbud om videre utbedring. Den opprinnelige avtalen og rapporten er bevart." : "Gjennomgå pris, arbeidsbeskrivelse og avtalte vilkår."}</p>
                               </div>
@@ -3838,57 +3959,173 @@ export default function CustomerDashboard({
                   </div>
                 </div>
 
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  {getStageBadge(inq.stage, inq.recommended_service)}
-                  {reportPublished && (
+                
+              </div>
+
+                            {/* CUSTOMER_CONTACT_CARDS_INSIDE_PROPERTY */}
+              <div className="mt-5 grid grid-cols-1 gap-3 border-y border-slate-800/80 py-4 sm:grid-cols-2">
+
+                <section className="flex flex-col rounded-xl border border-slate-700/70 bg-[#111d2c] p-3.5">
+                  <div className="flex items-center gap-2">
+                    <UsersRound className="h-4 w-4 text-amber-400" />
+                    <h3 className="text-xs font-black text-white">
+                      Prosjektansvarlig
+                    </h3>
+                  </div>
+
+                  <p className="mt-2 text-sm font-bold text-white">
+                    {String(projectManagerContact?.name || "Ikke oppgitt")}
+                  </p>
+
+                  <div className="mt-2 flex flex-wrap items-center gap-x-8 gap-y-3">
+                    {(() => {
+                      const phone = String(projectManagerContact?.phone || "").trim();
+
+                      return /^\+?[0-9\s-]{6,20}$/.test(phone) ? (
+                        <a
+                          href={`tel:${phone.replace(/[^0-9+]/g, "")}`}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-300 hover:underline"
+                        >
+                          <PhoneCall className="h-3.5 w-3.5" />
+                          {phone}
+                        </a>
+                      ) : (
+                        <span className="text-xs text-slate-500">
+                          Telefon ikke tilgjengelig
+                        </span>
+                      );
+                    })()}
+
                     <button
                       type="button"
-                      onClick={() => openCustomerPortalView("documents")}
-                      className="inline-flex items-center gap-2 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1.5 text-xs font-black text-emerald-300"
+                      onClick={() => {
+                        setBoardViewOpen(false);
+                        openCustomerPortalView("messages");
+                      }}
+                      className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-1.5 text-[11px] font-bold text-amber-200 hover:bg-amber-500/20"
                     >
-                      <FileCheck2 className="h-3.5 w-3.5" />
-                      Rapport klar
+                      Send melding
                     </button>
-                  )}
-                </div>
-              </div>
+                  </div>
+                </section>
 
-              <div className="mt-7 grid grid-cols-1 border-y border-slate-800/80 sm:grid-cols-3 sm:divide-x sm:divide-slate-800/80">
-                <div className="py-4 sm:pr-5">
-                  <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-600">Telefon</p>
-                  <p className="mt-1 text-sm font-black text-amber-300">{inq.phone || "Ikke oppgitt"}</p>
-                </div>
-                <div className="border-t border-slate-800/80 py-4 sm:border-t-0 sm:px-5">
-                  <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-600">E-post</p>
-                  <p className="mt-1 truncate text-sm font-bold text-slate-200">{inq.email || "Ikke oppgitt"}</p>
-                </div>
-                <div className="border-t border-slate-800/80 py-4 sm:border-t-0 sm:pl-5">
-                  <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-600">Pris / avtale</p>
-                  <p className="mt-1 text-sm font-black text-emerald-300">
-                    {inq.estimated_price || (offer?.status === "publisert" ? "Tilbud klart" : "Under behandling")}
+                <section className="flex flex-col rounded-xl border border-cyan-500/25 bg-[#111d2c] p-3.5">
+                  <div className="flex items-center gap-2">
+                    <UsersRound className="h-4 w-4 text-cyan-300" />
+                    <h3 className="text-xs font-black text-white">
+                      Styret og tilganger
+                    </h3>
+                  </div>
+
+                  <p className="mt-2 text-xs text-slate-400">
+                    Administrer tilganger
                   </p>
+
+                  <button
+                    type="button"
+                    onClick={() => setBoardViewOpen(true)}
+                    className="mt-3 w-fit rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-[11px] font-bold text-cyan-200 hover:bg-cyan-500/20"
+                  >
+                    Send invitasjon
+                  </button>
+                </section>
+
+              </div>
+{/* DITT PROSJEKT - OVERSIKT */}
+              <div className="mt-6 space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
+                      Ditt prosjekt
+                    </p>
+                    <h3 className="mt-2 text-lg font-black text-white">
+                      Arbeidet på eiendommen
+                    </h3>
+                    <p className="mt-1 text-xs leading-5 text-slate-400">
+                      Fra skadeundersøkelse til ferdig utbedring og dokumentasjon.
+                    </p>
+                  </div>
+                  <Hammer className="mt-1 h-6 w-6 shrink-0 text-amber-400" />
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="rounded-xl border border-slate-800 bg-[#111d2c] px-2 py-3 text-center">
+                    {reportPublished ? (
+                      <CheckCircle2 className="mx-auto h-5 w-5 text-emerald-400" />
+                    ) : (
+                      <Clock3 className="mx-auto h-5 w-5 text-slate-500" />
+                    )}
+                    <p className="mt-2 text-xs font-bold text-white">Undersøkt</p>
+                    <p className="mt-1 text-[10px] leading-4 text-slate-400">
+                      {reportPublished ? "Rapport klar" : "Under behandling"}
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-800 bg-[#111d2c] px-2 py-3 text-center">
+                    {followupOfferAccepted ? (
+                      <CheckCircle2 className="mx-auto h-5 w-5 text-emerald-400" />
+                    ) : (
+                      <Clock3 className="mx-auto h-5 w-5 text-slate-500" />
+                    )}
+                    <p className="mt-2 text-xs font-bold text-white">Bestilt</p>
+                    <p className="mt-1 text-[10px] leading-4 text-slate-400">
+                      {followupOfferAccepted
+                        ? "Tilbud akseptert"
+                        : followupOfferReady
+                        ? "Tilbud til vurdering"
+                        : "Avventer"}
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-2 py-3 text-center">
+                    {completionReportPublished ? (
+                      <CheckCircle2 className="mx-auto h-5 w-5 text-emerald-400" />
+                    ) : (
+                      <Clock3 className="mx-auto h-5 w-5 text-amber-400" />
+                    )}
+                    <p className="mt-2 text-xs font-bold text-white">Utbedring</p>
+                    <p className="mt-1 text-[10px] leading-4 text-slate-400">
+                      {completionReportPublished
+                        ? "Rapport 2 klar"
+                        : followupOfferAccepted
+                        ? "Videre arbeid"
+                        : "Neste fase"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-800/80 pt-4">
+                  <div className="flex items-start gap-3">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-800/70">
+                      <ClipboardList className="h-4 w-4 text-amber-400" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-white">
+                        Siste prosjektstatus
+                      </p>
+                      <p className="mt-1 text-[11px] leading-5 text-slate-400">
+                        {completionReportPublished
+                          ? "Utbedringen er dokumentert og Rapport 2 er publisert."
+                          : followupOfferAccepted
+                          ? "Oppfølgingstilbudet er akseptert. Følg oppstart og avtale i høyrepanelet."
+                          : followupOfferReady
+                          ? "Oppfølgingstilbudet er klart for gjennomgang."
+                          : reportPublished
+                          ? "Undersøkelsen er gjennomført og Rapport 1 er publisert."
+                          : "Saken er registrert og følges opp av prosjektansvarlig."}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <div className="pt-6">
-                <div className={`flex items-start gap-3 rounded-2xl border p-4 md:p-5 ${followupInProgress ? "border-amber-400/30 bg-gradient-to-r from-amber-500/15 to-amber-500/[0.035]" : "border-slate-700/60 bg-slate-900/40"}`}>
-                  <div className={`mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl ${followupInProgress ? "bg-amber-400/15 text-amber-300" : "bg-purple-500/10 text-purple-300"}`}>
-                    {followupInProgress ? <FileText className="h-5 w-5" /> : <Info className="h-5 w-5" />}
-                  </div>
-                  <div>
-                    <p className="text-[9px] font-black uppercase tracking-[0.14em] text-amber-300">Status akkurat nå</p>
-                    {reportPublished && followupInProgress && <h3 className="mt-1 text-base font-black text-white">{currentFollowupHeadline}</h3>}
-                    <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200">{getCustomerStatusMessage()}</p>
-                    {followupOfferReady && <button type="button" onClick={() => { setOffersTab("current"); openCustomerPortalView("offers"); }} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-amber-400 px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-amber-300">Se og svar på tilbudet <ArrowRight className="h-4 w-4" /></button>}
-                  </div>
-                </div>
-              </div>
+
             </div>
 
             <aside className="border-t border-slate-800/80 bg-slate-950/35 p-6 lg:border-l lg:border-t-0 md:p-7">
               <p className="text-[9px] font-black uppercase tracking-[0.16em] text-amber-400">Neste steg</p>
               <h3 className="mt-2 text-lg font-black text-white">
-                {originalWorkFinished
+                {followupOfferAccepted ? "Bekreft oppstart" : originalWorkFinished
                   ? currentFollowupHeadline
                   : offer?.status === "publisert" && !offerExpired(offer) ? "Godkjenn oppdraget"
                   : initialSchedulePending ? "Bekreft tidspunkt"
@@ -3896,7 +4133,7 @@ export default function CustomerDashboard({
                   : "Følg saken videre"}
               </h3>
               <p className="mt-2 text-xs leading-5 text-slate-400">
-                {originalWorkFinished
+                {followupOfferAccepted ? "Prosjektansvarlig har registrert oppstartsdato og forventet varighet. Kontroller og svar nedenfor." : originalWorkFinished
                   ? currentFollowupDescription
                   : offer?.status === "publisert" && !offerExpired(offer)
                   ? "Pris og vilkår er klare. Åpne tilbudet og godkjenn når alt ser riktig ut."
@@ -3906,31 +4143,23 @@ export default function CustomerDashboard({
                   : "Du kan følge status, avtaler og dokumentasjon fra menyen."}
               </p>
 
-               {originalWorkFinished ? (
-                 <div className="mt-5 border-t border-slate-800/80 pt-4">
-                   <p className="text-[10px] font-black uppercase tracking-wide text-emerald-300">
-                     {originalWorkLabel} fullført
-                   </p>
-                   {originalWorkDate && (
-                     <p className="mt-2 text-sm font-black text-white">
-                       {formatBookingDate(originalWorkDate)}
-                       <span className="ml-2 text-[10px] font-medium text-slate-500">(oppdragsdato)</span>
-                     </p>
-                   )}
-                 </div>
-               ) : followupSchedule?.schedule_date ? (
-                 <div className="mt-5 border-t border-slate-800/80 pt-4">
-                   <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-600">
-                     {initialScheduleConfirmed ? "Registrert tidspunkt" : "Foreslått tidspunkt"}
-                   </p>
-                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                     <span className="text-sm font-black text-white">{formatBookingDate(followupSchedule.schedule_date)}</span>
-                     <span className="rounded-lg bg-cyan-500/10 px-2.5 py-1 text-xs font-black text-cyan-300">
-                       kl. {String(followupSchedule.start_time || "").substring(0, 5)}
-                     </span>
-                   </div>
-                 </div>
-               ) : null}
+              {followupOfferAccepted ? (
+                <CustomerAgreementSchedule
+                  inquiryId={Number(inq.id)}
+                  sessionToken={previewMode ? "" : (window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || "")}
+                  endpoint={apiUrl("/customer_agreement_schedule.php")}
+                  previewMode={previewMode}
+                  compact
+                  onAgreementCreated={() => setAgreementSignerRefresh(n => n + 1)}
+                  onStatusChange={() => setAgreementSignerRefresh(n => n + 1)}
+                  onOpenAgreement={() => { setOffersTab("current"); openCustomerPortalView("offers"); }}
+                />
+              ) : originalWorkFinished ? null : followupSchedule?.schedule_date ? (
+                <div className="mt-5 border-t border-slate-800/80 pt-4">
+                  <p className="text-[9px] font-black uppercase tracking-wider text-slate-500">{initialScheduleConfirmed ? "Registrert tidspunkt" : "Foreslått tidspunkt"}</p>
+                  <p className="mt-2 text-sm font-bold text-white">{formatBookingDate(followupSchedule.schedule_date)} kl. {String(followupSchedule.start_time || "").substring(0, 5)}</p>
+                </div>
+              ) : null}
 
               <div className="mt-6 grid gap-2">
                 {followupOfferReady && <button type="button" onClick={() => { setOffersTab("current"); openCustomerPortalView("offers"); }} className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-400 px-4 py-3 text-xs font-black text-slate-950 hover:bg-amber-300"><FileText className="h-4 w-4" />Se nytt tilbud</button>}
@@ -3967,7 +4196,7 @@ export default function CustomerDashboard({
                     Fyll ut opplysninger
                   </button>
                 )}
-                {reportPublished && (
+                {reportPublished && !followupOfferAccepted && (
                   <button
                     type="button"
                     onClick={() => openCustomerPortalView("documents")}
@@ -3985,23 +4214,23 @@ export default function CustomerDashboard({
             <div className="mb-4 flex items-center justify-between gap-4">
               <div>
                 <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-600">Saksforløp</p>
-                <p className="mt-1 text-xs text-slate-400">Hele prosessen samlet på én linje.</p>
+                <p className="mt-1 text-xs text-slate-400">Fase 1 · Undersøkelse og rapport. Videre utbedring vises rett under.</p>
               </div>
               <span className="text-[10px] font-bold text-slate-500">
-                Steg {Math.min(originalWorkFinished ? (followupInProgress ? 6 : 5) : getCustomerProcessStep(), 6)} av 6
+                {originalWorkFinished ? "Fase 1 fullført" : `Steg ${Math.min(getCustomerProcessStep(), 6)} av 6`}
               </span>
             </div>
 
             <div className="overflow-x-auto pb-1">
               <div className="flex min-w-[720px] items-start">
                 {(originalWorkFinished
-                  ? ["Bestilling", "Tilbud og avtale", "Avtalt tid", originalWorkLabel, "Rapport publisert", "Videre tiltak"]
+                  ? ["Bestilling", "Tilbud og avtale", "Avtalt tid", originalWorkLabel, "Rapport 1"]
                   : isInitialFieldFlow
                   ? ["Bestilling", "Pris og vilkår", "Tidspunkt", "Opplysninger", initialServiceLabel, "Rapport"]
                   : ["Opplysninger", "Digital befaring", "Tilbud & plan", "Feltarbeid", "Rapport", "Videre oppfølging"]
                 ).map((title, index, arr) => {
                   const step = index + 1;
-                   const current = originalWorkFinished ? (followupInProgress ? 6 : 5) : getCustomerProcessStep();
+                   const current = originalWorkFinished ? arr.length + 1 : getCustomerProcessStep();
                   const complete = step < current;
                   const active = step === current;
 
@@ -4033,6 +4262,30 @@ export default function CustomerDashboard({
             </div>
           </div>
 
+          {originalWorkFinished && (
+            <div className="border-t border-slate-800/80 px-6 py-4 md:px-8">
+              <span className="inline-flex items-center gap-2 text-xs font-bold text-emerald-300">
+                <CheckCircle2 className="h-4 w-4" /> {originalWorkLabel} fullført
+              </span>
+              {originalWorkDate && (
+                <span className="ml-3 text-xs text-slate-400">Oppdragsdato: {formatBookingDate(originalWorkDate)}</span>
+              )}
+            </div>
+          )}
+
+          {followupOfferAccepted && (
+            <CustomerFollowupTimeline
+              inquiryId={Number(inq.id)}
+              sessionToken={previewMode ? "" : (window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || "")}
+              offerAccepted={followupOfferAccepted}
+              report2Published={Boolean(completionReportPublished)}
+              refreshKey={agreementSignerRefresh}
+              previewMode={previewMode}
+              onOpenAgreement={() => { setOffersTab("current"); openCustomerPortalView("offers"); }}
+            />
+          )}
+
+          {!followupOfferAccepted && (
           <div className="flex flex-col gap-4 border-t border-slate-800/80 bg-slate-950/20 px-6 py-5 sm:flex-row sm:items-center sm:justify-between md:px-8">
             <div>
               <p className="text-xs font-black text-white">Trenger du hjelp med saken?</p>
@@ -4056,6 +4309,7 @@ export default function CustomerDashboard({
               </button>
             </div>
           </div>
+          )}
         </section>
 
         {inq.stage === "digital_befaring" &&
@@ -6114,7 +6368,7 @@ export default function CustomerDashboard({
                                       : "border-slate-700 bg-slate-900 text-slate-400"
                                   }`}
                                 >
-                                  {isAccepted ? "Akseptert" : offerExpired(item) ? "Utløpt" : "Avvist"}
+                                  {isAccepted ? "Akseptert" : offerExpired(item) ? "Utløpt" : item.revision_resolution === "other_revision_accepted" ? "Annen revisjon valgt" : "Avvist"}
                                 </span>
                                 <span className="truncate text-sm text-slate-300">
                                   {item.title || getServiceLabel(item.service)}
@@ -6123,7 +6377,7 @@ export default function CustomerDashboard({
 
                               <div className="text-left sm:text-right">
                                 <p className="text-[9px] uppercase font-black text-slate-600">
-                                  {isAccepted ? "Akseptert" : "Avvist"}
+                                  {isAccepted ? "Akseptert" : item.revision_resolution === "other_revision_accepted" ? "Annen revisjon akseptert" : "Avvist"}
                                 </p>
                                 <p className="text-[10px] font-bold text-slate-400">
                                   {(() => {
@@ -6358,7 +6612,8 @@ export default function CustomerDashboard({
         </section>
 
           </div>
-        </main>
+                </div>
+      </main>
       </div>
 
       {messageComposerOpen && (
@@ -6453,3 +6708,8 @@ export default function CustomerDashboard({
     </div>
   );
 }
+
+
+
+
+

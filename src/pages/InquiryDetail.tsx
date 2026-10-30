@@ -1,5 +1,7 @@
+import AgreementPreviewButton from "@/components/AgreementPreviewButton";
+import AdminAgreementProgress from "../components/AdminAgreementProgress";
 import { useEffect, useMemo, useState } from "react";
-import {
+import { 
   ArrowLeft,
   CalendarCheck,
   Clock3,
@@ -14,7 +16,7 @@ import {
   Search,
   Send,
   ShieldCheck,
-  User,
+  Info,
   UserCheck,
   Users,
   Wrench,
@@ -26,8 +28,6 @@ import {
   Hammer,
   Activity,
   FileCheck2,
-  ChevronRight,
-  FolderOpen,
   X,
 } from "lucide-react";
 import AdminReportReview, {
@@ -39,9 +39,16 @@ import {
   type StandardService,
 } from "../config/serviceOfferTemplates";
 import InquiryMessages from "../components/InquiryMessages";
+import StageInvoicing from "../components/StageInvoicing";
+import HeritageMaterialReview from "../components/HeritageMaterialReview";
+import CombinedHeritageAssessment from "../components/CombinedHeritageAssessment";
 import OfferGenerator from "../components/project-manager/OfferGenerator";
+import DirectOfferCaseProcess from "../components/DirectOfferCaseProcess";
+import DirectOfferPublishControl from "../components/DirectOfferPublishControl";
+import AdminCaseContactEditor from "../components/AdminCaseContactEditor";
 import InquiryCommunicationLog from "../components/project-manager/InquiryCommunicationLog";
 import PropertyAndBuildingCase from "./PropertyAndBuildingCase";
+import BrregBoardAndSignature from "../components/BrregBoardAndSignature";
 export interface Inquiry {
   id: string;
   customer_id?: number | string | null;
@@ -194,6 +201,7 @@ interface Offer {
   published_at?: string | null;
   accepted_at?: string | null;
   rejected_at?: string | null;
+  revision_parent_offer_id?: number | null;
 }
 
 interface AdminFieldSchedule {
@@ -315,17 +323,14 @@ function reportStatusLabel(status?: string) {
 }
 
 
-// Vedlegg kan leveres som absolutte eller relative URL-er fra TLV-API-et.
+// Bruk felles URL-håndtering for bilder og vedlegg fra TLV-API-et.
 function customerAttachmentUrl(raw: string): string {
   const value = String(raw || "").trim();
+
   if (!value) return "";
-  if (/^https:\/\//i.test(value)) return value;
   if (/^(javascript|data|blob):/i.test(value)) return "";
-  const apiRoot = apiUrl("/");
-  const origin = new URL(apiRoot).origin;
-  if (value.startsWith("/")) return `${origin}${value}`;
-  if (/^(uploads|storage)\//i.test(value)) return `${origin}/${value}`;
-  return `${apiRoot.replace(/\/$/, "")}/${value.replace(/^\.\//, "")}`;
+
+  return apiAssetUrl(value);
 }
 
 function isCustomerImage(file: PreinspectionFile): boolean {
@@ -460,6 +465,8 @@ export default function InquiryDetail({
   const [propertyImage, setPropertyImage] =
     useState<PropertyImageData | null>(null);
   const [loadingFieldStatus, setLoadingFieldStatus] = useState(true);
+  // Hold saksoversikten skjult til første datalast er fullført.
+  const [initialCaseReady, setInitialCaseReady] = useState(false);
   const [fieldError, setFieldError] = useState("");
 
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -479,9 +486,32 @@ export default function InquiryDetail({
   const [preinspectionError, setPreinspectionError] = useState("");
   const [offer, setOffer] = useState<Offer | null>(null);
   const [caseOffers, setCaseOffers] = useState<Offer[]>([]);
+  const [caseContactName, setCaseContactName] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setCaseContactName(null);
+
+    fetch(
+      `${apiUrl("/admin_case_contact.php")}?inquiry_id=${encodeURIComponent(inquiry.id)}`,
+      { credentials: "include", cache: "no-store" }
+    )
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled && data?.success) {
+          setCaseContactName(data.contact?.name || null);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [inquiry.id]);
+  const [showDirectOfferGenerator, setShowDirectOfferGenerator] = useState(false);
   const [showFollowupOfferGenerator, setShowFollowupOfferGenerator] = useState(false);
   const [followupOfferForGenerator, setFollowupOfferForGenerator] = useState<Offer | null>(null);
   const [followupBusy, setFollowupBusy] = useState(false);
+  const [revisionBusyId, setRevisionBusyId] = useState<number | null>(null);
   const [reportStatusBeforeRefresh, setReportStatusBeforeRefresh] = useState<string | null>(null);
   const [followupMessage, setFollowupMessage] = useState("");
   const [followupChoice, setFollowupChoice] = useState<"none" | "temporary" | "permanent" | null>(null);
@@ -653,10 +683,107 @@ export default function InquiryDetail({
     | "documents"
     | "reports";
 
+  // Les organisasjonsnummer fra eksisterende kundeprofil, uten å lagre eller endre kunden.
+  const [overviewOrganizationNumber, setOverviewOrganizationNumber] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    setOverviewOrganizationNumber(null);
+    if (!inquiryId) return () => controller.abort();
+    void fetch(apiUrl(`/customer_profile.php?inquiry_id=${inquiryId}`), {
+      credentials: "include", signal: controller.signal,
+    }).then(async response => {
+      if (!response.ok) return;
+      const data: { success?: boolean; customer?: { organization_number?: string | null } } = await response.json();
+      if (!controller.signal.aborted && data.success) {
+        setOverviewOrganizationNumber(String(data.customer?.organization_number || "").trim());
+      }
+    }).catch(() => { /* Vis utilgjengelig, ikke et oppdiktet organisasjonsnummer. */ });
+    return () => controller.abort();
+  }, [inquiryId]);
+
+  const [showHeritageModal, setShowHeritageModal] = useState(false);
+
+
+  // HERITAGE_BUTTON_STATUS_V1
+  const [heritageButtonLabel, setHeritageButtonLabel] =
+    useState("Kontrollerer vern …");
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    setHeritageButtonLabel("Kontrollerer vern …");
+
+    const url = new URL(
+      apiUrl("/tlv_heritage_lookup_bridge.php")
+    );
+
+    url.searchParams.set("inquiry_id", String(inquiryId));
+
+    fetch(url.toString(), {
+      credentials: "include",
+      cache: "no-store",
+      signal: controller.signal
+    })
+      .then(async (response) => {
+        const body = await response.json();
+
+        if (!response.ok || !body.success) {
+          throw new Error("Vernestatus kunne ikke hentes");
+        }
+
+        const matches = Array.isArray(body.direct_matches)
+          ? body.direct_matches
+          : [];
+
+        const primary =
+          matches.find(
+            (item: { layer?: string }) =>
+              item.layer === "app:Enkeltminne"
+          ) || matches[0];
+
+        const code = String(
+          primary?.attributes?.vernetype || ""
+        ).toUpperCase();
+
+        const labels: Record<string, string> = {
+          KOM: "Kommunalt listeført",
+          AUT: "Automatisk fredet",
+          VED: "Vedtaksfredet",
+          FOR: "Forskriftsfredet",
+          PBL: "Vern etter PBL"
+        };
+
+        let label = "Ingen direkte registrering";
+
+        if (primary) {
+          label = labels[code] ||
+            (code ? `Registrert vern: ${code}` : "Registrert vern – ukjent type");
+        } else if (
+          Array.isArray(body.warnings) &&
+          body.warnings.length > 0
+        ) {
+          label = "Vernestatus uavklart";
+        }
+
+        if (!controller.signal.aborted) {
+          setHeritageButtonLabel(label);
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setHeritageButtonLabel("Status utilgjengelig");
+        }
+      });
+
+    return () => controller.abort();
+  }, [inquiryId]);
+
   const [adminCaseTab, setAdminCaseTab] =
     useState<AdminCaseTab>("overview");
-  const [rightPanelTab, setRightPanelTab] = useState<"process" | "activity" | "override">("process");
+  const [rightPanelTab, setRightPanelTab] = useState<"process" | "activity" | "override" | "offers">("process");
+  const [repairOfferTab, setRepairOfferTab] = useState<"akseptert" | "avvist" | "ovrige">("akseptert");
 
+  const [brregOrgNumber, setBrregOrgNumber] = useState("");
   const [communicationView, setCommunicationView] = useState<
     "messages" | "log"
   >("messages");
@@ -664,7 +791,7 @@ export default function InquiryDetail({
   const [quickActionMessage, setQuickActionMessage] = useState("");
   const [quickActionError, setQuickActionError] = useState("");
   const [showCustomerProfile, setShowCustomerProfile] = useState(false);
-  const [customerProfileTab, setCustomerProfileTab] = useState<"profile" | "cases">("cases");
+  const [customerProfileTab, setCustomerProfileTab] = useState<"profile" | "cases" | "contact" | "board">("cases");
   const [customerProfile, setCustomerProfile] = useState<CustomerProfileData | null>(null);
   const [customerCases, setCustomerCases] = useState<Array<{
     id: number | null; project_id: number; project_number?: string | null;
@@ -750,6 +877,33 @@ export default function InquiryDetail({
     }
   };
 
+  // BRREG: kun lesing av organisasjonsnummer fra eksisterende kundeprofil.
+  useEffect(() => {
+    if (adminCaseTab !== "customer" || !inquiryId) return;
+    let cancelled = false;
+    setBrregOrgNumber("");
+
+    const load = async () => {
+      try {
+        const response = await fetch(
+          apiUrl(`/customer_profile.php?inquiry_id=${inquiryId}`),
+          { credentials: "include" }
+        );
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!cancelled && data.success) {
+          setBrregOrgNumber(
+            String(data.customer?.organization_number || "").replace(/\s/g, "")
+          );
+        }
+      } catch (error) {
+        console.error("Kunne ikke hente organisasjonsnummer til BRREG:", error);
+      }
+    };
+
+    void load();
+    return () => { cancelled = true; };
+  }, [adminCaseTab, inquiryId]);
   const openCustomerProfile = async () => {
     setCustomerProfileTab("cases");
     setShowCustomerProfile(true);
@@ -1569,6 +1723,32 @@ export default function InquiryDetail({
     }
   };
 
+  const beginOfferRevision = async (item: Offer) => {
+    if (revisionBusyId !== null || item.offer_context !== "followup" ||
+        !["publisert", "avvist"].includes(item.status)) return;
+    if (!window.confirm(`Opprette nytt revisjonsutkast av ${item.offer_number || `tilbud #${item.id}`}? Ingen kundemelding sendes.`)) return;
+    setRevisionBusyId(item.id);
+    setOfferError("");
+    try {
+      const response = await fetch(apiUrl("/offers.php"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "revise", source_offer_id: item.id, inquiry_id: inquiryId }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.offer?.id)
+        throw new Error(data.message || "Kunne ikke opprette revisjonen.");
+      await fetchOffer();
+      setFollowupOfferForGenerator(data.offer as Offer);
+      setShowFollowupOfferGenerator(true);
+      setOfferMessage(`Revisjon ${data.offer.offer_number} er opprettet som internt utkast.`);
+    } catch (error) {
+      setOfferError(error instanceof Error ? error.message : "Kunne ikke opprette revisjonen.");
+    } finally {
+      setRevisionBusyId(null);
+    }
+  };
+
   const offerPayload = () => ({
     service: offer?.offer_context === "followup" ? offer.service : inquiry.recommended_service,
     title: offerForm.title.trim(),
@@ -1778,6 +1958,17 @@ export default function InquiryDetail({
   };
 
   const publishOffer = async () => {
+    // Direkte servicetilbud publiseres bare fra riktig tilbudskort.
+    if (
+      (offer?.offer_context || "initial") === "initial" &&
+      offer?.service === "service" &&
+      !offer?.source_report_id
+    ) {
+      setOfferError(
+        "Direkte servicetilbud skal kontrolleres og publiseres fra tilbudskortet øverst."
+      );
+      return;
+    }
     if (!inquiry.recommended_service) {
       setOfferError("Prosjektansvarlig har ikke valgt anbefalt tjeneste.");
       return;
@@ -2151,12 +2342,23 @@ export default function InquiryDetail({
   };
 
   useEffect(() => {
-    fetchFieldStatus();
-    fetchTeamData();
-    fetchPreinspection();
-    fetchOffer();
-    fetchAdminFieldSchedule();
-    fetchPropertyImage();
+    let active = true;
+    setInitialCaseReady(false);
+
+    // Behold de seks eksisterende oppslagene, men vent med å vise saksoversikten
+    // til alle er ferdige. Feil i ett oppslag skal ikke blokkere resten.
+    void Promise.allSettled([
+      fetchFieldStatus(),
+      fetchTeamData(),
+      fetchPreinspection(),
+      fetchOffer(),
+      fetchAdminFieldSchedule(),
+      fetchPropertyImage(),
+    ]).then(() => {
+      if (active) setInitialCaseReady(true);
+    });
+
+    return () => { active = false; };
   }, [inquiryId]);
 
   useEffect(() => {
@@ -2356,19 +2558,6 @@ export default function InquiryDetail({
     }
   };
 
-  const offerStatusLabel = !offer
-    ? "Ingen tilbud registrert"
-    : offerStatus === "utkast"
-    ? "Tilbudsutkast – ikke sendt"
-    : offerStatus === "publisert"
-    ? "Tilbud sendt – venter på kundens svar"
-    : offerStatus === "akseptert"
-    ? "Akseptert av kunde"
-    : offerStatus === "avvist"
-    ? "Avvist av kunde"
-    : "Tilbudsstatus ukjent";
-
-
 
   // Dette er status fra rapport-API-et, ikke en separat godkjenningsbeslutning.
   // Godkjenningshandlinger og eventuell returhistorikk eies av Perun Core.
@@ -2379,6 +2568,35 @@ export default function InquiryDetail({
     ? new Date(caseReportUpdatedAt.replace(" ", "T")).toLocaleString("nb-NO", { dateStyle: "short", timeStyle: "short" })
     : null;
 
+  // DIRECT_OFFER_REOPEN_V1
+  // Gjenåpne eksisterende direkte tilbudsutkast.
+  // Ikke bruk rapportbaserte tilbud eller oppfølgingstilbud.
+  const directDraftOffer = caseOffers
+    .filter((item) =>
+      item.status === "utkast" &&
+      (item.offer_context || "initial") === "initial" &&
+      item.service === "service" &&
+      !item.source_report_id
+    )
+    .sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null;
+
+  // DIRECT_CASE_PROCESS_CONNECTED_V1
+  // Bare direkte, rapportfrie tilbud for vedlikehold/reparasjon/annet.
+  // Rapportbaserte lekkasjesøk og oppfølgingstilbud bruker gammel flyt.
+  const directProcessOffer = !report &&
+    ["vedlikehold", "reparasjon", "annet"].includes(
+      String(inquiry.inquiry_type || inquiry.type || "").trim().toLowerCase()
+    )
+    ? [...caseOffers]
+        .filter(item =>
+          (item.offer_context || "initial") === "initial" &&
+          item.service === "service" &&
+          !item.source_report_id &&
+          !item.revision_parent_offer_id
+        )
+        .sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null
+    : null;
+  // FOLLOWUP_OFFER_CARD_ACTION_V1
   const followupOffers = caseOffers.filter((item) => item.offer_context === "followup");
   const activeFollowupOffer = followupOffers.find((item) => item.status === "akseptert")
     || followupOffers.find((item) => item.status === "publisert")
@@ -2439,6 +2657,14 @@ export default function InquiryDetail({
 
   return (
     <div className="min-h-screen bg-[#200910] text-white p-4 md:p-8">
+      {!initialCaseReady && (
+        <div role="status" aria-live="polite" className="fixed inset-0 z-[90] flex items-center justify-center bg-[#200910] text-white">
+          <div className="flex items-center gap-3 rounded-xl border border-slate-700 bg-[#171020] px-6 py-5 text-sm font-semibold text-slate-200 shadow-xl">
+            <Loader2 className="h-5 w-5 animate-spin text-cyan-300" />
+            Henter saksopplysninger …
+          </div>
+        </div>
+      )}
       {showCustomerProfile && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
@@ -2487,6 +2713,20 @@ export default function InquiryDetail({
                       className={`rounded-xl px-4 py-2 text-xs font-bold ${customerProfileTab === "cases" ? "bg-cyan-500/15 text-cyan-200" : "text-slate-400"}`}>Alle kundens saker</button>
                     <button type="button" onClick={() => setCustomerProfileTab("profile")}
                       className={`rounded-xl px-4 py-2 text-xs font-bold ${customerProfileTab === "profile" ? "bg-cyan-500/15 text-cyan-200" : "text-slate-400"}`}>Kundeopplysninger / rediger</button>
+<button
+  type="button"
+  onClick={() => setCustomerProfileTab("contact")}
+  className={`rounded-xl px-4 py-2 text-xs font-bold ${customerProfileTab === "contact" ? "bg-cyan-500/15 text-cyan-200" : "text-slate-400"}`}
+>
+  Kontaktperson / henvendelse
+</button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomerProfileTab("board")}
+                      className={`rounded-xl px-4 py-2 text-xs font-bold ${customerProfileTab === "board" ? "bg-cyan-500/15 text-cyan-200" : "text-slate-400"}`}
+                    >
+                      Styret og signaturrett
+                    </button>
                   </div>
                   {customerProfileError && (
                     <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">
@@ -2500,7 +2740,24 @@ export default function InquiryDetail({
                     </div>
                   )}
 
-                  {customerProfileTab === "cases" ? (
+                  {customerProfileTab === "board" ? (
+  <section className="space-y-4">
+    <div>
+      <h3 className="text-base font-extrabold text-white">
+        Styret og signaturrett
+      </h3>
+      <p className="mt-1 text-xs text-slate-400">
+        Registrerte opplysninger fra Brønnøysundregistrene.
+      </p>
+    </div>
+
+    <BrregBoardAndSignature orgnr={brregOrgNumber || customerProfileForm.organization_number.replace(/\s/g, "")} />
+  </section>
+) : customerProfileTab === "contact" ? (
+  <AdminCaseContactEditor
+    inquiryId={Number(inquiry.id)}
+    onSaved={(saved) => setCaseContactName(saved.name)}
+  />) : customerProfileTab === "cases" ? (
                     <div className="space-y-3">
                       <p className="text-xs text-slate-400">Sakene vises kun når kunderegisterets API returnerer bekreftede koblinger til denne kunden.</p>
                       {!customerCasesAvailable ? (
@@ -2731,7 +2988,38 @@ export default function InquiryDetail({
         </div>
       )}
 
-      <div className="mx-auto max-w-[1500px] space-y-5">
+      {showHeritageModal && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+          onClick={() => setShowHeritageModal(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Vernestatus og veiledning"
+            className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-slate-700 bg-[#171020] p-4 shadow-2xl"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="mb-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowHeritageModal(false)}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-slate-800"
+              >
+                <X className="h-4 w-4" />
+                Lukk
+              </button>
+            </div>
+
+            {/* SAMLET_VERNESTATUS_V1 */}
+            <CombinedHeritageAssessment
+              inquiryId={inquiryId}
+              address={inquiry.address || ""}
+            />
+          </div>
+        </div>
+      )}
+      <div className="mx-auto max-w-[1800px] space-y-5">
         <div className="flex items-center justify-between gap-4">
           <button
             type="button"
@@ -2743,10 +3031,6 @@ export default function InquiryDetail({
           </button>
 
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <button type="button" onClick={() => void openCustomerProfile()}
-              className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2.5 text-xs font-black text-cyan-200 hover:bg-cyan-500/15">
-              <User className="h-4 w-4" /> Vis kundeprofil
-            </button>
             {onPreviewCustomer && (
               <button
                 type="button"
@@ -2832,68 +3116,64 @@ export default function InquiryDetail({
 
         {/* Kompakt saksoversikt – all forretningslogikk og alle eksisterende faner beholdes. */}
         <section id="overview" className={`${adminCaseTab === "overview" ? "" : "hidden"} scroll-mt-6 space-y-4`}>
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(330px,0.9fr)]">
-            <div className="space-y-4">
-              <div className="rounded-[24px] border border-cyan-500/20 bg-gradient-to-br from-[#142439] via-[#1b1525] to-[#190d18] p-5 shadow-xl md:p-6">
-                <div className="grid gap-5 md:grid-cols-[minmax(160px,260px)_minmax(0,1fr)]">
-                  <div className="h-48 overflow-hidden rounded-2xl border border-white/10 bg-slate-950 md:h-52">
-                    {propertyImage?.image_url ? (
-                      <img src={propertyImage.image_url} alt={`Eiendommen ${addressLabel}`} className="h-full w-full object-cover" />
-                    ) : <div className="grid h-full place-items-center text-slate-500"><Building2 className="h-11 w-11" /></div>}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-                      <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 font-bold text-cyan-200">SAK #{inquiry.id}</span>
-                      <span>{orderedService}</span>
-                      {inquiry.building_type && <span>· {inquiry.building_type}</span>}
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.9fr)_minmax(420px,0.9fr)]">
+            <div className="min-w-0 space-y-4">
+              <div className="overflow-hidden rounded-[24px] border border-cyan-500/20 bg-gradient-to-br from-[#142439] via-[#1b1525] to-[#190d18] shadow-xl">
+                <div className="relative grid gap-6 p-5 lg:grid-cols-[minmax(260px,0.83fr)_minmax(0,1.17fr)] lg:p-6">
+                  <div className="relative min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-slate-950">
+                    <div className="h-72 lg:h-[350px]">
+                      {propertyImage?.image_url ? <img src={propertyImage.image_url} alt={`Eiendommen ${addressLabel}`} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-slate-500"><Building2 className="h-12 w-12" /></div>}
                     </div>
-                    <h1 className="mt-3 break-words text-2xl font-black tracking-tight text-white md:text-3xl">{addressLabel || `Oppdrag #${inquiry.id}`}</h1>
-                    <p className="mt-2 text-sm text-slate-400">{inquiry.customer_name || inquiry.customerName || "Ukjent kunde"}</p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-300">{isCaseClosed ? "Avsluttet" : String(inquiry.status || "Aktiv").replaceAll("_", " ")}</span>
-                      <span className="rounded-full border border-slate-600/60 bg-slate-900/70 px-3 py-1.5 text-xs font-bold text-slate-200">Opprinnelig tilbud: {offerStatusLabel}</span>
+                    <button type="button" onClick={() => setAdminCaseTab("documents")} className="absolute bottom-3 left-3 inline-flex items-center gap-2 rounded-lg border border-white/20 bg-slate-950/85 px-3 py-2 text-xs font-bold text-white"><Camera className="h-4 w-4" />{photos.length ? `${photos.length} bilder` : "Vis bilder"}</button>
+                  </div>
+                  <div className="min-w-0 pr-9">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400"><span className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 font-bold text-cyan-200">SAK #{inquiry.id}</span><span>{orderedService}</span></div>
+                    <h1 className="mt-4 break-words text-2xl font-black tracking-tight text-white lg:text-3xl">{addressLabel || `Oppdrag #${inquiry.id}`}</h1>
+                    <p className="mt-2 text-sm text-slate-300">{inquiry.customer_name || inquiry.customerName || "Ukjent kunde"}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {inquiry.building_type && <span className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs font-semibold text-slate-200">{inquiry.building_type}</span>}
+                      <button type="button" onClick={() => setShowHeritageModal(true)} className="inline-flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-200"><ShieldCheck className="h-4 w-4" />{heritageButtonLabel}<Info className="h-3.5 w-3.5" /></button>
+                    </div>
+                    <div className="mt-4 grid gap-x-4 gap-y-4 border-t border-white/10 pt-4 text-sm sm:grid-cols-2">
+                      <div className="min-w-0"><p className="text-xs text-slate-400">Org.nr</p><p className="mt-1 font-bold text-white">{(() => { const raw = String(customerProfile?.organization_number?.trim() || overviewOrganizationNumber || "").replace(/\s/g, ""); return /^\d{9}$/.test(raw) ? raw.replace(/(\d{3})(\d{3})(\d{3})/, "$1 $2 $3") : raw || (overviewOrganizationNumber === null ? "Hentes …" : "Ikke registrert"); })()}</p></div>
+                      <div className="min-w-0"><p className="text-xs text-slate-400">Adresse</p><p className="mt-1 font-bold text-white">{inquiry.address || "Ikke oppgitt"}</p></div>
+                      <div className="min-w-0"><p className="text-xs text-slate-400">Kontaktperson</p><p className="mt-1 break-words font-bold text-white">{caseContactName || (inquiry as Inquiry & { contact_name?: string; contact_person?: string }).contact_name || (inquiry as Inquiry & { contact_person?: string }).contact_person || "Ikke oppgitt"}</p></div>
+                      <div className="min-w-0"><p className="text-xs text-slate-400">Postnr / poststed</p><p className="mt-1 font-bold text-white">{[inquiry.postal_code, inquiry.city].filter(Boolean).join(" ") || "Ikke oppgitt"}</p></div>
+                      <div className="min-w-0"><p className="text-xs text-slate-400">Telefon</p>{inquiry.phone ? <a href={`tel:${inquiry.phone}`} className="mt-1 block font-bold text-cyan-300 hover:underline">{inquiry.phone}</a> : <p className="mt-1 text-slate-300">Ikke oppgitt</p>}</div>
+                      <div className="min-w-0"><p className="text-xs text-slate-400">E-post</p>{inquiry.email ? <a href={`mailto:${inquiry.email}`} className="mt-1 block break-all font-bold text-cyan-300 hover:underline">{inquiry.email}</a> : <p className="mt-1 text-slate-300">Ikke oppgitt</p>}</div>
                     </div>
                   </div>
+                  <button type="button" onClick={() => void openCustomerProfile()} className="absolute right-5 top-5 grid h-10 w-10 place-items-center rounded-xl border border-cyan-500/40 bg-slate-950/80 text-cyan-200" aria-label="Kundeopplysninger"><Info className="h-5 w-5" /></button>
                 </div>
-                <div className="mt-5 grid gap-3 border-t border-white/10 pt-4 sm:grid-cols-3">
-                  <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Kunde</p><p className="mt-1 truncate text-xs font-bold text-white">{inquiry.customer_name || inquiry.customerName || "Ikke oppgitt"}</p></div>
-                  <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Telefon</p>{inquiry.phone ? <a className="mt-1 block truncate text-xs font-bold text-cyan-200 hover:underline" href={`tel:${inquiry.phone}`}>{inquiry.phone}</a> : <p className="text-xs text-slate-500">Ikke oppgitt</p>}</div>
-                  <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">E-post</p>{inquiry.email ? <a className="mt-1 block truncate text-xs font-bold text-cyan-200 hover:underline" href={`mailto:${inquiry.email}`}>{inquiry.email}</a> : <p className="text-xs text-slate-500">Ikke oppgitt</p>}</div>
+                <div className="flex flex-wrap items-center gap-2 border-t border-white/10 p-4 lg:px-6">
+                  <button type="button" onClick={openCustomerEmail} disabled={!inquiry.email} className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/35 bg-cyan-500/10 px-3 py-3 text-xs font-bold text-cyan-200 disabled:opacity-40"><Mail className="h-4 w-4" />Send e-post</button>
+                  <button type="button" onClick={callCustomer} disabled={!inquiry.phone} className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/35 bg-cyan-500/10 px-3 py-3 text-xs font-bold text-cyan-200 disabled:opacity-40"><Phone className="h-4 w-4" />Ring kunde</button>
+                  <button type="button" onClick={() => setAdminCaseTab("property")} className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/35 bg-cyan-500/10 px-3 py-3 text-xs font-bold text-cyan-200"><Building2 className="h-4 w-4" />Eiendom og byggesak</button>
+                  <button type="button" onClick={() => setShowHeritageModal(true)} className="inline-flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-xs font-bold text-amber-200"><ShieldCheck className="h-4 w-4" />Vernestatus</button>
+                  <button type="button" onClick={openCustomerMessages} className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-3 py-3 text-xs font-bold text-slate-200"><Mail className="h-4 w-4" />Meldinger</button>
                 </div>
               </div>
-              <div className="rounded-2xl border border-slate-700/60 bg-[#141420] p-4">
-                <div className="mb-3">
-                  <h2 className="text-sm font-extrabold text-white">Hurtighandlinger</h2>
-                  <p className="mt-1 text-xs text-slate-400">Kommuniser med kunden eller åpne dokumentene</p>
+              <div className="overflow-hidden rounded-2xl border border-slate-700/70 bg-[#171020]">
+                <div className="flex flex-wrap gap-1 border-b border-slate-700/70 p-2" role="tablist" aria-label="Snarveier for saken">
+                  {([{ label:"Oversikt",icon:Building2,action:()=>setAdminCaseTab("overview") },{ label:"Dokumenter",icon:FileText,action:()=>setAdminCaseTab("documents") },{ label:"Bilder",icon:Camera,action:()=>setAdminCaseTab("field") },{ label:"Rapport",icon:FileCheck2,action:()=>setAdminCaseTab("reports") },{ label:"Tilbud",icon:ClipboardList,action:()=>setAdminCaseTab("offer") },{ label:"Meldinger",icon:Mail,action:openCustomerMessages }] as const).map(tab => <button key={tab.label} type="button" onClick={tab.action} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-200"><tab.icon className="h-4 w-4" />{tab.label}</button>)}
                 </div>
-                <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                  {([
-                    {label:"Meldinger",detail:"Send eller les meldinger",icon:Mail,action:openCustomerMessages,disabled:false,featured:true},
-                    {label:"Ring kunde",detail:inquiry.phone || "Telefon mangler",icon:Phone,action:callCustomer,disabled:!inquiry.phone,featured:false},
-                    {label:"E-post",detail:"Send e-post til kunden",icon:Send,action:openCustomerEmail,disabled:!inquiry.email,featured:false},
-                    {label:"Dokumenter",detail:"Se alle dokumenter",icon:FolderOpen,action:()=>setAdminCaseTab("documents"),disabled:false,featured:false},
-                  ]).map(item => <button key={item.label} type="button" onClick={item.action} disabled={item.disabled}
-                    className={`flex min-w-0 items-center gap-2.5 rounded-xl border px-3 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-40 ${item.featured ? "border-cyan-400/60 bg-cyan-600/25 hover:bg-cyan-600/35" : "border-cyan-500/25 bg-slate-900 hover:border-cyan-400/50 hover:bg-slate-800"}`}>
-                    <item.icon className="h-5 w-5 shrink-0 text-cyan-100" />
-                    <span className="min-w-0 flex-1"><span className="block truncate text-xs font-bold text-white">{item.label}</span><span className="mt-1 hidden truncate text-[10px] text-slate-400 sm:block">{item.detail}</span></span>
-                    <ChevronRight className="hidden h-4 w-4 shrink-0 text-cyan-300 sm:block" />
-                  </button>)}
+                <div className="grid gap-3 p-4 md:grid-cols-2">
+                  <div className="rounded-xl border border-slate-700/70 bg-slate-950/40 p-4"><div className="flex items-center justify-between"><h3 className="text-sm font-bold">Siste dokumenter</h3><button type="button" onClick={() => setAdminCaseTab("documents")} className="text-xs font-semibold text-cyan-300">Vis alle →</button></div><div className="mt-4 space-y-2">{report && <button type="button" onClick={() => setAdminCaseTab("reports")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" />Rapport 1 · {reportStatusLabel(report.status)}</button>}{caseOffers.slice().sort((a,b)=>b.id-a.id).slice(0,2).map(o=><button type="button" key={o.id} onClick={() => setAdminCaseTab("offer")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" /><span className="min-w-0 truncate">{o.offer_number || `Tilbud #${o.id}`} · {o.status}</span></button>)}{!report && caseOffers.length===0 && <p className="text-xs text-slate-400">Ingen dokumenter registrert</p>}</div></div>
+                  <div className="rounded-xl border border-slate-700/70 bg-slate-950/40 p-4"><div className="flex items-center justify-between"><h3 className="text-sm font-bold">Siste bilder fra saken</h3><button type="button" onClick={() => setAdminCaseTab("field")} className="text-xs font-semibold text-cyan-300">Vis alle →</button></div>{photos.length ? <div className="mt-4 grid grid-cols-3 gap-2">{photos.filter(p=>Boolean(p.photo_url)).slice(0,6).map(p=><button type="button" key={p.id} onClick={() => setAdminCaseTab("field")} className="aspect-square overflow-hidden rounded-lg border border-slate-700 bg-slate-900"><img src={apiAssetUrl(p.photo_url)} alt={p.caption_text || "Feltbilde"} className="h-full w-full object-cover" loading="lazy" /></button>)}</div> : <p className="mt-4 text-xs text-slate-400">Ingen feltbilder registrert</p>}</div>
                 </div>
-                {quickReminderTemplate && !isReportPublished && <button type="button" onClick={() => void sendQuickReminder()} disabled={sendingQuickReminder} className="mt-2 text-xs font-bold text-amber-300 hover:underline disabled:opacity-40">{sendingQuickReminder ? "Sender …" : isOfferReminder ? "Send tilbudspåminnelse →" : "Send bookingpåminnelse →"}</button>}
-                {(quickActionError || quickActionMessage) && <p className="mt-2 text-xs text-amber-200" role="status">{quickActionError || quickActionMessage}</p>}
               </div>
-
             </div>
-            <aside className="rounded-[24px] border border-slate-700/70 bg-[#171020] p-5 lg:p-6">
-              <div role="tablist" aria-label="Saksoversikt" className="mb-5 grid grid-cols-3 gap-1.5">
+            <aside className="min-w-0 rounded-[24px] border border-slate-700/70 bg-[#171020] p-5 lg:p-6">
+              <div role="tablist" aria-label="Saksoversikt" className="mb-5 grid grid-cols-2 gap-2">
                 {([
                   ["process", "Saksprosess"],
                   ["activity", "Siste aktivitet"],
                   ["override", "Admin overstyring"],
+                  ["offers", "Tilbud og avtaler"],
                 ] as const).map(([key, label]) => (
                   <button key={key} type="button" role="tab" aria-selected={rightPanelTab === key}
                     onClick={() => setRightPanelTab(key)}
-                    className={`rounded-xl border px-3 py-2.5 text-[11px] font-bold transition ${rightPanelTab === key
+                    className={`min-w-0 min-h-12 rounded-xl border px-3 py-2.5 text-center text-xs font-bold leading-5 transition ${rightPanelTab === key
                       ? "border-cyan-400/50 bg-cyan-500/15 text-cyan-200"
                       : "border-slate-700 bg-slate-950/40 text-slate-300 hover:border-cyan-500/30 hover:text-white"}`}>
                     {label}
@@ -2902,15 +3182,34 @@ export default function InquiryDetail({
               </div>
               {rightPanelTab === "process" && (
                 <div role="tabpanel">
+{directProcessOffer ? (
+  <DirectOfferCaseProcess
+    offer={directProcessOffer}
+    onOpenOffer={() => setAdminCaseTab("offer")}
+  />
+) : (
+  <>
+
               <p className="text-[10px] font-black uppercase tracking-[0.14em] text-cyan-300">Saksprosess · Neste steg</p>
               <h2 className="mt-3 text-lg font-extrabold leading-snug text-white">{nextStepLabel}</h2>
               <p className="mt-2 text-xs leading-5 text-slate-400">{nextStepSubtitle}</p>
+              <button
+                type="button"
+                onClick={() => setShowDirectOfferGenerator(true)}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-400/50 bg-cyan-500/15 px-4 py-3 text-sm font-bold text-cyan-100 hover:bg-cyan-500/25"
+              >
+                <FileText className="h-4 w-4" />
+                Opprett nytt tilbud
+              </button>
               <div className="mt-5 space-y-6 border-t border-white/10 pt-5">
                 <div className="flex gap-3"><CheckCircle2 className={`mt-0.5 h-5 w-5 shrink-0 ${isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{orderedService} {isReportPublished ? "gjennomført" : "bestilt"}</p><p className="mt-1 text-[11px] text-slate-400">{hasRecordedSchedule ? displayedSchedule : "Tidspunkt ikke registrert"}</p><button type="button" onClick={() => setAdminCaseTab("checklists")} className="mt-2 block text-left text-xs font-semibold text-cyan-300 hover:underline">Åpne sjekkliste →</button><button type="button" onClick={() => setAdminCaseTab("field")} className="mt-1 block text-left text-xs font-semibold text-cyan-300 hover:underline">Feltdokumentasjon →</button></div></div>
                 <div className="flex gap-3"><FileCheck2 className={`mt-0.5 h-5 w-5 shrink-0 ${isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{isReportPublished ? "Rapport 1 publisert" : report ? `Rapport 1 – ${reportStatusLabel(report.status)}` : "Rapport 1 avventer"}</p><p className="mt-1 text-[11px] text-slate-400">{isReportPublished ? "Kvalitetssikret og publisert" : "Rapportstatus og behandling"}</p><button type="button" onClick={() => setAdminCaseTab("reports")} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">{report ? "Åpne rapport →" : "Åpne rapportarbeid →"}</button></div></div>
-                <div className="flex gap-3"><Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" /><div className="min-w-0"><p className="text-sm font-bold text-white">{isFollowupDecided ? followupStageTitle : "Videre oppfølging"}</p><p className="mt-1 text-[11px] text-slate-400">{isFollowupDecided ? followupStageDetail : isReportPublished ? "Avventer valg av tiltak" : "Etter rapportpublisering"}</p>{activeFollowupOffer?.offer_number && <p className="mt-1 text-[11px] text-slate-500">{activeFollowupOffer.offer_number} · {activeFollowupOffer.status}</p>}{activeFollowupOffer?.status === "utkast" && isReportPublished ? <button type="button" onClick={() => {setFollowupOfferForGenerator(activeFollowupOffer);setShowFollowupOfferGenerator(true);}} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">Åpne tilbudsutkast →</button> : isReportPublished ? <button type="button" onClick={openFollowupSelection} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">Administrer videre oppfølging →</button> : null}</div></div>
+                <div className="flex gap-3"><Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" /><div className="min-w-0"><p className="text-sm font-bold text-white">{isFollowupDecided ? followupStageTitle : "Videre oppfølging"}</p><p className="mt-1 text-[11px] text-slate-400">{isFollowupDecided ? followupStageDetail : isReportPublished ? "Avventer valg av tiltak" : "Etter rapportpublisering"}</p>{activeFollowupOffer?.offer_number && <p className="mt-1 text-[11px] text-slate-500">{activeFollowupOffer.offer_number} · {activeFollowupOffer.status}</p>}{activeFollowupOffer?.status === "utkast" && isReportPublished ? <button type="button" onClick={() => {setFollowupOfferForGenerator(activeFollowupOffer);setShowFollowupOfferGenerator(true);}} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">Åpne tilbudsutkast →</button> : isReportPublished ? <button type="button" onClick={() => activeFollowupOffer ? setAdminCaseTab("offer") : openFollowupSelection()} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">Administrer videre oppfølging →</button> : null}</div></div>
               </div>
-                </div>
+                
+  </>
+)}
+</div>
               )}
               {rightPanelTab === "activity" && (
                 <div role="tabpanel">
@@ -2923,6 +3222,53 @@ export default function InquiryDetail({
                 </div>
               </section>
                 </div>
+              )}
+              {rightPanelTab === "offers" && (
+                <section role="tabpanel" className="space-y-4">
+                  {(() => {
+                    const acceptedRepairs = caseOffers
+                      .filter(item => item.offer_context === "followup" && item.status === "akseptert")
+                      .sort((a, b) => Number(b.id) - Number(a.id));
+                    const current = acceptedRepairs[0];
+                    const otherOffers = caseOffers.filter(item => item.id !== current?.id).length;
+                    return current ? (
+                      <>
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-cyan-300">Gjeldende avtaleoppfølging</p>
+                            <h2 className="mt-2 text-base font-black text-white">{current.offer_number || `Tilbud #${current.id}`}</h2>
+                          </div>
+                          <span className="shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-300">Akseptert</span>
+                        </div>
+                        <p className="text-xs leading-5 text-slate-300">{current.title}</p>
+                        <AdminAgreementProgress inquiryId={inquiryId} />
+                        <button type="button" onClick={() => setAdminCaseTab("offer")}
+                          className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-3 py-2.5 text-xs font-bold text-cyan-200 hover:bg-cyan-500/20">
+                          <FileText className="h-4 w-4" />Vis tilbud, PDF og avtale
+                        </button>
+                        <button type="button" onClick={() => setAdminCaseTab("offer")}
+                          className="flex w-full items-center justify-between rounded-xl border border-slate-700/80 bg-slate-950/50 px-3 py-3 text-left text-xs text-slate-300 hover:border-cyan-500/30">
+                          <span>Tidligere tilbud og revisjoner</span>
+                          <span className="font-bold text-slate-400">{otherOffers} · Vis historikk →</span>
+                        </button>
+                      </>
+                    ) : (
+                      <div className="space-y-3">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-cyan-300">Tilbud og avtaler</p>
+                        <p className="text-sm font-bold text-white">Ingen akseptert utbedringstilbud registrert</p>
+                        <p className="text-xs text-slate-400">{caseOffers.length} tilbud i historikken. Avtaleoppfølging aktiveres når et utbedringstilbud er akseptert.</p>
+                        <button type="button" onClick={() => setAdminCaseTab("offer")} className="text-xs font-bold text-cyan-300 hover:underline">Åpne tilbudshistorikk →</button>
+                      </div>
+                    );
+                  })()}
+                  {quickReminderTemplate && !isReportPublished && (
+                    <button type="button" onClick={() => void sendQuickReminder()} disabled={sendingQuickReminder}
+                      className="text-xs font-bold text-amber-300 hover:underline disabled:opacity-40">
+                      {sendingQuickReminder ? "Sender …" : isOfferReminder ? "Send tilbudspåminnelse →" : "Send bookingpåminnelse →"}
+                    </button>
+                  )}
+                  {(quickActionError || quickActionMessage) && <p role="status" className="text-xs text-amber-200">{quickActionError || quickActionMessage}</p>}
+                </section>
               )}
               {rightPanelTab === "override" && (
                 <div role="tabpanel">
@@ -3078,30 +3424,9 @@ export default function InquiryDetail({
               )}
             </aside>
           </div>
-          <div className="rounded-2xl border border-slate-700/60 bg-[#171020] p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div><h2 className="text-base font-extrabold text-white">Saksinformasjon</h2><p className="mt-1 text-xs text-slate-400">Oversikt og tilgang til alle seksjoner</p></div>
-              <span className="text-xs text-slate-400">5 seksjoner</span>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {([
-                {tab:"customer" as AdminCaseTab,title:"Kundeopplysninger",description:inquiry.customer_name || inquiry.customerName || "Kunde",icon:User},
-                {tab:"property" as AdminCaseTab,title:"Eiendom og byggesak",description:addressLabel || "Eiendom",icon:Building2},
-                {tab:"team" as AdminCaseTab,title:"Oppdragsteam",description:currentProjectManager?.name || "Tildel team",icon:Users},
-                {tab:"offer" as AdminCaseTab,title:"Tilbud og avtaler",description:`${caseOffers.length} tilbud`,icon:FileText},
-                {tab:"reports" as AdminCaseTab,title:"Rapport",description:report ? `Rapport 1 · ${reportStatusLabel(report.status)}` : "Åpne rapportarbeid",icon:FileCheck2},
-              ]).map(item => <button key={item.tab} type="button" onClick={() => setAdminCaseTab(item.tab)}
-                className={`flex min-w-0 items-center gap-3 rounded-xl border px-4 py-4 text-left transition hover:bg-slate-800 ${item.tab === "reports" ? "sm:col-span-2 border-cyan-500/55 bg-cyan-600/10 hover:border-cyan-400" : "border-slate-700/60 bg-[#1b1829] hover:border-cyan-500/40"}`}>
-                <item.icon className={`h-6 w-6 shrink-0 ${item.tab === "reports" ? "text-cyan-300" : "text-slate-300"}`} />
-                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-white">{item.title}</span><span className="mt-1 block truncate text-xs text-slate-400">{item.description}</span></span>
-                {item.tab === "reports" && report?.status === "publisert" && <span className="hidden rounded-full bg-emerald-500/15 px-3 py-1 text-[10px] font-bold text-emerald-300 sm:inline">Publisert</span>}
-                <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
-              </button>)}
-            </div>
-          </div>
         </section>
 
-        {report?.status === "publisert" && (!savedFollowupChoice || showFollowupSelection) && (
+        {report?.status === "publisert" && ((!savedFollowupChoice && !activeFollowupOffer) || showFollowupSelection) && (
           <section id="rapport1-oppfolging" className="scroll-mt-28 rounded-2xl border border-emerald-500/25 bg-[#21131c] p-5 space-y-4" aria-label="Videre oppfølging etter Rapport 1">
             <div>
               <p className="text-[10px] font-black uppercase tracking-wide text-emerald-300">Rapport 1 er publisert</p>
@@ -3219,6 +3544,10 @@ export default function InquiryDetail({
           </>
         )}
 
+        {adminCaseTab === "customer" &&
+          (brregOrgNumber || /b2b|bedrift|foretak|borettslag|sameie/i.test(String(inquiry.customer_type || ""))) && (
+          <BrregBoardAndSignature orgnr={brregOrgNumber || customerProfileForm.organization_number.replace(/\s/g, "")} />
+        )}
         {adminCaseTab === "customer" &&
           ["privatperson", "private"].includes(
             String(inquiry.customer_type || "Privatperson").toLowerCase()
@@ -3448,6 +3777,7 @@ export default function InquiryDetail({
             </section>
           )}
 
+        
         {adminCaseTab === "customer" &&
           inquiry.stage === "digital_befaring" &&
           !["venter_pa_tilbud", "tilbud_sendt", "tilbud_akseptert"].includes(
@@ -3602,6 +3932,7 @@ export default function InquiryDetail({
         )}
 
         {/* Bestillingsskjemaet finnes også når kunden ikke har levert forhåndskartlegging. */}
+        
         {adminCaseTab === "customer" && (
           <section className="rounded-2xl border border-rose-900/45 bg-[#21121a] p-5 space-y-5">
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-rose-900/40 pb-4">
@@ -3822,6 +4153,9 @@ export default function InquiryDetail({
           />
         </section>
 
+        {adminCaseTab === "property" && (
+  <HeritageMaterialReview inquiryId={inquiryId} address={inquiry.address || ""} />
+)}
         <section id="team" className={`${adminCaseTab === "team" ? "" : "hidden"} scroll-mt-6 bg-[#1b0b12] border border-slate-800 rounded-2xl p-5 space-y-4`}>
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 border-b border-slate-800/80 pb-4">
             <div>
@@ -3971,39 +4305,185 @@ export default function InquiryDetail({
           )}
         </section>
 
-        {adminCaseTab === "offer" && report && (
+        {adminCaseTab === "offer" && (
           <section className="rounded-2xl border border-rose-800/50 bg-[#2b111a] p-5 space-y-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-wide text-rose-300">Oppdragets tilbudshistorikk</p>
-                <h3 className="mt-1 text-base font-black text-white">Lekkasjesøk og videre utbedring</h3>
+                <h3 className="mt-1 text-base font-black text-white">Tilbud og avtaler</h3>
                 <p className="mt-1 text-xs text-rose-100/70">Hvert tilbud har sitt eget nummer og sin egen status. Den opprinnelige avtalen forblir historikk.</p>
               </div>
-              {report.status === "publisert" && <span className="rounded-lg border border-emerald-500/30 px-3 py-1.5 text-xs font-bold text-emerald-300">Rapport 1 publisert</span>}
+              {report?.status === "publisert" && <span className="rounded-lg border border-emerald-500/30 px-3 py-1.5 text-xs font-bold text-emerald-300">Rapport 1 publisert</span>}
             </div>
             {caseOffers.length === 0 ? (
               <p className="text-xs text-slate-400">Ingen tilbud er registrert på saken.</p>
             ) : (
-              <div className="grid gap-3 md:grid-cols-2">
-                {[...caseOffers].sort((a,b) => Number(a.id)-Number(b.id)).map(item => {
+              <div className="space-y-5">
+                {(["initial", "followup"] as const).map((groupKey) => {
+                  const groupedOffers = caseOffers
+                    .filter((item) => groupKey === "followup"
+                      ? item.offer_context === "followup"
+                      : item.offer_context !== "followup")
+                    .sort((a, b) => Number(a.id) - Number(b.id));
+                  if (groupedOffers.length === 0) return null;
+                  const groupTitle = groupKey === "followup" ? "Utbedring" : orderedService;
+                  return (
+                    <section key={groupKey} className="rounded-2xl border border-rose-800/40 bg-[#230e18] p-4 space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rose-800/40 pb-3">
+                        <div className="flex items-center gap-2">
+                          {groupKey === "followup" ? <Hammer className="h-5 w-5 text-amber-300" /> : <Search className="h-5 w-5 text-cyan-300" />}
+                          <h4 className="text-base font-black text-white">{groupKey === "followup" ? "2. " : "1. "}{groupTitle}</h4>
+                        </div>
+                        <span className="rounded-full border border-rose-700/50 bg-[#381724] px-3 py-1 text-[10px] font-bold text-rose-100">
+                          {groupedOffers.length} {groupedOffers.length === 1 ? "tilbud" : "tilbud/revisjoner"}
+                        </span>
+                      </div>
+                      {groupKey === "followup" && (
+                        <div role="tablist" aria-label="Tilbudsstatus for utbedring" className="flex flex-wrap gap-2">
+                          {([
+                            { id: "akseptert", label: "Akseptert", count: groupedOffers.filter(item => item.status === "akseptert").length },
+                            { id: "avvist", label: "Avvist", count: groupedOffers.filter(item => item.status === "avvist").length },
+                            { id: "ovrige", label: "Øvrige", count: groupedOffers.filter(item => !["akseptert", "avvist"].includes(item.status)).length },
+                          ] as const).filter(tab => tab.id !== "ovrige" || tab.count > 0).map(tab => (
+                            <button key={tab.id} type="button" role="tab"
+                              aria-selected={repairOfferTab === tab.id}
+                              onClick={() => setRepairOfferTab(tab.id)}
+                              className={`rounded-xl border px-4 py-2.5 text-xs font-bold transition ${repairOfferTab === tab.id
+                                ? "border-amber-400/60 bg-amber-500/15 text-amber-200"
+                                : "border-rose-800/50 bg-[#170b12] text-rose-100/75 hover:border-amber-500/40"}`}>
+                              {tab.label} <span className="ml-1 opacity-70">({tab.count})</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {groupedOffers.filter(item => groupKey !== "followup" || (
+                          repairOfferTab === "ovrige"
+                            ? !["akseptert", "avvist"].includes(item.status)
+                            : item.status === repairOfferTab
+                        )).map(item => {
                   const followup = item.offer_context === "followup";
+                  // DIRECT_OFFER_CARD_SAFETY_V1
+                  const directService =
+                    (item.offer_context || "initial") === "initial" &&
+                    item.service === "service" &&
+                    !item.source_report_id;
                   return (
                     <div key={item.id} className="rounded-xl border border-rose-800/40 bg-[#170b12] p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="text-[10px] font-bold uppercase tracking-wide text-rose-300">{followup ? "Videre oppfølging" : "Opprinnelig tilbud · lekkasjesøk"}</p>
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-rose-300">{followup ? "Videre oppfølging" : "Opprinnelig tilbud"}</p>
                           <p className="mt-1 text-sm font-extrabold text-white">{item.title}</p>
-                          <p className="mt-1 text-xs text-slate-300">{item.offer_number || `Internt tilbud #${item.id}`} · {item.status}</p>
+                          <p className="mt-1 text-xs text-slate-300">{item.offer_number || `Internt tilbud #${item.id}`} · {item.status}</p><p className="mt-2 text-xs text-slate-400">{item.published_at || item.created_at || "Dato ikke registrert"}</p><p className="mt-1 text-xs font-bold text-white">{item.pricing_mode === "fixed" && Number(item.fixed_price ?? item.calculated_ex_vat) > 0 ? `kr ${Number(item.fixed_price ?? item.calculated_ex_vat).toLocaleString("nb-NO")} eks. mva.` : item.team_rate && Number(item.team_rate) > 0 ? `kr ${Number(item.team_rate).toLocaleString("nb-NO")} / time (team)` : "Se tilbud for pris"}</p>
                         </div>
                         {item.status === "akseptert" && <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-300" />}
                       </div>
-                      {followup && item.status === "utkast" && report.status === "publisert" && (
+                      {/* DIRECT_OFFER_CARD_EDITOR_V3 */}
+<div className="mt-4 flex flex-wrap items-center gap-2">
+  {directService && item.status === "utkast" && (
+    Number(directDraftOffer?.id) === Number(item.id) ? (
+      <button
+        type="button"
+        onClick={() => setShowDirectOfferGenerator(true)}
+        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 text-xs font-bold text-cyan-200 hover:bg-cyan-500/20"
+      >
+        <FileText className="h-4 w-4" />
+        Rediger
+      </button>
+    ) : (
+      <span className="text-xs text-amber-300">
+        Redigering krever samsvarende tilbuds-ID.
+      </span>
+    )
+  )}
+
+  {item.pdf_url && (
+    <a
+      href={customerAttachmentUrl(item.pdf_url)}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-cyan-500/40 px-4 text-xs font-bold text-cyan-200 hover:bg-cyan-500/10"
+    >
+      <FileText className="h-4 w-4" />
+      Vis PDF
+    </a>
+  )}
+
+    {followup && item.pricing_mode === "fixed" &&
+    ["publisert", "akseptert"].includes(item.status) && (
+      <AgreementPreviewButton
+        offer={item}
+        customerName={customerProfile?.name || inquiry.customer_name || inquiry.customerName}
+        address={inquiry.address}
+        customerOrgNumber={customerProfile?.organization_number || overviewOrganizationNumber || undefined}
+        customerPostalAddress={[
+          customerProfile?.address,
+          [customerProfile?.postal_code, customerProfile?.city]
+            .filter(Boolean).join(" ")
+        ].filter(Boolean).join(", ") || undefined}
+        customerPhone={customerProfile?.phone || inquiry.phone || undefined}
+        customerEmail={customerProfile?.email || inquiry.email || undefined}
+        customerContact={caseContactName || undefined}
+      />
+    )}
+
+  {/* DIRECT_OFFER_PUBLISH_CONTROL_V1 */}
+  {directService && directProcessOffer?.id === item.id && item.status === "utkast" && item.pdf_url && (
+    <div className="sm:ml-auto">
+      <DirectOfferPublishControl
+        offerId={Number(item.id)}
+        offerNumber={item.offer_number || `Tilbud #${item.id}`}
+        title={item.title || "Tilbud"}
+        amountLabel={
+          Number(item.fixed_price ?? item.calculated_ex_vat) > 0
+            ? `kr ${Number(item.fixed_price ?? item.calculated_ex_vat).toLocaleString("nb-NO")} eks. mva.`
+            : "Se PDF for avtalt pris"
+        }
+        pdfUrl={customerAttachmentUrl(item.pdf_url)}
+        onPublished={async () => {
+          await fetchOffer();
+        }}
+      />
+    </div>
+  )}
+  {followup && ["publisert", "avvist"].includes(item.status) && report?.status === "publisert" && (
+    <button type="button" disabled={revisionBusyId !== null}
+      onClick={() => void beginOfferRevision(item)}
+      className="inline-flex h-10 items-center justify-center rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 text-xs font-bold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50">
+      {revisionBusyId === item.id ? "Oppretter revisjon…" : "Opprett revisjon"}
+    </button>
+  )}</div>
+{item.status === "akseptert" && (
+  <StageInvoicing
+    inquiryId={inquiryId}
+    stageKey={followup
+      ? "varig_utbedring"
+      : item.service === "takkontroll"
+        ? "takkontroll"
+        : item.service === "service"
+          ? "service"
+          : "lekkasjesok"}
+  />
+)}
+
+                      {followup && item.status === "utkast" && report?.status === "publisert" && (
                         <button type="button" onClick={() => {setFollowupOfferForGenerator(item);setShowFollowupOfferGenerator(true);}}
                           className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/15 px-3 py-2 text-xs font-bold text-rose-100 hover:bg-rose-500/25">
-                          Åpne tilbudsgenerator →
+                          Rediger / kontroller og publiser →
                         </button>
                       )}
                     </div>
+                  );
+                        })}
+                        {groupKey === "followup" && !groupedOffers.some(item => repairOfferTab === "ovrige"
+                          ? !["akseptert", "avvist"].includes(item.status)
+                          : item.status === repairOfferTab) && (
+                          <p className="col-span-full rounded-xl border border-rose-800/30 bg-[#170b12] p-4 text-xs text-rose-100/70">
+                            Ingen tilbud med denne statusen.
+                          </p>
+                        )}
+                      </div>
+                    </section>
                   );
                 })}
               </div>
@@ -4028,8 +4508,13 @@ export default function InquiryDetail({
             </section>
           )}
 
-        {(offer || isOfferAccepted || ["venter_pa_tilbud", "tilbud_sendt", "tilbud_avvist"].includes(inquiryStatus)) && (
-            <section className={`${adminCaseTab === "offer" ? "" : "hidden"} bg-[#1b0b12] border border-purple-500/30 rounded-2xl p-5 space-y-5`}>
+        {(!(isOfferAccepted && offer && caseOffers.some(item => item.id === offer.id)) && (offer || isOfferAccepted || ["venter_pa_tilbud", "tilbud_sendt", "tilbud_avvist"].includes(inquiryStatus))) && (
+            <section className={`${adminCaseTab === "offer" &&
+!caseOffers.some(item =>
+  (item.offer_context || "initial") === "initial" &&
+  item.service === "service" &&
+  !item.source_report_id
+) ? "" : "hidden"} bg-[#1b0b12] border border-purple-500/30 rounded-2xl p-5 space-y-5`}>
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 border-b border-slate-800/80 pb-4">
                 <div>
                   <h3 className="font-extrabold text-sm text-white flex items-center gap-2">
@@ -4944,6 +5429,42 @@ export default function InquiryDetail({
           </>
         )}
 
+        
+
+        <OfferGenerator
+          open={showDirectOfferGenerator}
+          inquiry={inquiry}
+          initialService="service"
+          mode="initial"
+          publicationFlow="direct"
+          sourceReportId={null}
+          initialOffer={directDraftOffer ? {
+            id: directDraftOffer.id,
+            status: directDraftOffer.status,
+            service: "service",
+            title: directDraftOffer.title,
+            description: directDraftOffer.description ?? "",
+            team_rate: Number(directDraftOffer.team_rate ?? directDraftOffer.hourly_rate ?? 1960),
+            vehicle_rate: Number(directDraftOffer.vehicle_rate ?? 340),
+            material_note: directDraftOffer.material_note ?? "",
+            terms: directDraftOffer.terms ?? "",
+            pricing_mode: directDraftOffer.pricing_mode ?? undefined,
+            calculation_json: directDraftOffer.calculation_json ?? undefined,
+            pdf_url: directDraftOffer.pdf_url ?? null,
+            fixed_price: directDraftOffer.fixed_price == null
+              ? undefined
+              : Number(directDraftOffer.fixed_price),
+          } : null}
+          allowPublish={false}
+          onDraftSaved={async () => {
+            await fetchOffer();
+            setAdminCaseTab("offer");
+          }}
+          onClose={() => {
+            setShowDirectOfferGenerator(false);
+            void fetchOffer();
+          }}
+        />
         <OfferGenerator
           open={showFollowupOfferGenerator}
           inquiry={inquiry}
@@ -4993,3 +5514,6 @@ export default function InquiryDetail({
     </div>
   );
 }
+
+
+
