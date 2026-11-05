@@ -32,5 +32,19 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Reject backend files in frontend build
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/index.html
+          if find dist -type f -name '*.php' | grep -q .; then
+            echo "::error::PHP files found in frontend build"
+            exit 1
+          fi
+          if [ -d dist/api ] && find dist/api -type f | grep -q .; then
+            echo "::error::Backend files found in frontend build"
+            exit 1
+          fi
+
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
