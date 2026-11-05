@@ -1,0 +1,106 @@
+name: Production Frontend Backup
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tlv-production-operations
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.TLV_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.TLV_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY"
+          test -n "$KNOWN_HOSTS"
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Verify staging and back up current frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i "$HOME/.ssh/id_ed25519" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            c2d9sf1au_ssh@ssh.c2d9sf1au.service.one \
+            'sh -s' <<'REMOTE'
+          set -eu
+          umask 077
+
+          WEB="/webroots/www"
+          SHA="ac90e61dc456c4eaf5c4bfb4b54d4633b8b0bc92"
+          STAGE="$HOME/tlv-github-staging/$SHA"
+          BACKUPS="$HOME/tlv-github-backups"
+
+          test -s "$WEB/index.html"
+          test -s "$STAGE/dist/index.html"
+          test -s "$STAGE/release-checksums.txt"
+          test -f "$WEB/robots.txt"
+          test -f "$WEB/site.webmanifest"
+
+          cd "$STAGE"
+          sha256sum -c release-checksums.txt >/dev/null
+
+          cd "$WEB"
+
+          set -- index.html robots.txt site.webmanifest
+
+          for type in js css; do
+            asset="$(grep -oE "assets/index-[A-Za-z0-9_-]+\.$type" index.html | head -1)"
+            test -n "$asset"
+            test -f "$asset"
+            set -- "$@" "$asset"
+          done
+
+          mkdir -p "$BACKUPS"
+
+          STAMP="$(date -u +%Y%m%d-%H%M%S)"
+          NAME="tlv-before-github-$STAMP"
+          TMP="$BACKUPS/$NAME.tar.gz.tmp"
+          FINAL="$BACKUPS/$NAME.tar.gz"
+
+          test ! -e "$TMP"
+          test ! -e "$FINAL"
+
+          trap 'rm -f "$TMP"' EXIT HUP INT TERM
+
+          tar -czf "$TMP" -C "$WEB" "$@"
+          tar -tzf "$TMP" >/dev/null
+          test -s "$TMP"
+
+          mv "$TMP" "$FINAL"
+          trap - EXIT HUP INT TERM
+
+          echo "BACKUP CREATED"
+          echo "File: $FINAL"
+          sha256sum "$FINAL"
+
+          echo "CURRENT FRONTEND:"
+          grep -oE 'assets/index-[A-Za-z0-9_-]+\.(js|css)' "$WEB/index.html"
+
+          echo "STAGED FRONTEND:"
+          grep -oE 'assets/index-[A-Za-z0-9_-]+\.(js|css)' "$STAGE/dist/index.html"
+
+          echo "LIVE WEBSITE UNCHANGED"
+          REMOTE
