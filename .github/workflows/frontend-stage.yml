@@ -1,0 +1,144 @@
+name: Frontend Staging Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: "Run ID fra Frontend Release Preparation"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: tlv-staging
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+
+    steps:
+      - name: Validate release source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          set -euo pipefail
+
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+
+          gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
+            --jq '{name,conclusion,event,head_branch,head_sha,head_repository}' \
+            > /tmp/release-run.json
+
+          jq -e \
+            --arg repo "$GITHUB_REPOSITORY" \
+            '
+              .name == "Frontend Release Preparation" and
+              .conclusion == "success" and
+              .event == "push" and
+              .head_branch == "utvikling-avtale-sakskort" and
+              (.head_sha | startswith("ac90e61")) and
+              .head_repository.full_name == $repo
+            ' /tmp/release-run.json >/dev/null
+
+          SHA="$(jq -r .head_sha /tmp/release-run.json)"
+          echo "RELEASE_SHA=$SHA" >> "$GITHUB_ENV"
+          echo "Validated release: $SHA"
+
+      - name: Download approved artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tlv-frontend-release
+          run-id: ${{ inputs.release_run_id }}
+          github-token: ${{ github.token }}
+          path: release
+
+      - name: Validate artifact and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+
+          test -s dist/index.html
+          test -s release-checksums.txt
+
+          if find dist -type l | grep -q .; then
+            echo "::error::Symlinks forbidden"
+            exit 1
+          fi
+
+          while IFS= read -r -d '' file; do
+            relative="${file#dist/}"
+
+            case "$relative" in
+              index.html|robots.txt|site.webmanifest)
+                ;;
+              *.png|*.jpg|*.jpeg|*.webp|*.svg|*.ico)
+                case "$relative" in
+                  */*) exit 1 ;;
+                esac
+                ;;
+              assets/index-*.js|assets/index-*.css)
+                ;;
+              *)
+                echo "::error::Unexpected file: $relative"
+                exit 1
+                ;;
+            esac
+          done < <(find dist -type f -print0)
+
+          test "$(find dist -type f | wc -l)" -eq \
+               "$(wc -l < release-checksums.txt)"
+
+          sha256sum --check release-checksums.txt >/dev/null
+          echo "Artifact validated"
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.TLV_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.TLV_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY"
+          test -n "$KNOWN_HOSTS"
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Stage on one.com
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          STAGE="tlv-github-staging/$RELEASE_SHA"
+
+          SSH_OPTS="-i $HOME/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes"
+
+          ssh $SSH_OPTS "$REMOTE" \
+            "umask 077; test ! -e '$STAGE' && mkdir -p '$STAGE'"
+
+          rsync -az \
+            -e "ssh $SSH_OPTS" \
+            release/dist release/release-checksums.txt \
+            "$REMOTE:$STAGE/"
+
+          ssh $SSH_OPTS "$REMOTE" \
+            "cd '$STAGE' && sha256sum -c release-checksums.txt >/dev/null"
+
+          echo "STAGING VERIFIED - LIVE WEBSITE UNCHANGED"
