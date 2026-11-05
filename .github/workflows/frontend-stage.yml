@@ -43,9 +43,9 @@ jobs:
             '
               .name == "Frontend Release Preparation" and
               .conclusion == "success" and
-              .event == "push" and
-              .head_branch == "utvikling-avtale-sakskort" and
-              (.head_sha | startswith("ac90e61")) and
+              .event == "workflow_dispatch" and
+              .head_branch == "main" and
+              (.head_sha | test("^[0-9a-f]{40}$")) and
               .head_repository.full_name == $repo
             ' /tmp/release-run.json >/dev/null
 
