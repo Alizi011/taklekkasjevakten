@@ -81,7 +81,7 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
   const [brregError, setBrregError] = useState("");
 
   const normalizePersonName = (name: string) =>
-    name.normalize("NFKC").trim().replace(/\\s+/g, " ").toLocaleLowerCase("nb-NO");
+    name.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("nb-NO");
 
   const brregForMember = (name: string) => {
     if (!brregEvidence) return null;
@@ -165,8 +165,8 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
         if (!customerRes.ok) throw new Error("Kundeprofil ikke tilgjengelig");
         const customerData = await customerRes.json();
         if (customerData?.success !== true) throw new Error("Kundeprofil ikke tilgjengelig");
-        const orgnr = String(customerData?.customer?.organization_number || "").replace(/\\D/g, "");
-        if (!/^\\d{9}$/.test(orgnr)) return;
+        const orgnr = String(customerData?.customer?.organization_number || "").replace(/\D/g, "");
+        if (!/^\d{9}$/.test(orgnr)) return;
 
         const response = await fetch(apiUrl(`/tlv_brreg_board.php?orgnr=${orgnr}`), {
           credentials: "include", cache: "no-store", signal: controller.signal,
@@ -175,8 +175,8 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
         const data = await response.json();
         if (data?.success !== true) throw new Error("BRREG-data ikke tilgjengelige");
 
-        const toRecord = (v: unknown): Record<string, any> | null =>
-          v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, any> : null;
+        const toRecord = (v: unknown): Record<string, unknown> | null =>
+          v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : null;
 
         const board: BoardEntry[] = Array.isArray(data.board_members)
           ? data.board_members.filter((item: unknown) => {
