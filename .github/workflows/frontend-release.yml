@@ -1,0 +1,84 @@
+name: Frontend Release Preparation
+
+on:
+  push:
+    branches:
+      - utvikling-avtale-sakskort
+    paths:
+      - ".github/workflows/frontend-release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Validate release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/index.html
+
+          if find dist -type l | grep -q .; then
+            echo "::error::Symlinks are not allowed"
+            exit 1
+          fi
+
+          while IFS= read -r -d '' file; do
+            relative="${file#dist/}"
+
+            case "$relative" in
+              index.html|robots.txt|site.webmanifest)
+                ;;
+              *.png|*.jpg|*.jpeg|*.webp|*.svg|*.ico)
+                case "$relative" in
+                  */*) echo "::error::Unexpected image path: $relative"; exit 1 ;;
+                esac
+                ;;
+              assets/index-*.js|assets/index-*.css)
+                ;;
+              *)
+                echo "::error::Unexpected release file: $relative"
+                exit 1
+                ;;
+            esac
+          done < <(find dist -type f -print0)
+
+          echo "Release file validation passed"
+
+      - name: Create checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          find dist -type f -print0 |
+            sort -z |
+            xargs -0 -r sha256sum > release-checksums.txt
+
+      - name: Save release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tlv-frontend-release
+          path: |
+            dist/
+            release-checksums.txt
+          retention-days: 7
+          if-no-files-found: error

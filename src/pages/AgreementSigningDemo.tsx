@@ -1,0 +1,171 @@
+import { useState } from "react";
+import { CheckCircle2, PenLine, RotateCcw } from "lucide-react";
+
+type Stage = "customer" | "marina" | "complete";
+
+export default function AgreementSigningDemo() {
+  const [stage, setStage] = useState<Stage>("customer");
+  const [accepted, setAccepted] = useState(false);
+  const [customerSignedAt, setCustomerSignedAt] = useState("");
+  const [marinaSignedAt, setMarinaSignedAt] = useState("");
+
+  function signCustomer() {
+    if (!accepted) return;
+    setCustomerSignedAt(new Date().toLocaleString("nb-NO"));
+    setAccepted(false);
+    setStage("marina");
+  }
+
+  function signMarina() {
+    if (!accepted) return;
+    setMarinaSignedAt(new Date().toLocaleString("nb-NO"));
+    setAccepted(false);
+    setStage("complete");
+  }
+
+  function reset() {
+    setStage("customer");
+    setAccepted(false);
+    setCustomerSignedAt("");
+    setMarinaSignedAt("");
+  }
+
+  const isCustomer = stage === "customer";
+
+  return (
+    <main className="min-h-screen bg-[#071321] px-4 py-8 text-white">
+      <div className="mx-auto max-w-5xl space-y-6">
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+          <p className="font-black text-amber-300">DEMO – KUN DEV</p>
+          <p className="mt-1 text-xs text-slate-300">
+            Eksempeldata. Ingen SMS, databaseendringer eller juridisk signering.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-black">
+              Elektronisk signering av arbeidsavtale
+            </h1>
+            <p className="mt-2 text-sm text-slate-400">
+              Demonstrasjon av kundens og leverandørens signering.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={reset}
+            className="flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-sm"
+          >
+            <RotateCcw className="h-4 w-4" />
+            Start demo på nytt
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          {[
+            ["1", "KORSGATA 30 BRL", !!customerSignedAt],
+            ["2", "Perun AS", !!marinaSignedAt],
+            ["3", "Avtalen ferdig", stage === "complete"],
+          ].map(([number, label, done]) => (
+            <div
+              key={String(number)}
+              className="rounded-2xl border border-slate-800 bg-slate-950 p-4"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold">{label}</span>
+                {done ? (
+                  <CheckCircle2 className="h-5 w-5 text-green-400" />
+                ) : (
+                  <span className="text-slate-500">{number}</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
+          <div className="border-b border-slate-800 p-5">
+            <h2 className="font-bold">Arbeidsavtale med tilbudsvedlegg</h2>
+            <p className="mt-1 text-xs text-slate-400">
+              Generert med den samme PDF-malen som brukes for kunden.
+            </p>
+          </div>
+
+          <iframe
+            title="Arbeidsavtale med vedlegg"
+            src="/demo/korsgata30-v2-approved-preview.pdf"
+            className="h-[85vh] min-h-[700px] w-full bg-white"
+          />
+
+          <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <span className="text-xs text-slate-400">
+              Les hele dokumentet, inkludert vedlegget, før signering.
+            </span>
+            <a
+              href="/demo/korsgata30-v2-approved-preview.pdf"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm font-bold text-amber-400 underline"
+            >
+              Åpne hele PDF-en
+            </a>
+          </div>
+        </section>
+        {stage !== "complete" ? (
+          <section className="rounded-2xl border border-slate-800 bg-slate-950 p-6">
+            <h2 className="flex items-center gap-2 text-lg font-bold">
+              <PenLine className="h-5 w-5 text-amber-400" />
+              {isCustomer
+                ? "Signering – KORSGATA 30 BRL"
+                : "Signering – Perun AS"}
+            </h2>
+
+            <p className="mt-3 text-sm text-slate-400">
+              {isCustomer
+                ? "Borettslagets signaturberettigede representanter signerer først."
+                : "Borettslagets signering er demonstrert. Marina Alizi signerer deretter på vegne av Perun AS."}
+            </p>
+
+            <label className="mt-5 flex items-start gap-3 text-sm">
+              <input
+                type="checkbox"
+                checked={accepted}
+                onChange={(e) => setAccepted(e.target.checked)}
+                className="mt-1"
+              />
+              <span>
+                Jeg har gjennomgått arbeidsavtalen og ønsker å
+                demonstrere elektronisk signering.
+              </span>
+            </label>
+
+            <button
+              type="button"
+              disabled={!accepted}
+              onClick={isCustomer ? signCustomer : signMarina}
+              className="mt-5 rounded-xl bg-amber-500 px-6 py-3 font-bold text-slate-950 disabled:opacity-40"
+            >
+              {isCustomer
+                ? "Signer arbeidsavtalen"
+                : "Signer arbeidsavtalen"}
+            </button>
+          </section>
+        ) : (
+          <section className="rounded-2xl border border-green-800/40 bg-slate-950 p-6">
+            <CheckCircle2 className="mb-3 h-8 w-8 text-green-400" />
+            <h2 className="text-xl font-bold">
+              Demoforløpet er fullført
+            </h2>
+            <p className="mt-2 text-sm text-slate-300">
+              Begge signaturene er demonstrert. I den ekte løsningen
+              arkiveres avtalen og signeringsbeviset på prosjektet.
+            </p>
+            <p className="mt-3 text-xs text-slate-500">
+              Ingen virkelig signatur eller dokumentarkivering er utført.
+            </p>
+          </section>
+        )}
+      </div>
+    </main>
+  );
+}

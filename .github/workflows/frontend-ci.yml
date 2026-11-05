@@ -1,0 +1,50 @@
+name: Frontend CI
+
+on:
+  push:
+    branches:
+      - main
+      - utvikling-avtale-sakskort
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Reject backend files in frontend build
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/index.html
+          if find dist -type f -name '*.php' | grep -q .; then
+            echo "::error::PHP files found in frontend build"
+            exit 1
+          fi
+          if [ -d dist/api ] && find dist/api -type f | grep -q .; then
+            echo "::error::Backend files found in frontend build"
+            exit 1
+          fi
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high

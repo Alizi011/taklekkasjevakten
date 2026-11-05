@@ -1,0 +1,205 @@
+import { useEffect, useState } from "react";
+import { ShieldCheck, AlertTriangle, Loader2 } from "lucide-react";
+import { apiUrl } from "../../lib/api";
+
+type HeritageMatch = {
+  layer?: string;
+  feature_id?: string;
+  attributes?: Record<string, unknown>;
+};
+
+type HeritageResult = {
+  success?: boolean;
+  checked?: boolean;
+  message?: string;
+  data?: {
+    direct_matches?: HeritageMatch[];
+    checked_at?: string;
+    cache?: { checked_at?: string };
+    warnings?: string[];
+  };
+};
+
+const descriptions: Record<string, string> = {
+  KOM: "Kommunalt listeført. Dokumenter eksisterende tak, piper, beslag og fasade. Kontroller planbestemmelser før synlige endringer.",
+  AUT: "Automatisk fredet. Avklar nødvendige tillatelser med kulturminnemyndigheten før inngrep.",
+  VED: "Vedtaksfredet. Kontroller fredningsvedtaket og avklar tiltak og materialbruk.",
+  FOR: "Forskriftsfredet. Kontroller gjeldende forskrift før arbeidet.",
+  PBL: "Planbasert vern. Kontroller reguleringsplanens bestemmelser før utførelse."
+};
+
+const labels: Record<string, string> = {
+  KOM: "Kommunalt listeført",
+  AUT: "Automatisk fredet",
+  VED: "Vedtaksfredet",
+  FOR: "Forskriftsfredet",
+  PBL: "Vern etter plan- og bygningsloven"
+};
+
+export default function ProjectManagerHeritage({
+  inquiryId,
+  address,
+  adminPreview = false
+}: {
+  inquiryId: number;
+  address: string;
+  adminPreview?: boolean;
+}) {
+  const [result, setResult] = useState<HeritageResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const token = window.localStorage.getItem(
+      "taklekkasjevakten_project_manager_session"
+    );
+
+    setResult(null);
+    setError("");
+    setLoading(true);
+
+    if ((!adminPreview && !token) || inquiryId < 1) {
+      setError("Gyldig prosjektansvarligsesjon mangler.");
+      setLoading(false);
+      return;
+    }
+
+    fetch(
+      adminPreview
+        ? `${apiUrl("/tlv_heritage_lookup_bridge.php")}?inquiry_id=${encodeURIComponent(String(inquiryId))}`
+        : apiUrl("/tlv_pm_heritage_status.php"),
+      adminPreview
+        ? {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+            signal: controller.signal
+          }
+        : {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              inquiry_id: inquiryId,
+              session_token: token
+            }),
+            cache: "no-store",
+            signal: controller.signal
+          }
+    )
+      .then(async (response) => {
+        const body: HeritageResult = await response.json();
+        if (!response.ok || !body.success) {
+          throw new Error(body.message || `HTTP ${response.status}`);
+        }
+        if (!controller.signal.aborted) {
+          setResult(
+            adminPreview
+              ? {
+                  success: true,
+                  checked: true,
+                  data: body as HeritageResult["data"]
+                }
+              : body
+          );
+        }
+      })
+      .catch((e: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(e instanceof Error ? e.message : "Kunne ikke hente vernestatus.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [inquiryId, adminPreview]);
+
+  const entries = result?.data?.direct_matches || [];
+  const primary = entries.find((item) => item.layer === "app:Enkeltminne") || entries[0];
+  const attributes = primary?.attributes || {};
+  const code = String(attributes.vernetype || "").toUpperCase();
+  const heritageId = String(attributes.kulturminneId || primary?.feature_id || "");
+  const checkedAt = result?.data?.cache?.checked_at || result?.data?.checked_at;
+  const warnings = result?.data?.warnings || [];
+
+  return (
+    <section className="rounded-2xl border border-amber-500/25 bg-[#241b17] p-5 space-y-3">
+      <div className="flex items-center gap-3">
+        <ShieldCheck className="h-5 w-5 text-amber-300" />
+        <div>
+          <h3 className="font-extrabold text-white">Vernestatus</h3>
+          <p className="text-xs text-slate-400">{address}</p>
+        </div>
+      </div>
+
+      {loading && (
+        <p className="flex items-center gap-2 text-sm text-slate-300">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Henter lagret vernestatus …
+        </p>
+      )}
+
+      {error && (
+        <p role="alert" className="flex items-center gap-2 text-sm text-rose-300">
+          <AlertTriangle className="h-4 w-4" />
+          {error}
+        </p>
+      )}
+
+      {result?.checked === false && (
+        <p className="text-sm text-amber-200">
+          Ikke kontrollert – ingen lagret vernestatus for denne saken.
+        </p>
+      )}
+
+      {result?.checked && (
+        <>
+          <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-4">
+            <p className="font-bold text-white">
+              {primary
+                ? labels[code] || `Registrert vernetype: ${code || "ukjent"}`
+                : warnings.length
+                  ? "Uavklart – kontrollen har merknader"
+                  : "Ingen direkte registrering funnet"}
+            </p>
+
+            {primary && (
+              <p className="mt-2 text-xs text-slate-300">
+                Kode: {code || "Ukjent"}
+                {heritageId && ` · Kulturminne-ID: ${heritageId}`}
+              </p>
+            )}
+
+            <p className="mt-2 text-xs text-slate-400">
+              Sist kontrollert: {checkedAt || "Ukjent"}
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-slate-700 p-4">
+            <h4 className="mb-2 font-semibold text-amber-200">
+              Betydning for arbeidet
+            </h4>
+            <p className="text-sm leading-6 text-slate-200">
+              {primary
+                ? descriptions[code] ||
+                  "Registreringen må undersøkes nærmere før inngrep."
+                : "Ingen direkte treff er ikke dokumentasjon på at bygningen er uten vern. Kontroller relevante planer og bestemmelser."}
+            </p>
+          </div>
+
+          {warnings.length > 0 && (
+            <p className="text-xs text-amber-200">
+              Kontrollmerknader: {warnings.join(" · ")}
+            </p>
+          )}
+
+          <p className="text-xs text-slate-400">
+            Viser lagret registerkontroll fra Perun Core. Ingen ny kontroll er utført.
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
