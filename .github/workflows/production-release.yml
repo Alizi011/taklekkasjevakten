@@ -2,6 +2,25 @@ name: Production Frontend Release
 
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        description: "Velg handling"
+        required: true
+        type: choice
+        default: preflight
+        options: [preflight, backup, publish, rollback]
+      release_sha:
+        description: "40-tegns SHA for staged frontend (preflight/backup/publish)"
+        required: false
+        type: string
+      backup_name:
+        description: "Eksakt backupfilnavn (rollback)"
+        required: false
+        type: string
+      backup_sha256:
+        description: "SHA256 fra logg ved backup (rollback)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -11,120 +30,70 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  preflight:
+  operate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     environment: production
-
+    timeout-minutes: 15
     steps:
-      - name: Configure SSH
+      - uses: actions/checkout@v4
+      - name: Validate parameters
         shell: bash
         env:
-          DEPLOY_KEY: ${{ secrets.TLV_DEPLOY_SSH_KEY }}
-          KNOWN_HOSTS: ${{ vars.TLV_SSH_KNOWN_HOSTS }}
+          TLV_ACTION: ${{ inputs.action }}
+          TLV_RELEASE_SHA: ${{ inputs.release_sha }}
+          TLV_BACKUP_NAME: ${{ inputs.backup_name }}
+          TLV_BACKUP_SHA: ${{ inputs.backup_sha256 }}
         run: |
           set -euo pipefail
-          test -n "$DEPLOY_KEY"
-          test -n "$KNOWN_HOSTS"
-
+          case "$TLV_ACTION" in
+            preflight|backup|publish)
+              [[ "$TLV_RELEASE_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
+              ;;
+            rollback)
+              [[ "$TLV_BACKUP_NAME" =~ ^tlv-before-github-[0-9]{8}-[0-9]{6}(-[0-9]+)?\.tar\.gz$ ]] || exit 1
+              [[ "$TLV_BACKUP_SHA" =~ ^[a-f0-9]{64}$ ]] || exit 1
+              ;;
+            *) exit 1 ;;
+          esac
+      - name: Configure verified SSH
+        shell: bash
+        env:
+          KEY: ${{ secrets.TLV_DEPLOY_SSH_KEY }}
+          HOST_KEY: ${{ vars.TLV_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$KEY" && test -n "$HOST_KEY"
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
-
-          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KEY" > "$HOME/.ssh/id_ed25519"
           chmod 600 "$HOME/.ssh/id_ed25519"
-
-          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$HOST_KEY" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
-
-      - name: Verify release and rollback readiness
+      - name: Execute controlled frontend operation
         shell: bash
+        env:
+          TLV_ACTION: ${{ inputs.action }}
+          TLV_RELEASE_SHA: ${{ inputs.release_sha }}
+          TLV_BACKUP_NAME: ${{ inputs.backup_name }}
+          TLV_BACKUP_SHA: ${{ inputs.backup_sha256 }}
+          TLV_ENABLE_LIVE: ${{ vars.TLV_ENABLE_LIVE }}
+          TLV_FUNCTIONAL_TEST_OK: ${{ vars.TLV_FUNCTIONAL_TEST_OK }}
         run: |
           set -euo pipefail
-
-          ssh \
-            -i "$HOME/.ssh/id_ed25519" \
-            -o IdentitiesOnly=yes \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            c2d9sf1au_ssh@ssh.c2d9sf1au.service.one \
-            'sh -s' <<'REMOTE'
-          set -eu
-
-          WEB="/webroots/www"
-          SHA="ac90e61dc456c4eaf5c4bfb4b54d4633b8b0bc92"
-          STAGE="$HOME/tlv-github-staging/$SHA"
-          BACKUP="$HOME/tlv-github-backups/tlv-before-github-20261105-130233.tar.gz"
-
-          echo "=== VERIFY STAGING ==="
-
-          test -s "$STAGE/dist/index.html"
-          test -s "$STAGE/release-checksums.txt"
-
-          (
-            cd "$STAGE"
-            sha256sum -c release-checksums.txt >/dev/null
-          )
-
-          test -s "$STAGE/dist/assets/index-ConMBUx9.js"
-          test -s "$STAGE/dist/assets/index-Dos2pW0L.css"
-
-          grep -Fq 'assets/index-ConMBUx9.js' "$STAGE/dist/index.html"
-          grep -Fq 'assets/index-Dos2pW0L.css' "$STAGE/dist/index.html"
-
-          if find "$STAGE/dist" -type f -name '*.php' | grep -q .; then
-            echo "STOP: PHP in release"
-            exit 1
+          # The two environment variables default to "no" until explicitly enabled
+          # after functional testing. They are passed as a controlled remote prefix.
+          [[ "$TLV_ENABLE_LIVE" == yes ]] || TLV_ENABLE_LIVE=no
+          [[ "$TLV_FUNCTIONAL_TEST_OK" == yes ]] || TLV_FUNCTIONAL_TEST_OK=no
+          REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          if [[ "$TLV_ACTION" == rollback ]]; then
+            ARG="$TLV_BACKUP_NAME"
+            HASH="$TLV_BACKUP_SHA"
+          else
+            ARG="$TLV_RELEASE_SHA"
+            HASH=""
           fi
-
-          if find "$STAGE/dist" -type l | grep -q .; then
-            echo "STOP: Symlink in release"
-            exit 1
-          fi
-
-          echo "STAGING VERIFIED"
-
-          echo "=== VERIFY CURRENT PRODUCTION ==="
-
-          test -s "$WEB/index.html"
-
-          grep -Fq 'assets/index-TLVfix-FA64BD06.js' "$WEB/index.html"
-          grep -Fq 'assets/index-CBssf_Vm.css' "$WEB/index.html"
-
-          test -s "$WEB/assets/index-TLVfix-FA64BD06.js"
-          test -s "$WEB/assets/index-CBssf_Vm.css"
-
-          echo "CURRENT PRODUCTION VERIFIED"
-
-          echo "=== VERIFY BACKUP ==="
-
-          test -s "$BACKUP"
-          tar -tzf "$BACKUP" >/dev/null
-
-          for file in \
-            index.html \
-            robots.txt \
-            site.webmanifest \
-            assets/index-TLVfix-FA64BD06.js \
-            assets/index-CBssf_Vm.css
-          do
-            tar -tzf "$BACKUP" | grep -Fxq "$file"
-            tar -xOzf "$BACKUP" "$file" | cmp -s - "$WEB/$file"
-          done
-
-          echo "BACKUP MATCHES ACTIVE PRODUCTION"
-
-          echo "=== RELEASE PLAN ==="
-
-          echo "New JavaScript: assets/index-ConMBUx9.js"
-          echo "New CSS: assets/index-Dos2pW0L.css"
-          echo "Replace: robots.txt"
-          echo "Replace: site.webmanifest"
-          echo "Activate index.html last"
-          echo "Keep previous JavaScript and CSS"
-
-          echo "=== RESULT ==="
-          echo "PREFLIGHT PASSED"
-          echo "DEPLOYMENT DISABLED"
-          echo "ROLLBACK NOT EXECUTED"
-          echo "LIVE WEBSITE UNCHANGED"
-          REMOTE
+          # Variables are regex-validated, so remote values cannot inject commands.
+          "${SSH[@]}" "$REMOTE" \
+            "TLV_ENABLE_LIVE=$TLV_ENABLE_LIVE TLV_FUNCTIONAL_TEST_OK=$TLV_FUNCTIONAL_TEST_OK bash -s -- '$TLV_ACTION' '$ARG' '$HASH'" \
+            < .github/scripts/tlv-frontend-deploy.sh

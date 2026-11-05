@@ -1,0 +1,27 @@
+name: Deploy Engine Isolated Test
+
+on:
+  push:
+    branches:
+      - utvikling-deploy-engine
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check Bash syntax
+        run: |
+          bash -n .github/scripts/tlv-frontend-deploy.sh
+          bash -n test-engine.sh
+
+      - name: Test publish and rollback
+        run: bash test-engine.sh
