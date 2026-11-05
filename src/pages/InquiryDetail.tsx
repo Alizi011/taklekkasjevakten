@@ -3243,7 +3243,7 @@ export default function InquiryDetail({
                           <span className="shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-300">Akseptert</span>
                         </div>
                         <p className="text-xs leading-5 text-slate-300">{current.title}</p>
-                        <AdminAgreementProgress inquiryId={inquiryId} />
+                        <AdminAgreementProgress inquiryId={inquiryId} organizationNumber={overviewOrganizationNumber} />
                         <button type="button" onClick={() => setAdminCaseTab("offer")}
                           className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-3 py-2.5 text-xs font-bold text-cyan-200 hover:bg-cyan-500/20">
                           <FileText className="h-4 w-4" />Vis tilbud, PDF og avtale
