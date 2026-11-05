@@ -1,0 +1,130 @@
+name: Production Frontend Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tlv-production-operations
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.TLV_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.TLV_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY"
+          test -n "$KNOWN_HOSTS"
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Verify release and rollback readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i "$HOME/.ssh/id_ed25519" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            c2d9sf1au_ssh@ssh.c2d9sf1au.service.one \
+            'sh -s' <<'REMOTE'
+          set -eu
+
+          WEB="/webroots/www"
+          SHA="ac90e61dc456c4eaf5c4bfb4b54d4633b8b0bc92"
+          STAGE="$HOME/tlv-github-staging/$SHA"
+          BACKUP="$HOME/tlv-github-backups/tlv-before-github-20261105-130233.tar.gz"
+
+          echo "=== VERIFY STAGING ==="
+
+          test -s "$STAGE/dist/index.html"
+          test -s "$STAGE/release-checksums.txt"
+
+          (
+            cd "$STAGE"
+            sha256sum -c release-checksums.txt >/dev/null
+          )
+
+          test -s "$STAGE/dist/assets/index-ConMBUx9.js"
+          test -s "$STAGE/dist/assets/index-Dos2pW0L.css"
+
+          grep -Fq 'assets/index-ConMBUx9.js' "$STAGE/dist/index.html"
+          grep -Fq 'assets/index-Dos2pW0L.css' "$STAGE/dist/index.html"
+
+          if find "$STAGE/dist" -type f -name '*.php' | grep -q .; then
+            echo "STOP: PHP in release"
+            exit 1
+          fi
+
+          if find "$STAGE/dist" -type l | grep -q .; then
+            echo "STOP: Symlink in release"
+            exit 1
+          fi
+
+          echo "STAGING VERIFIED"
+
+          echo "=== VERIFY CURRENT PRODUCTION ==="
+
+          test -s "$WEB/index.html"
+
+          grep -Fq 'assets/index-TLVfix-FA64BD06.js' "$WEB/index.html"
+          grep -Fq 'assets/index-CBssf_Vm.css' "$WEB/index.html"
+
+          test -s "$WEB/assets/index-TLVfix-FA64BD06.js"
+          test -s "$WEB/assets/index-CBssf_Vm.css"
+
+          echo "CURRENT PRODUCTION VERIFIED"
+
+          echo "=== VERIFY BACKUP ==="
+
+          test -s "$BACKUP"
+          tar -tzf "$BACKUP" >/dev/null
+
+          for file in \
+            index.html \
+            robots.txt \
+            site.webmanifest \
+            assets/index-TLVfix-FA64BD06.js \
+            assets/index-CBssf_Vm.css
+          do
+            tar -tzf "$BACKUP" | grep -Fxq "$file"
+            tar -xOzf "$BACKUP" "$file" | cmp -s - "$WEB/$file"
+          done
+
+          echo "BACKUP MATCHES ACTIVE PRODUCTION"
+
+          echo "=== RELEASE PLAN ==="
+
+          echo "New JavaScript: assets/index-ConMBUx9.js"
+          echo "New CSS: assets/index-Dos2pW0L.css"
+          echo "Replace: robots.txt"
+          echo "Replace: site.webmanifest"
+          echo "Activate index.html last"
+          echo "Keep previous JavaScript and CSS"
+
+          echo "=== RESULT ==="
+          echo "PREFLIGHT PASSED"
+          echo "DEPLOYMENT DISABLED"
+          echo "ROLLBACK NOT EXECUTED"
+          echo "LIVE WEBSITE UNCHANGED"
+          REMOTE
