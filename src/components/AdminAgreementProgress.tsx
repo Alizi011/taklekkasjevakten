@@ -69,6 +69,31 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
   const [customerAccessLoading, setCustomerAccessLoading] = useState(true);
   const [customerAccessError, setCustomerAccessError] = useState("");
 
+  // Kun lesing av BRREG-cache: dette dokumenterer representasjonsgrunnlag,
+  // men gir aldri innlogging, identitetsverifisering eller signeringsrett.
+  type BoardEntry = { name: string; role: string; role_code?: string };
+  type BrregEvidence = {
+    board: BoardEntry[];
+    soleSigners: string[];
+    checkedAt: string | null;
+  };
+  const [brregEvidence, setBrregEvidence] = useState<BrregEvidence | null>(null);
+  const [brregError, setBrregError] = useState("");
+
+  const normalizePersonName = (name: string) =>
+    name.normalize("NFKC").trim().replace(/\\s+/g, " ").toLocaleLowerCase("nb-NO");
+
+  const brregForMember = (name: string) => {
+    if (!brregEvidence) return null;
+    const normalized = normalizePersonName(name);
+    const person = brregEvidence.board.find(p => normalizePersonName(p.name) === normalized);
+    if (!person) return null;
+    const isChair = /styreleder|styrets leder/i.test(person.role) ||
+      ["LEDE", "STYRLE"].includes(String(person.role_code || "").toUpperCase());
+    const signsAlone = brregEvidence.soleSigners.some(n => normalizePersonName(n) === normalized);
+    return { isChair, signsAlone, checkedAt: brregEvidence.checkedAt };
+  };
+
   // TLV_ADMIN_PREPARE_ACCESS_UI_V1
   const [recoveryMemberId, setRecoveryMemberId] = useState<number | null>(null);
   const [recoveryName, setRecoveryName] = useState("");
@@ -126,6 +151,81 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
     void loadCustomerAccess(controller.signal);
     return () => controller.abort();
   }, [loadCustomerAccess]);
+
+  // Gjenbruk samme lagrede BRREG-oppslag som styrevisningen, uten refresh=1.
+  useEffect(() => {
+    const controller = new AbortController();
+    setBrregEvidence(null);
+    setBrregError("");
+    void (async () => {
+      try {
+        const customerRes = await fetch(apiUrl(`/customer_profile.php?inquiry_id=${inquiryId}`), {
+          credentials: "include", cache: "no-store", signal: controller.signal,
+        });
+        if (!customerRes.ok) throw new Error("Kundeprofil ikke tilgjengelig");
+        const customerData = await customerRes.json();
+        if (customerData?.success !== true) throw new Error("Kundeprofil ikke tilgjengelig");
+        const orgnr = String(customerData?.customer?.organization_number || "").replace(/\\D/g, "");
+        if (!/^\\d{9}$/.test(orgnr)) return;
+
+        const response = await fetch(apiUrl(`/tlv_brreg_board.php?orgnr=${orgnr}`), {
+          credentials: "include", cache: "no-store", signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("BRREG-data ikke tilgjengelige");
+        const data = await response.json();
+        if (data?.success !== true) throw new Error("BRREG-data ikke tilgjengelige");
+
+        const toRecord = (v: unknown): Record<string, any> | null =>
+          v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, any> : null;
+
+        const board: BoardEntry[] = Array.isArray(data.board_members)
+          ? data.board_members.filter((item: unknown) => {
+              const entry = toRecord(item);
+              return typeof entry?.name === "string" && typeof entry?.role === "string";
+            }).map((item: BoardEntry) => ({ name: item.name, role: item.role, role_code: item.role_code }))
+          : [];
+
+        // BRREG kan returnere rå rollegrupper selv om board_members mangler.
+        if (!board.length) {
+          const groups = toRecord(data.roles)?.rollegrupper;
+          for (const rawGroup of Array.isArray(groups) ? groups : []) {
+            const group = toRecord(rawGroup);
+            if (toRecord(group?.type)?.kode !== "STYR") continue;
+            for (const rawRole of Array.isArray(group?.roller) ? group.roller : []) {
+              const role = toRecord(rawRole);
+              const roleType = toRecord(role?.type);
+              const personName = toRecord(toRecord(role?.person)?.navn);
+              const name = [personName?.fornavn, personName?.mellomnavn, personName?.etternavn]
+                .filter((x): x is string => typeof x === "string" && x.length > 0).join(" ");
+              if (name) board.push({
+                name, role: String(roleType?.beskrivelse || ""), role_code: String(roleType?.kode || ""),
+              });
+            }
+          }
+        }
+
+        const combinationList = toRecord(toRecord(data.signing)?.signeringsKombinasjon)?.kombinasjon;
+        const soleSigners: string[] = [];
+        for (const rawCombination of Array.isArray(combinationList) ? combinationList : []) {
+          const combination = toRecord(rawCombination);
+          const entries = combination?.personRolleKombinasjon;
+          const names = (Array.isArray(entries) ? entries : [])
+            .map((entry: unknown) => toRecord(entry)?.navn)
+            .filter((name: unknown): name is string => typeof name === "string" && name.trim().length > 0);
+          if (names.length === 1) soleSigners.push(names[0]);
+        }
+
+        if (!controller.signal.aborted) {
+          setBrregEvidence({ board, soleSigners, checkedAt: typeof data.checked_at === "string" ? data.checked_at : null });
+        }
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          setBrregError(e instanceof Error ? e.message : "BRREG-data ikke tilgjengelige");
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [inquiryId]);
 
   const openRecovery = (member: CustomerMemberStatus) => {
     setRecoveryMemberId(member.id);
@@ -455,8 +555,28 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
               .map(member => (
                 <div key={member.id} className="space-y-1 rounded-lg border border-slate-700/70 bg-slate-950/50 p-3 text-xs">
                   <p className="font-bold text-white">
-                    {member.organisation_role || "Kundeadministrator"} · Medlem {member.id}
+                    {member.full_name || member.organisation_role || "Kundeadministrator"} · Medlem {member.id}
                   </p>
+                  {(() => {
+                    const evidence = brregForMember(member.full_name || "");
+                    return evidence ? (
+                      <div className="space-y-1 rounded-lg border border-cyan-500/25 bg-cyan-500/[0.05] p-2 text-slate-200">
+                        <p>BRREG: {evidence.isChair ? "Registrert styreleder" : "Registrert styremedlem"}</p>
+                        <p>Signaturrett: {evidence.signsAlone
+                          ? "Registrert alene i BRREG"
+                          : "Ikke bekreftet som alene-signatar fra registrerte personkombinasjoner"}</p>
+                        <p className="text-[11px] text-slate-400">
+                          {evidence.checkedAt ? `Oppslag kontrollert: ${evidence.checkedAt}. ` : ""}
+                          Navnesamsvar er kun dokumentasjon. Signaturrett og identitet må fortsatt
+                          bekreftes i den serverstyrte avtaleprosessen.
+                        </p>
+                      </div>
+                    ) : brregError ? (
+                      <p className="text-[11px] text-slate-400">BRREG-status utilgjengelig for denne visningen.</p>
+                    ) : (
+                      <p className="text-[11px] text-slate-400">Ingen bekreftet personkobling til BRREG i denne visningen.</p>
+                    );
+                  })()}
                   <p className={member.status === "active" ? "text-emerald-300" : "text-amber-300"}>
                     Medlemsstatus: {member.status}
                   </p>
