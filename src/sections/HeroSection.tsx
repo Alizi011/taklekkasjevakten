@@ -21,7 +21,6 @@ const slides = [
   },
 ];
 
-
 export default function HeroSection() {
   const [current, setCurrent] = useState(0);
 
@@ -44,7 +43,6 @@ export default function HeroSection() {
 
   return (
     <section id="forside" className="relative min-h-screen flex flex-col">
-      {/* Fullscreen Background Image Carousel */}
       <div className="absolute inset-0">
         <AnimatePresence mode="wait">
           <motion.div
@@ -63,17 +61,12 @@ export default function HeroSection() {
           </motion.div>
         </AnimatePresence>
 
-        {/* Dark gradient overlays for readability */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/50 to-black/25" />
         <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/20 to-transparent" />
       </div>
 
-      {/* Hero Content */}
       <div className="relative z-10 flex-1 flex flex-col justify-end pb-10 md:pb-20 pt-32">
         <div className="container-modern px-4 md:px-8">
-        
-
-          {/* Main headline */}
           <div className="max-w-3xl">
             <motion.h2
               initial={{ opacity: 0, y: 30 }}
@@ -96,7 +89,6 @@ export default function HeroSection() {
               dokumenterer alt. Ingen gjetning. Bare fagkunnskap.
             </motion.p>
 
-            {/* CTA Buttons */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -122,7 +114,6 @@ export default function HeroSection() {
               </motion.a>
             </motion.div>
 
-            {/* Quote overlay */}
             <AnimatePresence mode="wait">
               <motion.div
                 key={current}
@@ -138,7 +129,6 @@ export default function HeroSection() {
               </motion.div>
             </AnimatePresence>
 
-            {/* Carousel dots */}
             <div className="flex items-center gap-2">
               {slides.map((_, index) => (
                 <button
@@ -169,24 +159,23 @@ export default function HeroSection() {
           </div>
         </div>
 
-        {/* Kvalitetsløfte */}
-<motion.div
-  initial={{ opacity: 0, y: 40 }}
-  animate={{ opacity: 1, y: 0 }}
-  transition={{ delay: 0.8, duration: 0.7 }}
-  className="container-modern px-4 md:px-8 mt-10"
->
-  <div className="bg-white/10 backdrop-blur-lg rounded-3xl border border-white/20 px-8 py-6 text-center">
-    <h3 className="text-2xl md:text-3xl font-bold text-white mb-3">
-      Vi finner årsaken – ikke bare symptomene.
-    </h3>
+        <motion.div
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.8, duration: 0.7 }}
+          className="container-modern px-4 md:px-8 mt-10"
+        >
+          <div className="bg-white/10 backdrop-blur-lg rounded-3xl border border-white/20 px-8 py-6 text-center">
+            <h3 className="text-2xl md:text-3xl font-bold text-white mb-3">
+              Vi finner årsaken – ikke bare symptomene.
+            </h3>
 
-    <p className="text-white/80 text-sm md:text-base leading-relaxed">
-      Byggingeniør på hvert lekkasjesøk • Faglærte taktekkere •
-      Dokumenterte funn • Varige løsninger
-    </p>
-  </div>
-</motion.div>
+            <p className="text-white/80 text-sm md:text-base leading-relaxed">
+              Byggingeniør på hvert lekkasjesøk • Faglærte taktekkere •
+              Dokumenterte funn • Varige løsninger
+            </p>
+          </div>
+        </motion.div>
       </div>
     </section>
   );

@@ -1,0 +1,1194 @@
+import { useEffect, useState } from "react";
+import {
+  AlertTriangle,
+  ExternalLink,
+  FileText,
+  Loader2,
+  Send,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
+import OfferCalculator, {
+  EMPTY_CALCULATION,
+  calculateOffer,
+  type OfferCalculation,
+} from "./OfferCalculator";
+import OfferWorkTemplates, { appendWorkSuggestions } from "./OfferWorkTemplates";
+import OfferQuantityCalculator from "./OfferQuantityCalculator";
+import OfferWorkDescriptionEditor from "./OfferWorkDescriptionEditor";
+import { API_BASE, apiAssetUrl } from "../../lib/api";
+export type OfferService = "lekkasjesok" | "takkontroll" | "service";
+export type FollowUpType = "service" | "varig_utbedring";
+interface OfferInquiry {
+  id: number | string;
+  customer_name?: string;
+  customerName?: string;
+  address?: string;
+  postal_code?: string;
+  city?: string;
+}
+interface OfferEmployee {
+  id?: number;
+  name?: string;
+}
+interface OfferDraft {
+  id?: number;
+  service: OfferService;
+  title: string;
+  description: string;
+  team_rate: number;
+  vehicle_rate: number;
+  material_note: string;
+  terms: string;
+  pricing_mode?: "hourly" | "fixed";
+  fixed_price?: number;
+  calculation_json?: string;
+  pdf_url?: string | null;
+  status?: string;
+}
+interface OfferGeneratorProps {
+  open: boolean;
+  inquiry: OfferInquiry | null;
+  employee?: OfferEmployee | null;
+  initialService?: OfferService;
+  digitalInspectionComment?: string;
+  mode?: "initial" | "followup";
+  followUpType?: FollowUpType | null;
+  followUpReason?: string;
+  sourceReportId?: number | null;
+  initialOffer?: Partial<OfferDraft> | null;
+  publicationFlow?: "standard" | "direct";
+  projectManagerSessionToken?: string | null;
+  allowPublish?: boolean;
+  onDraftSaved?: (offerId: number) => void | Promise<void>;
+  onClose: () => void;
+  onPublished?: () => void | Promise<void>;
+}
+const EMPTY_OFFER_DRAFT: OfferDraft = {
+  service: "lekkasjesok",
+  title: "",
+  description: "",
+  team_rate: 1960,
+  vehicle_rate: 340,
+  material_note: "",
+  terms: "",
+  pricing_mode: "hourly",
+  fixed_price: 0,
+  calculation_json: "",
+};
+function customerName(inquiry: OfferInquiry): string {
+  return inquiry.customer_name || inquiry.customerName || "Ukjent kunde";
+}
+function fullAddress(inquiry: OfferInquiry): string {
+  return [inquiry.address, inquiry.postal_code, inquiry.city]
+    .filter(Boolean)
+    .join(", ");
+}
+function serviceLabel(service: OfferService): string {
+  if (service === "lekkasjesok") return "Lekkasjesøk";
+  if (service === "takkontroll") return "Takkontroll";
+  return "Service / utbedring";
+}
+function followUpLabel(type?: FollowUpType | null): string {
+  if (type === "varig_utbedring") return "Varig utbedring";
+  return "Service";
+}
+function buildOfferDraft(service: OfferService): OfferDraft {
+  const label = serviceLabel(service);
+  const isService = service === "service";
+  return {
+    ...EMPTY_OFFER_DRAFT,
+    service,
+    title: `Pristilbud – ${label.toLowerCase()}`,
+    description: isService
+      ? "Arbeidet utføres etter medgått tid. Endelig omfang fastslås når de tekniske forholdene undersøkes på stedet."
+      : "Oppdraget utføres etter medgått tid. Endelig omfang og årsak fastslås etter teknisk undersøkelse på stedet.",
+    material_note: isService
+      ? "Materialer faktureres etter faktisk forbruk."
+      : "",
+    terms:
+      "Arbeid utover beskrevet omfang avklares med kunden før utførelse. Fakturering skjer etter faktisk medgått tid og eventuelt materiell.",
+  };
+}
+export default function OfferGenerator({
+  open,
+  inquiry,
+  employee,
+  initialService = "lekkasjesok",
+  digitalInspectionComment = "",
+  mode = "initial",
+  followUpType = null,
+  followUpReason = "",
+  sourceReportId = null,
+  initialOffer = null,
+  publicationFlow = "standard",
+  projectManagerSessionToken = null,
+  allowPublish = true,
+  onDraftSaved,
+  onClose,
+  onPublished,
+}: OfferGeneratorProps) {
+  const [draft, setDraft] = useState<OfferDraft>(() =>
+    buildOfferDraft(initialService)
+  );
+  const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [generatingAi, setGeneratingAi] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [calculation, setCalculation] =
+    useState<OfferCalculation>(EMPTY_CALCULATION);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [pdfDirty, setPdfDirty] = useState(false);
+  const [aiEstimate, setAiEstimate] = useState<{
+    labor_hours: number;
+    vehicle_days: number;
+    confidence: "low" | "medium" | "high";
+    rationale: string;
+    estimated_labor_ex_vat: number;
+    estimated_vehicle_ex_vat: number;
+    estimated_known_ex_vat: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const base = buildOfferDraft(initialService);
+    const followUpTitle =
+      followUpType === "varig_utbedring"
+        ? "Pristilbud – varig utbedring"
+        : "Service – arbeid etter timesats";
+    const followUpBaseDescription =
+      followUpType === "varig_utbedring"
+        ? "Tilbudet gjelder varig utbedring av dokumenterte tekniske mangler. Endelig arbeidsomfang fremgår av arbeidsbeskrivelsen og kalkulasjonen."
+        : "Servicearbeidet utføres etter medgått tid i henhold til gjeldende timesatser. Materialer og eventuelle tillegg faktureres etter faktisk forbruk.";
+    setDraft({
+      ...base,
+      title:
+        mode === "followup"
+          ? followUpTitle
+          : base.title,
+      description:
+        mode === "followup"
+          ? `${
+              followUpReason.trim()
+                ? `Videre oppfølging basert på tidligere undersøkelse og rapport.\n\nFaglig grunnlag:\n${followUpReason.trim()}\n\n`
+                : ""
+            }${followUpBaseDescription}`
+          : base.description,
+    });
+    // Serveren velger riktig, eksisterende oppfølgingstilbud.
+    // Behold ID, beskrivelse og kalkulasjon ved gjenåpning.
+    if (initialOffer?.id) {
+      setDraft((current) => ({
+        ...current,
+        ...initialOffer,
+        service: "service",
+        id: Number(initialOffer.id),
+        title: String(initialOffer.title || current.title),
+        description: String(initialOffer.description || current.description),
+        team_rate: Number(initialOffer.team_rate ?? current.team_rate),
+        vehicle_rate: Number(initialOffer.vehicle_rate ?? current.vehicle_rate),
+        material_note: String(initialOffer.material_note ?? current.material_note),
+        terms: String(initialOffer.terms ?? current.terms),
+      }));
+    }
+    let restoredCalculation: OfferCalculation | null = null;
+    if (initialOffer?.calculation_json) {
+      try {
+        const parsed = JSON.parse(initialOffer.calculation_json);
+        if (parsed && Array.isArray(parsed.lines) &&
+          (parsed.pricingMode === "hourly" || parsed.pricingMode === "fixed")) {
+          restoredCalculation = parsed as OfferCalculation;
+        }
+      } catch { /* Eldre tilbud kan mangle kalkulasjon. */ }
+    }
+    setCalculation(restoredCalculation || {
+      ...EMPTY_CALCULATION,
+      pricingMode: "hourly",
+      lines: EMPTY_CALCULATION.lines.map((line) => ({ ...line })),
+    });
+    // DIRECT_OFFER_PDF_RESTORE_V1
+    // Behold eksisterende kunde-PDF ved gjenåpning av et utkast.
+    setPdfUrl(
+      initialOffer?.id && initialOffer.pdf_url
+        ? initialOffer.pdf_url
+        : null
+    );
+    setPdfDirty(false);
+    setAiEstimate(null);
+    setError("");
+    setMessage("");
+  }, [
+    open,
+    initialService,
+    inquiry?.id,
+    mode,
+    followUpType,
+    followUpReason,
+    sourceReportId,
+    initialOffer?.id,
+  ]);
+  useEffect(() => {
+    if (pdfUrl) {
+      setPdfDirty(true);
+    }
+  }, [draft, calculation]);
+  if (!open || !inquiry) return null;
+  const generatePdfPreview = async () => {
+    if (!draft.id) {
+      setError("Lagre tilbudsutkastet før PDF-forhåndsvisning genereres.");
+      return;
+    }
+    setGeneratingPdf(true);
+    setError("");
+    setMessage("");
+    try {
+      const res = await fetch(`${API_BASE}/generate_offer_pdf.php`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          offer_id: draft.id,
+          ...(projectManagerSessionToken
+            ? { session_token: projectManagerSessionToken }
+            : {}),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.pdf_url) {
+        throw new Error(
+          data.message || "Kunne ikke generere PDF-forhåndsvisning."
+        );
+      }
+      setPdfUrl(data.pdf_url);
+      setPdfDirty(false);
+      setMessage("PDF-forhåndsvisningen er klar.");
+      window.open(
+        apiAssetUrl(data.pdf_url),
+        "_blank",
+        "noopener,noreferrer"
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke generere PDF-forhåndsvisning."
+      );
+    } finally {
+      setGeneratingPdf(false);
+    }
+  };
+  const generateWithAi = async () => {
+    setGeneratingAi(true);
+    setError("");
+    setMessage("");
+    try {
+      const res = await fetch(`${API_BASE}/generate_offer.php`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inquiry_id: Number(inquiry.id),
+          service: draft.service,
+          current_draft: draft,
+          offer_context: mode,
+          follow_up_reason: followUpReason || null,
+          source_report_id: sourceReportId,
+          company_rates: {
+            labor_hour_ex_vat: Number(draft.team_rate || 0),
+            vehicle_day_ex_vat: Number(draft.vehicle_rate || 0),
+          },
+          instruction:
+            mode === "followup"
+              ? followUpType === "varig_utbedring"
+                ? "Lag et kort, tydelig og profesjonelt tilbudsutkast for varig utbedring basert på tidligere undersøkelse, rapport, registrerte tekniske mangler og prosjektansvarlig sin begrunnelse. Foreslå internt timeestimat og relevante kalkulasjonsposter, men bruk aldri egne satser. Ikke lov arbeid som ikke er dokumentert."
+                : "Lag et kort og tydelig servicegrunnlag basert på tidligere undersøkelse, rapport, registrerte funn og prosjektansvarlig sin begrunnelse. Arbeidet skal beskrives som service etter medgått tid. Foreslå internt timeestimat og relevante kalkulasjonsposter, men bruk aldri egne satser. Ikke lov arbeid som ikke er dokumentert."
+              : "Lag et kort, tydelig og profesjonelt tilbudsutkast basert på saken, kundeopplysningene, digital befaring og tilgjengelige rapportfunn. Foreslå internt timeestimat og relevante kalkulasjonsposter, men bruk aldri egne satser. Ikke lov arbeid som ikke er dokumentert.",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(
+          data.message ||
+            "AI-hjelp for tilbud er ikke koblet til backend ennå."
+        );
+      }
+      const aiOffer = data.offer || data.draft || {};
+      setDraft((current) => ({
+        ...current,
+        title: aiOffer.title ?? current.title,
+        description: aiOffer.description ?? current.description,
+        material_note: aiOffer.material_note ?? current.material_note,
+        terms: aiOffer.terms ?? current.terms,
+        // Bedriftens satser eies alltid av prosjektansvarlig/systemet.
+        team_rate: current.team_rate,
+        vehicle_rate: current.vehicle_rate,
+      }));
+      const laborHours = Math.max(
+        0,
+        Number(aiOffer.estimate?.labor_hours || 0)
+      );
+      const vehicleDays = Math.max(
+        0,
+        Number(aiOffer.estimate?.vehicle_days || 0)
+      );
+      const estimatedLabor =
+        laborHours * Number(draft.team_rate || 0);
+      const estimatedVehicle =
+        vehicleDays * Number(draft.vehicle_rate || 0);
+      setAiEstimate({
+        labor_hours: laborHours,
+        vehicle_days: vehicleDays,
+        confidence:
+          aiOffer.estimate?.confidence === "high" ||
+          aiOffer.estimate?.confidence === "medium"
+            ? aiOffer.estimate.confidence
+            : "low",
+        rationale: String(aiOffer.estimate?.rationale || ""),
+        estimated_labor_ex_vat: estimatedLabor,
+        estimated_vehicle_ex_vat: estimatedVehicle,
+        estimated_known_ex_vat: estimatedLabor + estimatedVehicle,
+      });
+      setCalculation((current) => {
+        const suggested = Array.isArray(aiOffer.suggested_calculation)
+          ? aiOffer.suggested_calculation
+          : [];
+        let nextLines = current.lines.map((line) => {
+          if (line.category === "labor" && laborHours > 0) {
+            return {
+              ...line,
+              description: "Arbeid / service",
+              quantity: laborHours,
+              unit: "time",
+            };
+          }
+          if (
+            line.category === "equipment" &&
+            line.description.toLowerCase().includes("servicebil") &&
+            vehicleDays > 0
+          ) {
+            return {
+              ...line,
+              quantity: vehicleDays,
+              unit: "dag",
+            };
+          }
+          return line;
+        });
+        for (const item of suggested) {
+          if (!item?.category || !item?.description) continue;
+          // Arbeid og servicebil finnes allerede som standardlinjer.
+          if (item.category === "labor") continue;
+          if (
+            item.category === "equipment" &&
+            String(item.description).toLowerCase().includes("servicebil")
+          ) {
+            continue;
+          }
+          const exists = nextLines.some(
+            (line) =>
+              line.category === item.category &&
+              line.description.trim().toLowerCase() ===
+                String(item.description).trim().toLowerCase()
+          );
+          if (exists) continue;
+          nextLines.push({
+            id: `ai-${Date.now()}-${Math.random()
+              .toString(16)
+              .slice(2)}`,
+            category: item.category,
+            description: String(item.description),
+            quantity: Math.max(
+              0,
+              Number(item.suggested_quantity || 0)
+            ),
+            unit: String(item.unit_hint || "stk"),
+            // AI får ikke bestemme kostpris.
+            unit_cost: 0,
+            markup_percent:
+              item.category === "material" ? 15 : 0,
+          });
+        }
+        return {
+          ...current,
+          lines: nextLines,
+        };
+      });
+      setMessage(
+        "AI-utkast og internt estimat er klart. Kontroller arbeidstid, mengder og kalkulasjon før publisering."
+      );
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : "";
+      setError(
+        raw === "Failed to fetch"
+          ? "AI-tjenesten kan ikke nås. Endepunktet generate_offer.php må være tilgjengelig på API-serveren og tillate forespørsel fra portalen. Du kan fortsatt kalkulere og skrive tilbudet manuelt."
+          : raw || "Kunne ikke generere tilbud med AI."
+      );
+    } finally {
+      setGeneratingAi(false);
+    }
+  };
+  // Aktiveres først etter godkjent backend-integrasjon.
+  const DIRECT_PUBLISH_BACKEND_READY = false;
+
+  const publishDirectOffer = async () => {
+    if (!DIRECT_PUBLISH_BACKEND_READY || !allowPublish) {
+      setError("Direkte publisering er ikke aktivert ennå.");
+      return;
+    }
+
+    if (!draft.id || !pdfUrl || pdfDirty) {
+      setError("Lagre utkastet og generer en oppdatert PDF før publisering.");
+      return;
+    }
+
+    setPublishing(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/admin_direct_offer_publish.php`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ offer_id: Number(draft.id) }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success || !data.published) {
+        throw new Error(data.message || "Kunne ikke publisere tilbudet.");
+      }
+
+      setMessage("Tilbudet er publisert til kunden.");
+
+      await onPublished?.();
+      onClose();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Publisering mislyktes."
+      );
+    } finally {
+      setPublishing(false);
+    }
+  };
+  const saveDraft = async (publish = false) => {
+    if (initialOffer?.id && initialOffer.status && initialOffer.status !== "utkast") {
+      setError("Tilbudet er ikke et utkast og kan ikke redigeres her.");
+      return;
+    }
+    if (!draft.title.trim() || !draft.description.trim()) {
+      setError("Tittel og arbeidsbeskrivelse må fylles ut.");
+      return;
+    }
+    publish ? setPublishing(true) : setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const totals = calculateOffer(calculation);
+      const calculationJson = JSON.stringify(calculation);
+      const fixedPrice =
+        calculation.pricingMode === "fixed" ? totals.exclVat : 0;
+      let offerId = draft.id;
+      if (publish && mode === "followup") {
+        if (!allowPublish || publicationFlow === "direct") {
+          throw new Error("Publisering er ikke tilgjengelig for dette tilbudet.");
+        }
+        if (!offerId || !pdfUrl || pdfDirty) {
+          throw new Error(
+            "Lagre utkastet og generer en oppdatert PDF før publisering."
+          );
+        }
+
+        const publishRes = await fetch(`${API_BASE}/offers.php`, {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: offerId,
+            publish: true,
+            ...(projectManagerSessionToken
+              ? { session_token: projectManagerSessionToken }
+              : {}),
+          }),
+        });
+        const publishData = await publishRes.json();
+        if (!publishRes.ok || !publishData.success) {
+          throw new Error(
+            publishData.message || "Tilbudet kunne ikke publiseres."
+          );
+        }
+        setMessage("Oppfølgingstilbudet er publisert til kunden.");
+        await onPublished?.();
+        onClose();
+        return;
+      }
+      if (!offerId) {
+        const createRes = await fetch(`${API_BASE}/offers.php`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            inquiry_id: Number(inquiry.id),
+            service: draft.service,
+            title: draft.title,
+            description: draft.description,
+            team_rate: Number(draft.team_rate) || 0,
+            hourly_rate: Number(draft.team_rate) || 0,
+            vehicle_rate: Number(draft.vehicle_rate) || 0,
+            material_note: draft.material_note,
+            terms: draft.terms,
+            pricing_mode: calculation.pricingMode,
+            fixed_price: fixedPrice,
+            calculation_json: calculationJson,
+            calculated_ex_vat: totals.exclVat,
+            calculated_inc_vat: totals.inclVat,
+            gross_profit: totals.grossProfit,
+            gross_margin_percent: totals.grossMarginPercent,
+            status: "utkast",
+            digital_inspection_comment: digitalInspectionComment,
+            offer_context: mode,
+            ...(projectManagerSessionToken ? { session_token: projectManagerSessionToken } : {}),
+            follow_up_reason: followUpReason || null,
+            source_report_id: sourceReportId,
+            created_by_employee_id: employee?.id || null,
+            created_by_name: employee?.name || null,
+          }),
+        });
+        const createData = await createRes.json();
+        if (!createRes.ok || !createData.success || !createData.offer?.id) {
+          throw new Error(
+            createData.message || "Kunne ikke lagre tilbudsutkastet."
+          );
+        }
+        offerId = Number(createData.offer.id);
+        setDraft((current) => ({ ...current, id: offerId }));
+      } else {
+        const updateRes = await fetch(`${API_BASE}/offers.php`, {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: offerId,
+            service: draft.service,
+            title: draft.title,
+            description: draft.description,
+            team_rate: Number(draft.team_rate) || 0,
+            hourly_rate: Number(draft.team_rate) || 0,
+            vehicle_rate: Number(draft.vehicle_rate) || 0,
+            material_note: draft.material_note,
+            terms: draft.terms,
+            pricing_mode: calculation.pricingMode,
+            fixed_price: fixedPrice,
+            calculation_json: calculationJson,
+            calculated_ex_vat: totals.exclVat,
+            calculated_inc_vat: totals.inclVat,
+            gross_profit: totals.grossProfit,
+            gross_margin_percent: totals.grossMarginPercent,
+            offer_context: mode,
+            ...(projectManagerSessionToken ? { session_token: projectManagerSessionToken } : {}),
+            follow_up_reason: followUpReason || null,
+            source_report_id: sourceReportId,
+          }),
+        });
+        const updateData = await updateRes.json();
+        if (!updateRes.ok || !updateData.success) {
+          throw new Error(
+            updateData.message || "Kunne ikke oppdatere tilbudsutkastet."
+          );
+        }
+      }
+      if (!publish) {
+        if (pdfUrl) {
+          setPdfDirty(true);
+        }
+        await onDraftSaved?.(Number(offerId));
+        setMessage("Utkastet er lagret internt. Kunden kan ikke se det.");
+        return;
+      }
+      if (publicationFlow === "direct") {
+        throw new Error(
+          "Direkte publisering aktiveres etter at sikker backend er installert."
+        );
+      }
+      if (!allowPublish) {
+        throw new Error(
+          mode === "followup"
+            ? "Denne oppfølgingen skal lagres som utkast og publiseres først når rapporten er godkjent for kunde."
+            : "Publisering er ikke tilgjengelig ennå."
+        );
+      }
+      if (!pdfUrl || pdfDirty) {
+        throw new Error(
+          "Generer og kontroller en oppdatert PDF før tilbudet publiseres."
+        );
+      }
+      const publishRes = await fetch(`${API_BASE}/offers.php`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: offerId, publish: true, ...(projectManagerSessionToken ? { session_token: projectManagerSessionToken } : {}) }),
+      });
+      const publishData = await publishRes.json();
+      if (!publishRes.ok || !publishData.success) {
+        throw new Error(
+          publishData.message || "Tilbudet ble lagret, men ikke publisert."
+        );
+      }
+      // Første tilbud kan fortsatt drive hovedsakens status fremover.
+      // Et nytt oppfølgingstilbud skal derimot ikke overskrive statusen til
+      // et allerede planlagt eller pågående oppdrag. Tilbudet lever som en
+      // egen oppfølging i saken til vi har full fase-modell i backend.
+      if (mode !== "followup") {
+        const inquiryRes = await fetch(`${API_BASE}/inquiries.php`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: Number(inquiry.id),
+            status: "tilbud_sendt",
+            stage: "utfonring_felt",
+            recommended_service: draft.service,
+            digital_inspection_comment: digitalInspectionComment,
+          }),
+        });
+        const inquiryData = await inquiryRes.json();
+        if (!inquiryRes.ok || !inquiryData.success) {
+          throw new Error(
+            inquiryData.message ||
+              "Tilbudet ble publisert, men saken kunne ikke oppdateres."
+          );
+        }
+      }
+      setMessage(
+        mode === "followup"
+          ? "Nytt oppfølgingstilbud er publisert til kunden."
+          : "Tilbudet er publisert til kunden."
+      );
+      await onPublished?.();
+      onClose();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Kunne ikke lagre tilbudet."
+      );
+    } finally {
+      setSaving(false);
+      setPublishing(false);
+    }
+  };
+  return (
+    <div className="fixed inset-0 z-[80] overflow-y-auto bg-slate-950/80 p-3 backdrop-blur-sm md:p-6">
+      <div className="mx-auto max-w-6xl overflow-hidden rounded-3xl border border-slate-700 bg-[#0b0f17] shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-5 py-5 md:px-7">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-amber-300">
+                {mode === "followup"
+                  ? followUpLabel(followUpType)
+                  : "Internt utkast"}
+              </span>
+              <span className="text-[10px] font-bold text-slate-500">
+                Sak #{inquiry.id}
+              </span>
+            </div>
+            <h2 className="mt-2 text-xl font-black text-white md:text-2xl">
+              {mode === "followup"
+                ? followUpType === "varig_utbedring"
+                  ? "Nytt pristilbud"
+                  : "Servicegrunnlag"
+                : "Opprett tilbud"}
+            </h2>
+            <p className="mt-1 text-xs text-slate-400">
+              {customerName(inquiry)} · {fullAddress(inquiry)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-extrabold text-slate-300 hover:text-white"
+          >
+            Lukk
+          </button>
+        </div>
+        {mode === "followup" && followUpReason.trim() && (
+          <div className="border-b border-slate-800 bg-blue-500/[0.035] px-5 py-4 md:px-7">
+            <p className="text-[9px] font-black uppercase tracking-[0.14em] text-blue-300">
+              Grunnlag for videre oppfølging
+            </p>
+            <p className="mt-1.5 whitespace-pre-wrap text-xs leading-5 text-slate-300">
+              {followUpReason}
+            </p>
+          </div>
+        )}
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.75fr)]">
+          <div className="space-y-5 p-5 md:p-7 lg:border-r lg:border-slate-800">
+            {error && (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-300">
+                {error}
+              </div>
+            )}
+            {message && (
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-300">
+                {message}
+              </div>
+            )}
+            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.045] p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                <div>
+                  <p className="text-xs font-black text-white">
+                    Kalkulasjonen er intern
+                  </p>
+                  <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                    Kunden skal kun se fastpris eller avtalte timesatser. Ved fastpris
+                    skjules kalkulerte timer, kostpriser, påslag, reserve og dekningsbidrag.
+                    Ved timesats vises ingen estimert varighet.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-col justify-between gap-3 rounded-2xl border border-violet-500/20 bg-violet-500/[0.045] p-4 sm:flex-row sm:items-center">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-violet-500/25 bg-violet-500/10">
+                  <Sparkles className="h-4 w-4 text-violet-300" />
+                </div>
+                <div>
+                  <p className="text-xs font-black text-white">AI-assistent</p>
+                  <p className="mt-0.5 text-[11px] leading-5 text-slate-400">
+                    Lag et førsteutkast fra saken. AI får ikke endre prisene.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={generateWithAi}
+                disabled={generatingAi}
+                className="shrink-0 rounded-xl bg-violet-500 px-4 py-2.5 text-xs font-black text-white hover:bg-violet-400 disabled:opacity-50"
+              >
+                {generatingAi ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Genererer
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4" />
+                    Generer med AI
+                  </span>
+                )}
+              </button>
+            </div>
+            {aiEstimate && (
+              <div className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.035] p-4">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <p className="text-[9px] font-black uppercase tracking-[0.14em] text-violet-300">
+                      AI-estimat · internt
+                    </p>
+                    <p className="mt-1 text-xs font-black text-white">
+                      Forslag til ressursbruk og kjent prisgrunnlag
+                    </p>
+                    {aiEstimate.rationale && (
+                      <p className="mt-1.5 max-w-2xl text-[11px] leading-5 text-slate-500">
+                        {aiEstimate.rationale}
+                      </p>
+                    )}
+                  </div>
+                  <span className="rounded-full border border-slate-700 bg-slate-950 px-2.5 py-1 text-[9px] font-black uppercase text-slate-400">
+                    Sikkerhet:{" "}
+                    {aiEstimate.confidence === "high"
+                      ? "høy"
+                      : aiEstimate.confidence === "medium"
+                      ? "middels"
+                      : "lav"}
+                  </span>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                    <p className="text-[9px] font-black uppercase text-slate-600">
+                      Estimert arbeid
+                    </p>
+                    <p className="mt-1 text-sm font-black text-white">
+                      {aiEstimate.labor_hours.toLocaleString("nb-NO")} t
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                    <p className="text-[9px] font-black uppercase text-slate-600">
+                      Servicebil
+                    </p>
+                    <p className="mt-1 text-sm font-black text-white">
+                      {aiEstimate.vehicle_days.toLocaleString("nb-NO")} dag
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                    <p className="text-[9px] font-black uppercase text-slate-600">
+                      Arbeid etter sats
+                    </p>
+                    <p className="mt-1 text-sm font-black text-white">
+                      kr {Math.round(
+                        aiEstimate.estimated_labor_ex_vat
+                      ).toLocaleString("nb-NO")}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-3">
+                    <p className="text-[9px] font-black uppercase text-amber-400">
+                      Kjent sum eks. mva
+                    </p>
+                    <p className="mt-1 text-sm font-black text-white">
+                      kr {Math.round(
+                        aiEstimate.estimated_known_ex_vat
+                      ).toLocaleString("nb-NO")}
+                    </p>
+                    <p className="mt-1 text-[9px] text-slate-600">
+                      Materialer kommer i tillegg
+                    </p>
+                  </div>
+                </div>
+                <p className="mt-3 text-[10px] leading-4 text-slate-600">
+                  Estimatet er kun et internt beslutningsgrunnlag. Ved timesats vises
+                  ikke estimert timeforbruk til kunden. Ved fastpris kan estimatet brukes
+                  i intern kalkulasjon, mens kunden bare ser den endelige fastprisen.
+                </p>
+              </div>
+            )}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
+                  Tjeneste
+                </label>
+                <select
+                  value={draft.service}
+                  disabled={mode === "followup"}
+                  onChange={(event) => {
+                    const service = event.target.value as OfferService;
+                    const base = buildOfferDraft(service);
+                    setDraft((current) => ({
+                      ...current,
+                      service,
+                      title: base.title,
+                    }));
+                  }}
+                  className="w-full rounded-xl border border-slate-800 bg-[#08111d] px-3 py-3 text-xs font-bold text-slate-200 outline-none focus:border-amber-500/50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <option value="lekkasjesok">Lekkasjesøk</option>
+                  <option value="takkontroll">Takkontroll</option>
+                  <option value="service">
+                    {mode === "followup"
+                      ? followUpLabel(followUpType)
+                      : "Service / utbedring"}
+                  </option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
+                  Tilbudstittel
+                </label>
+                <input
+                  value={draft.title}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      title: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-800 bg-[#08111d] px-3 py-3 text-xs text-slate-200 outline-none focus:border-amber-500/50"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
+                Arbeidsbeskrivelse
+              </label>
+              <textarea
+                value={draft.description}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    description: event.target.value,
+                  }))
+                }
+                rows={8}
+                placeholder="Beskriv arbeidets omfang..."
+                className="w-full resize-y rounded-2xl border border-slate-800 bg-[#08111d] p-4 text-sm leading-6 text-slate-200 outline-none focus:border-amber-500/50"
+              />
+            </div>
+            <OfferWorkDescriptionEditor
+              originalText={draft.description}
+              disabled={saving || publishing || generatingAi || generatingPdf}
+            />
+            <OfferWorkTemplates
+                disabled={saving || publishing || generatingPdf || generatingAi || initialOffer?.status !== undefined && initialOffer.status !== "utkast"}
+                onApplySuggestions={(suggestions) => {
+                  setCalculation((current) => appendWorkSuggestions(current, suggestions));
+                  setMessage(`${suggestions.length} arbeidsoperasjoner lagt til. Kontroller mengder og priser før lagring.`);
+                }}
+              />
+            <OfferQuantityCalculator
+              disabled={saving || publishing}
+              onApplySuggestions={(suggestions) => {
+                setCalculation((current) => ({
+                  ...current,
+                  lines: [
+                    ...current.lines,
+                    ...suggestions.map((suggestion) => ({
+                      ...suggestion,
+                      id: `quantity-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                      unit_cost: 0,
+                      markup_percent: suggestion.category === "material" ? 15 : 0,
+                    })),
+                  ],
+                }));
+                setMessage(`${suggestions.length} mengdeforslag lagt til. Kontroller mengder og fyll inn pris før lagring.`);
+              }}
+            />
+            <OfferCalculator
+              value={calculation}
+              onChange={(next) => {
+                setCalculation(next);
+                const labor = next.lines.find(
+                  (line) => line.category === "labor"
+                );
+                const vehicle = next.lines.find(
+                  (line) =>
+                    line.category === "equipment" &&
+                    line.description.toLowerCase().includes("servicebil")
+                );
+                setDraft((current) => ({
+                  ...current,
+                  pricing_mode: next.pricingMode,
+                  team_rate: labor?.unit_cost ?? current.team_rate,
+                  vehicle_rate: vehicle?.unit_cost ?? current.vehicle_rate,
+                }));
+              }}
+            />
+            <div>
+              <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
+                Materiell / tillegg
+              </label>
+              <textarea
+                value={draft.material_note}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    material_note: event.target.value,
+                  }))
+                }
+                rows={3}
+                placeholder="For eksempel: Materialer faktureres etter faktisk forbruk."
+                className="w-full resize-y rounded-xl border border-slate-800 bg-[#08111d] p-3 text-xs leading-5 text-slate-200 outline-none focus:border-amber-500/50"
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
+                Betingelser
+              </label>
+              <textarea
+                value={draft.terms}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    terms: event.target.value,
+                  }))
+                }
+                rows={4}
+                className="w-full resize-y rounded-xl border border-slate-800 bg-[#08111d] p-3 text-xs leading-5 text-slate-200 outline-none focus:border-amber-500/50"
+              />
+            </div>
+          </div>
+          <aside className="bg-slate-950/35 p-5 md:p-7">
+            <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">
+              Forhåndsvisning
+            </p>
+            <div className="mt-3 overflow-hidden rounded-2xl border border-slate-800 bg-[#0b0f17]">
+              <div className="border-b border-slate-800 p-4">
+                <p className="text-[10px] font-black uppercase tracking-wider text-amber-300">
+                  Pristilbud
+                </p>
+                <h3 className="mt-1 text-lg font-black text-white">
+                  {draft.title || "Uten tittel"}
+                </h3>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {serviceLabel(draft.service)}
+                </p>
+              </div>
+              <div className="p-4">
+                <p className="whitespace-pre-wrap text-xs leading-5 text-slate-300">
+                  {draft.description || "Arbeidsbeskrivelse mangler."}
+                </p>
+                <div className="mt-5 divide-y divide-slate-800 border-y border-slate-800">
+                  {calculation.pricingMode === "fixed" ? (
+                    <div className="flex justify-between gap-4 py-3 text-xs">
+                      <span className="text-slate-500">Fastpris eks. mva</span>
+                      <strong className="text-white">
+                        kr {Math.round(
+                          calculateOffer(calculation).exclVat
+                        ).toLocaleString("nb-NO")},-
+                      </strong>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex justify-between gap-4 py-3 text-xs">
+                        <span className="text-slate-500">Arbeid / service</span>
+                        <strong className="text-white">
+                          kr {Number(draft.team_rate || 0).toLocaleString("nb-NO")},- / time
+                        </strong>
+                      </div>
+                      <div className="flex justify-between gap-4 py-3 text-xs">
+                        <span className="text-slate-500">Servicebil & rigg</span>
+                        <strong className="text-white">
+                          kr {Number(draft.vehicle_rate || 0).toLocaleString("nb-NO")},- / dag
+                        </strong>
+                      </div>
+                      <div className="flex justify-between gap-4 py-3 text-xs">
+                        <span className="text-slate-500">Materialer</span>
+                        <strong className="text-white">
+                          Faktureres i tillegg
+                        </strong>
+                      </div>
+                    </>
+                  )}
+                  {calculation.pricingMode === "fixed" && (
+                    <div className="flex justify-between gap-4 py-3 text-xs">
+                      <span className="text-slate-500">Fastpris inkl. mva</span>
+                      <strong className="text-emerald-300">
+                        kr {Math.round(
+                          calculateOffer(calculation).inclVat
+                        ).toLocaleString("nb-NO")},-
+                      </strong>
+                    </div>
+                  )}
+                </div>
+                {calculation.pricingMode === "hourly" && (
+                  <p className="mt-4 text-[11px] leading-5 text-slate-400">
+                    Arbeidet utføres etter medgått tid. Det angis ikke estimert varighet.
+                    Materialer og eventuelle tillegg faktureres separat etter faktisk forbruk.
+                  </p>
+                )}
+                {draft.material_note && calculation.pricingMode === "fixed" && (
+                  <p className="mt-4 text-[11px] leading-5 text-slate-400">
+                    {draft.material_note}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="mt-5 rounded-2xl border border-blue-500/20 bg-blue-500/[0.04] p-4">
+              <div className="flex items-start gap-2.5">
+                <FileText className="mt-0.5 h-4 w-4 shrink-0 text-blue-300" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-extrabold text-white">
+                    PDF-forhåndsvisning
+                  </p>
+                  <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                    {pdfUrl
+                      ? pdfDirty
+                        ? "Tilbudet er endret etter siste PDF. Generer en ny forhåndsvisning."
+                        : "Denne PDF-versjonen er klar for kontroll før publisering."
+                      : "Lagre utkastet og generer kunde-PDF før tilbudet publiseres."}
+                  </p>
+                  {pdfUrl && !pdfDirty && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        window.open(
+                          apiAssetUrl(pdfUrl),
+                          "_blank",
+                          "noopener,noreferrer"
+                        )
+                      }
+                      className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-extrabold text-blue-300 hover:text-blue-200"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Åpne siste PDF
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="mt-5 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-4">
+              <div className="flex items-start gap-2.5">
+                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                <div>
+                  <p className="text-xs font-extrabold text-white">
+                    Kunden ser ingenting før publisering
+                  </p>
+                  <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                    Du kan lagre og korrigere utkastet så mange ganger du trenger.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
+        <div className="flex flex-col-reverse gap-3 border-t border-slate-800 bg-slate-950/55 px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-7">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-extrabold text-slate-300 hover:bg-slate-800"
+          >
+            Avbryt
+          </button>
+          <div className="flex flex-col gap-2.5 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => saveDraft(false)}
+              disabled={saving || publishing}
+              className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-extrabold text-white hover:bg-slate-800 disabled:opacity-50"
+            >
+              {saving ? (
+                <span className="flex items-center justify-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Lagrer
+                </span>
+              ) : (
+                "Lagre utkast"
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={generatePdfPreview}
+              disabled={saving || publishing || generatingPdf || !draft.id}
+              className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2.5 text-xs font-extrabold text-blue-200 hover:bg-blue-500/15 disabled:opacity-40"
+            >
+              {generatingPdf ? (
+                <span className="flex items-center justify-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Genererer PDF
+                </span>
+              ) : (
+                <span className="flex items-center justify-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  Forhåndsvis PDF
+                </span>
+              )}
+            </button>
+            {allowPublish && (publicationFlow !== "direct" || DIRECT_PUBLISH_BACKEND_READY) ? (
+              <button
+                type="button"
+                onClick={() => publicationFlow === "direct" ? publishDirectOffer() : saveDraft(true)}
+                disabled={saving || publishing || !pdfUrl || pdfDirty}
+                className="rounded-xl bg-[#F5B800] px-5 py-2.5 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+              >
+                {publishing ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Publiserer
+                  </span>
+                ) : (
+                  <span className="flex items-center justify-center gap-2">
+                    <Send className="h-4 w-4" />
+                    Publiser til kunde
+                  </span>
+                )}
+              </button>
+            ) : (
+              <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.07] px-4 py-2.5 text-center text-[10px] font-bold text-amber-200">
+                {publicationFlow === "direct" ? "Direkte publisering aktiveres etter godkjent backend-test." : "Lagre som utkast nå · publiseres sammen med godkjent rapport"}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

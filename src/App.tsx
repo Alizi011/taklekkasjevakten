@@ -1,22 +1,96 @@
-import { useState } from "react";
-import { Routes, Route } from "react-router-dom";
+import AgreementSigningPage from "./pages/AgreementSigningPage";
+import { useEffect, useState } from "react";
+import { Routes, Route, useLocation } from "react-router-dom";
 import Layout from "./components/Layout";
+import TlvCustomerChat from "./components/TlvCustomerChat";
 import Forside from "./pages/Forside";
 import OmTaklekkasjer from "./pages/OmTaklekkasjer";
 import OmLekkasjesok from "./pages/OmLekkasjesok";
 import VartArbeid from "./pages/VartArbeid";
 import OmOss from "./pages/OmOss";
 import Faq from "./pages/Faq";
+import Personvern from "./pages/Personvern";
 import LocalAreaPage from "./pages/LocalAreaPage";
 import AdminLogin from "./pages/AdminLogin";
 import AdminDashboard from "./pages/AdminDashboard";
+import CustomerDashboard from "./pages/CustomerDashboard";
+import BusinessCustomerDashboard from "./pages/BusinessCustomerDashboard";
+import ProjectManagerPortal from "./pages/ProjectManagerPortal";
+import { apiUrl } from "./lib/api";
+
+const ADMIN_AUTH_URL = apiUrl("/tlv_admin_auth.php");
+
+function PublicCustomerChat() {
+  const location = useLocation();
+
+  const excludedPaths = [
+    "/admin",
+    "/prosjektportal",
+    "/min-side",
+    "/kundeportal",
+    "/bedriftsportal",
+  ];
+
+  if (excludedPaths.some(path =>
+    location.pathname === path ||
+    location.pathname.startsWith(path + "/")
+  )) {
+    return null;
+  }
+
+  return <TlvCustomerChat />;
+}
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const location = useLocation();
+  const isAdminRoute = location.pathname === "/admin";
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  useEffect(() => {
+    if (!isAdminRoute) {
+      return;
+    }
+
+    setCheckingSession(true);
+    const controller = new AbortController();
+    const checkSession = async () => {
+      try {
+        const response = await fetch(`${ADMIN_AUTH_URL}?action=session`, {
+          method: "GET",
+          credentials: "include",
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const data: { success?: boolean; authenticated?: boolean } = await response.json();
+        if (!controller.signal.aborted) setIsAuthenticated(data.success === true && data.authenticated === true);
+      } catch {
+        // Ugyldig/utløpt sesjon betyr at innlogging kreves.
+      } finally {
+        if (!controller.signal.aborted) setCheckingSession(false);
+      }
+    };
+    void checkSession();
+    return () => controller.abort();
+  }, [isAdminRoute]);
+
+  const handleLogout = async () => {
+    // Lukk adminvisningen umiddelbart, også ved nettverksfeil.
+    setIsAuthenticated(false);
+    try {
+      await fetch(`${ADMIN_AUTH_URL}?action=logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      // Ved nettverksfeil er lokal visning lukket, men servercookien kan fortsatt være gyldig.
+      // Brukeren må logge ut på nytt når nettverket er tilgjengelig.
+    }
+  };
 
   return (
-    <Routes>
-      {/* Offentlige sider pakket i Layout */}
+    <>
+      <Routes>
       <Route element={<Layout />}>
         <Route path="/" element={<Forside />} />
         <Route path="/om-taklekkasjer" element={<OmTaklekkasjer />} />
@@ -24,23 +98,29 @@ function App() {
         <Route path="/vart-arbeid" element={<VartArbeid />} />
         <Route path="/om-oss" element={<OmOss />} />
         <Route path="/faq" element={<Faq />} />
-        
-        {/* Lokale SEO-landingssider */}
+        <Route path="/personvern" element={<Personvern />} />
+        <Route path="/min-side" element={<CustomerDashboard />} />
+        <Route path="/kundeportal" element={<CustomerDashboard />} />
+
+        <Route path="/kunde" element={<CustomerDashboard />} />
+        <Route path="/bedriftsportal" element={<BusinessCustomerDashboard />} />
         <Route path="/taklekkasje-:areaSlug" element={<LocalAreaPage />} />
       </Route>
-
-      {/* Beskyttet Admin Rute */}
-      <Route
-        path="/admin"
-        element={
-          isAuthenticated ? (
-            <AdminDashboard onLogout={() => setIsAuthenticated(false)} />
-          ) : (
-            <AdminLogin onLogin={() => setIsAuthenticated(true)} />
-          )
-        }
-      />
-    </Routes>
+      <Route path="/signer-avtale" element={<AgreementSigningPage />} />
+      <Route path="/prosjekt" element={<ProjectManagerPortal />} />
+      <Route path="/prosjektportal" element={<ProjectManagerPortal />} />
+      <Route path="/admin" element={
+        checkingSession ? (
+          <div className="min-h-screen bg-[#0b0f17] flex items-center justify-center text-slate-200">Kontrollerer innlogging...</div>
+        ) : isAuthenticated ? (
+          <AdminDashboard onLogout={() => { void handleLogout(); }} />
+        ) : (
+          <AdminLogin onLogin={() => setIsAuthenticated(true)} />
+        )
+      } />
+      </Routes>
+      <PublicCustomerChat />
+    </>
   );
 }
 

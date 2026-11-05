@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  ChevronDown, ArrowRight, CheckCircle2, 
-  Sparkles 
+import {
+  ChevronDown,
+  ArrowRight,
+  CheckCircle2,
 } from "lucide-react";
 import FadeIn from "../components/FadeIn";
 import ContactModal from "../components/ContactModal";
@@ -108,8 +109,7 @@ export default function ServicesSection() {
         {/* HEADER */}
         <div className="text-center max-w-3xl mx-auto mb-12">
           <FadeIn>
-            <span className="inline-flex items-center gap-2 px-4 py-1.5 bg-amber-500/20 text-[#F5B800] border border-amber-500/30 text-xs font-bold uppercase tracking-wider rounded-full mb-4 backdrop-blur-md">
-              <Sparkles className="w-3.5 h-3.5" />
+            <span className="inline-flex items-center px-4 py-1.5 bg-amber-500/20 text-[#F5B800] border border-amber-500/30 text-xs font-bold uppercase tracking-wider rounded-full mb-4 backdrop-blur-md">
               Ingeniørfaglig Ekspertise
             </span>
           </FadeIn>
@@ -130,9 +130,9 @@ export default function ServicesSection() {
           <div className="flex flex-wrap items-center justify-center gap-2.5 mb-12">
             {[
               { id: "alle", label: "Alle Tjenester" },
-              { id: "akutt", label: "⚡ Akutt & Lekkasjesøk" },
-              { id: "tak", label: "🏠 Tak & Membran" },
-              { id: "terrasse", label: "🪴 Terrasse & Uteområder" },
+              { id: "akutt", label: "Akutt & Lekkasjesøk" },
+              { id: "tak", label: "Tak & Membran" },
+              { id: "terrasse", label: "Terrasse & Uteområder" },
             ].map((tab) => (
               <button
                 key={tab.id}
