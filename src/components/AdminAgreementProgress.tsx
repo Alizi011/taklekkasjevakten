@@ -95,7 +95,7 @@ export default function AdminAgreementProgress({ inquiryId, organizationNumber }
     // I BRREG kan en signaturregel være formulert som en rolle, ikke et personnavn.
     // Denne regelen er et dokumentert representasjonsgrunnlag, ikke identitetsbevis.
     const chairAloneByText = isChair &&
-      /(?:styrets leder|styreleder)\\s+(?:har\\s+)?(?:signatur(?:rett)?\\s+)?alene/i.test(brregEvidence.signatureText);
+      /(?:styrets leder|styreleder)\s+(?:har\s+)?(?:signatur(?:rett)?\s+)?alene/i.test(brregEvidence.signatureText);
     const signsAlone = signsAloneByName || chairAloneByText;
     return { isChair, signsAlone, checkedAt: brregEvidence.checkedAt };
   };
@@ -166,8 +166,8 @@ export default function AdminAgreementProgress({ inquiryId, organizationNumber }
     void (async () => {
       try {
         // Orgnummer er allerede lastet i InquiryDetail for den aktuelle saken.
-        const orgnr = String(organizationNumber || "").replace(/\\D/g, "");
-        if (!/^\\d{9}$/.test(orgnr)) {
+        const orgnr = String(organizationNumber || "").replace(/\D/g, "");
+        if (!/^\d{9}$/.test(orgnr)) {
           if (!controller.signal.aborted) setBrregError(
             organizationNumber === null ? "Venter på organisasjonsnummer fra kundeprofilen." :
               "Organisasjonsnummer mangler på saken."
