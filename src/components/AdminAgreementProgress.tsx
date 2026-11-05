@@ -21,7 +21,7 @@ const agreementLabels: Record<string, string> = {
   cancelled: "Arbeidsavtale kansellert",
 };
 
-export default function AdminAgreementProgress({ inquiryId }: { inquiryId: number }) {
+export default function AdminAgreementProgress({ inquiryId, organizationNumber }: { inquiryId: number; organizationNumber?: string | null }) {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [agreements, setAgreements] = useState<Agreement[]>([]);
   const [agreementAvailable, setAgreementAvailable] = useState(false);
@@ -76,6 +76,7 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
     board: BoardEntry[];
     soleSigners: string[];
     checkedAt: string | null;
+    signatureText: string;
   };
   const [brregEvidence, setBrregEvidence] = useState<BrregEvidence | null>(null);
   const [brregError, setBrregError] = useState("");
@@ -90,7 +91,12 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
     if (!person) return null;
     const isChair = /styreleder|styrets leder/i.test(person.role) ||
       ["LEDE", "STYRLE"].includes(String(person.role_code || "").toUpperCase());
-    const signsAlone = brregEvidence.soleSigners.some(n => normalizePersonName(n) === normalized);
+    const signsAloneByName = brregEvidence.soleSigners.some(n => normalizePersonName(n) === normalized);
+    // I BRREG kan en signaturregel være formulert som en rolle, ikke et personnavn.
+    // Denne regelen er et dokumentert representasjonsgrunnlag, ikke identitetsbevis.
+    const chairAloneByText = isChair &&
+      /(?:styrets leder|styreleder)\\s+(?:har\\s+)?(?:signatur(?:rett)?\\s+)?alene/i.test(brregEvidence.signatureText);
+    const signsAlone = signsAloneByName || chairAloneByText;
     return { isChair, signsAlone, checkedAt: brregEvidence.checkedAt };
   };
 
@@ -159,14 +165,15 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
     setBrregError("");
     void (async () => {
       try {
-        const customerRes = await fetch(apiUrl(`/customer_profile.php?inquiry_id=${inquiryId}`), {
-          credentials: "include", cache: "no-store", signal: controller.signal,
-        });
-        if (!customerRes.ok) throw new Error("Kundeprofil ikke tilgjengelig");
-        const customerData = await customerRes.json();
-        if (customerData?.success !== true) throw new Error("Kundeprofil ikke tilgjengelig");
-        const orgnr = String(customerData?.customer?.organization_number || "").replace(/\D/g, "");
-        if (!/^\d{9}$/.test(orgnr)) return;
+        // Orgnummer er allerede lastet i InquiryDetail for den aktuelle saken.
+        const orgnr = String(organizationNumber || "").replace(/\\D/g, "");
+        if (!/^\\d{9}$/.test(orgnr)) {
+          if (!controller.signal.aborted) setBrregError(
+            organizationNumber === null ? "Venter på organisasjonsnummer fra kundeprofilen." :
+              "Organisasjonsnummer mangler på saken."
+          );
+          return;
+        }
 
         const response = await fetch(apiUrl(`/tlv_brreg_board.php?orgnr=${orgnr}`), {
           credentials: "include", cache: "no-store", signal: controller.signal,
@@ -204,7 +211,11 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
           }
         }
 
-        const combinationList = toRecord(toRecord(data.signing)?.signeringsKombinasjon)?.kombinasjon;
+        const signing = toRecord(data.signing);
+        const signingRoles = toRecord(toRecord(signing?.signeringsGrunnlag)?.signaturProkuraRoller);
+        const signatureText = typeof signingRoles?.signaturProkuraFritekst === "string"
+          ? signingRoles.signaturProkuraFritekst : "";
+        const combinationList = toRecord(signing?.signeringsKombinasjon)?.kombinasjon;
         const soleSigners: string[] = [];
         for (const rawCombination of Array.isArray(combinationList) ? combinationList : []) {
           const combination = toRecord(rawCombination);
@@ -216,7 +227,7 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
         }
 
         if (!controller.signal.aborted) {
-          setBrregEvidence({ board, soleSigners, checkedAt: typeof data.checked_at === "string" ? data.checked_at : null });
+          setBrregEvidence({ board, soleSigners, signatureText, checkedAt: typeof data.checked_at === "string" ? data.checked_at : null });
         }
       } catch (e) {
         if (!controller.signal.aborted) {
@@ -225,7 +236,7 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
       }
     })();
     return () => controller.abort();
-  }, [inquiryId]);
+  }, [inquiryId, organizationNumber]);
 
   const openRecovery = (member: CustomerMemberStatus) => {
     setRecoveryMemberId(member.id);
@@ -572,9 +583,13 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                         </p>
                       </div>
                     ) : brregError ? (
-                      <p className="text-[11px] text-slate-400">BRREG-status utilgjengelig for denne visningen.</p>
+                      <p className="text-[11px] text-slate-400">BRREG: {brregError}</p>
                     ) : (
-                      <p className="text-[11px] text-slate-400">Ingen bekreftet personkobling til BRREG i denne visningen.</p>
+                      <p className="text-[11px] text-slate-400">
+                        {brregEvidence
+                          ? "Kontaktpersonens navn samsvarer ikke med styreopplysningene i BRREG-cache. Kontroller navneoppføringen."
+                          : "BRREG-grunnlaget lastes inn."}
+                      </p>
                     );
                   })()}
                   <p className={member.status === "active" ? "text-emerald-300" : "text-amber-300"}>
