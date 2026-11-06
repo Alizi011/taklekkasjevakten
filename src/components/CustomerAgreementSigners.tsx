@@ -63,23 +63,23 @@ export default function CustomerAgreementSigners({
   }, [pdfUrl]);
 
   async function openAgreementPdf(agreementId: number) {
-    if (previewMode || !sessionToken || !agreementId || pdfBusy) return;
+    if ((!previewMode && !sessionToken) || !agreementId || pdfBusy) return;
 
     setPdfBusy(true);
     setError("");
 
     try {
       const response = await fetch(
-        apiUrl("/customer_agreement_document.php"),
+        apiUrl(previewMode ? "/admin_customer_agreement_document.php" : "/customer_agreement_document.php"),
         {
           method: "POST",
-          credentials: "omit",
+          credentials: previewMode ? "include" : "omit",
           cache: "no-store",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             inquiry_id: inquiryId,
             agreement_id: agreementId,
-            session_token: sessionToken,
+            ...(!previewMode ? { session_token: sessionToken } : {}),
           }),
         }
       );
@@ -452,7 +452,7 @@ export default function CustomerAgreementSigners({
           {agreement?.document_sha256 && (
             <button
               type="button"
-              disabled={previewMode || pdfBusy}
+              disabled={pdfBusy}
               onClick={() => void openAgreementPdf(Number(agreement.id))}
               className="mb-5 w-full rounded-xl bg-amber-400 px-4 py-3 text-sm font-black text-slate-950 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
             >
