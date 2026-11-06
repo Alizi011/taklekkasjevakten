@@ -8,6 +8,15 @@ type Agreement = {
   document_sha256: string | null;
 };
 
+type PreviewSigner = {
+  id: number;
+  party: "customer" | "contractor";
+  full_name: string;
+  status: string;
+  authority_verified_at: string | null;
+  invitation_status: string | null;
+};
+
 type Member = {
   id: number;
   full_name: string;
@@ -44,6 +53,8 @@ export default function CustomerAgreementSigners({
   const [chairProposal, setChairProposal] = useState<string | null>(null);
   const [chairBusy, setChairBusy] = useState(false);
   const [chairProblem, setChairProblem] = useState("");
+  const [previewSigners, setPreviewSigners] = useState<PreviewSigner[] | null>(null);
+  const [previewSignerError, setPreviewSignerError] = useState("");
 
   useEffect(() => {
     return () => {
@@ -177,6 +188,52 @@ export default function CustomerAgreementSigners({
 
     return () => { cancelled = true; };
   }, [selectedAgreement, data, previewMode]);
+
+  // Admin kan lese reell signatarstatus via eksisterende skrivebeskyttet
+  // admin-handling. Ikke kall kundehandlinger eller bruk kundens sesjon.
+  useEffect(() => {
+    if (!previewMode || !selectedAgreement) {
+      setPreviewSigners(null);
+      setPreviewSignerError("");
+      return;
+    }
+
+    const controller = new AbortController();
+    setPreviewSigners(null);
+    setPreviewSignerError("");
+
+    fetch(apiUrl("/admin_agreement_signing_control.php"), {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "list",
+        inquiry_id: inquiryId,
+        agreement_id: selectedAgreement,
+      }),
+    })
+      .then(async response => {
+        const result = await response.json();
+        if (!response.ok || result.success !== true || !Array.isArray(result.signers)) {
+          throw new Error(result.message || "Kunne ikke hente signatarstatus.");
+        }
+        return result.signers as PreviewSigner[];
+      })
+      .then(signers => {
+        if (!controller.signal.aborted) setPreviewSigners(signers);
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) {
+          setPreviewSignerError(
+            error instanceof Error ? error.message : "Kunne ikke hente signatarstatus."
+          );
+        }
+      });
+
+    return () => controller.abort();
+  }, [previewMode, selectedAgreement, inquiryId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -344,6 +401,57 @@ export default function CustomerAgreementSigners({
             </button>
           )}
 
+          {previewMode && agreement?.status === "draft" && agreement.document_sha256 && (
+            <div className="mb-5 space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
+              <h3 className="text-sm font-bold text-white">Kundens neste steg: bekreft signatar</h3>
+              {previewSignerError ? (
+                <p role="alert" className="text-xs text-rose-300">
+                  Signatarstatus kan ikke vises: {previewSignerError}
+                </p>
+              ) : previewSigners === null ? (
+                <p className="text-xs text-slate-400">Henter faktisk signatarstatus …</p>
+              ) : previewSigners.filter(signer => signer.party === "customer").length === 0 ? (
+                <>
+                  <p className="text-xs leading-5 text-slate-300">
+                    Ingen kundesignatar er registrert. Kunden får et BRREG-forslag i sin
+                    egen portal og kan bekrefte hvem som skal signere.
+                  </p>
+                  <button type="button" disabled title="Administrator kan ikke bekrefte på kundens vegne"
+                    className="w-full cursor-not-allowed rounded-xl bg-amber-400 px-4 py-3 text-xs font-black text-slate-950 opacity-70">
+                    Opplysningene stemmer
+                  </button>
+                  <p className="text-xs text-slate-400">
+                    Forhåndsvisning: Navneforslaget hentes kun i kundens sesjon.
+                    Knappen er deaktivert for administrator.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs font-semibold text-emerald-300">
+                    Kunden har registrert {previewSigners.filter(signer => signer.party === "customer").length}
+                    {" "}signatar(er).
+                  </p>
+                  {previewSigners.filter(signer => signer.party === "customer").map(signer => (
+                    <div key={signer.id} className="rounded-lg border border-slate-700 p-3 text-xs">
+                      <p className="font-bold text-white">{signer.full_name}</p>
+                      <p className="mt-1 text-slate-300">
+                        Signaturrett: {signer.authority_verified_at ? "Kontrollert av administrator" : "Avventer administratorkontroll"}
+                      </p>
+                      <p className="text-slate-300">
+                        Signering: {signer.status === "signed" ? "Signert" : signer.invitation_status
+                          ? "Invitasjon registrert (" + signer.invitation_status + ")"
+                          : "Ingen aktiv invitasjon registrert"}
+                      </p>
+                    </div>
+                  ))}
+                </>
+              )}
+              <p className="text-xs text-slate-400">
+                Administratorforhåndsvisning – kun lesing. Signaturrett og utsending håndteres i admin.
+              </p>
+            </div>
+          )}
+
           {!previewMode && agreement?.status === "draft" &&
             agreement.document_sha256 && existing.length === 0 && (
             <div className="mb-5 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
@@ -398,7 +506,7 @@ export default function CustomerAgreementSigners({
             </p>
           )}
 
-          <div className="space-y-2">
+          {!previewMode && <div className="space-y-2">
             {available.map(member => (
               <label
                 key={member.id}
@@ -425,9 +533,9 @@ export default function CustomerAgreementSigners({
                 </span>
               </label>
             ))}
-          </div>
+          </div>}
 
-          {data.can_manage && available.length === 0 && (
+          {!previewMode && data.can_manage && available.length === 0 && (
             <p className="mt-3 text-sm text-slate-400">
               Registrer styremedlemmer under «Styret og tilganger» først.
             </p>
@@ -440,7 +548,7 @@ export default function CustomerAgreementSigners({
             </p>
           )}
 
-          <button
+          {!previewMode && <button
             type="button"
             disabled={busy || !data.can_manage || selected.length === 0 ||
               agreement?.status !== "draft" ||
@@ -449,7 +557,7 @@ export default function CustomerAgreementSigners({
             className="mt-4 rounded-lg bg-amber-500 px-4 py-3 text-xs font-bold text-slate-950 disabled:opacity-40"
           >
             Registrer valgte signatarer
-          </button>
+          </button>}
         </>
       )}
       {pdfUrl && (
