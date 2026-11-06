@@ -710,6 +710,7 @@ export default function CustomerDashboard({
   const [offer, setOffer] = useState<CustomerOffer | null>(null);
   const [offers, setOffers] = useState<CustomerOffer[]>([]);
   const [agreementSignerRefresh, setAgreementSignerRefresh] = useState(0);
+  const [customerStartDateApproved, setCustomerStartDateApproved] = useState(false);
   const [expandedOfferId, setExpandedOfferId] = useState<number | null>(null);
   const [offersTab, setOffersTab] = useState<"current" | "history" | "appointments">("current");
   const [reportExpanded, setReportExpanded] = useState(false);
@@ -2821,12 +2822,15 @@ export default function CustomerDashboard({
     followupStatus === "akseptert" || nextStepStatus === "offer_accepted"
   );
   const followupOfferRejected = reportPublished && followupStatus === "avvist";
-  const currentFollowupHeadline = followupOfferAccepted ? "Bekreft oppstartsdato"
+  const currentFollowupHeadline = followupOfferAccepted && customerStartDateApproved ? "Gå videre til arbeidsavtalen"
+    : followupOfferAccepted ? "Bekreft oppstartsdato"
     : followupOfferReady ? "Nytt tilbud på utbedring er klart"
     : followupOfferRejected ? "Tilbud på videre utbedring er avslått"
     : followupUnderPreparation ? "Vi utarbeider et tilbud på varig utbedring"
     : customerNextStep?.title || "Rapporten er klar";
-  const currentFollowupDescription = followupOfferAccepted
+  const currentFollowupDescription = followupOfferAccepted && customerStartDateApproved
+    ? "Oppstartsdato og varighet er bekreftet. Åpne arbeidsavtalen og kontroller hvem som skal signere."
+    : followupOfferAccepted
     ? "Prosjektansvarlig har valgt oppstartsdato for utbedringsarbeidet. Kontroller datoen og forventet varighet, og bekreft at opplysningene stemmer. Deretter går du videre til arbeidsavtalen."
     : followupOfferReady
     ? "Et nytt tilbud er publisert. Du kan se priser og vilkår og svare under Tilbud og avtaler."
@@ -3577,6 +3581,7 @@ export default function CustomerDashboard({
     endpoint={apiUrl("/customer_agreement_schedule.php")}
     previewMode={previewMode}
     onAgreementCreated={() => setAgreementSignerRefresh(n => n + 1)}
+    onApprovalChange={setCustomerStartDateApproved}
   />
 <CustomerAgreementSigners
     key={agreementSignerRefresh}
@@ -4146,7 +4151,8 @@ export default function CustomerDashboard({
               `}</style>
               <p className="text-[9px] font-black uppercase tracking-[0.16em] text-amber-400">Neste steg</p>
               <h3 className="mt-2 text-lg font-black text-white">
-                {followupOfferAccepted ? "Bekreft oppstart" : originalWorkFinished
+                {followupOfferAccepted && customerStartDateApproved ? "Gå videre til arbeidsavtalen"
+                  : followupOfferAccepted ? "Bekreft oppstart" : originalWorkFinished
                   ? currentFollowupHeadline
                   : offer?.status === "publisert" && !offerExpired(offer) ? "Godkjenn oppdraget"
                   : initialSchedulePending ? "Bekreft tidspunkt"
@@ -4154,7 +4160,9 @@ export default function CustomerDashboard({
                   : "Følg saken videre"}
               </h3>
               <p className="mt-2 text-xs leading-5 text-slate-400">
-                {followupOfferAccepted ? "Prosjektansvarlig har registrert oppstartsdato og forventet varighet. Kontroller og svar nedenfor." : originalWorkFinished
+                {followupOfferAccepted && customerStartDateApproved
+                  ? "Oppstart og varighet er bekreftet. Gå til Tilbud og avtaler for å lese arbeidsavtalen og bekrefte signatar."
+                  : followupOfferAccepted ? "Prosjektansvarlig har registrert oppstartsdato og forventet varighet. Kontroller og svar nedenfor." : originalWorkFinished
                   ? currentFollowupDescription
                   : offer?.status === "publisert" && !offerExpired(offer)
                   ? "Pris og vilkår er klare. Åpne tilbudet og godkjenn når alt ser riktig ut."
@@ -4173,6 +4181,7 @@ export default function CustomerDashboard({
                   compact
                   onAgreementCreated={() => setAgreementSignerRefresh(n => n + 1)}
                   onStatusChange={() => setAgreementSignerRefresh(n => n + 1)}
+                  onApprovalChange={setCustomerStartDateApproved}
                   onOpenAgreement={() => { setOffersTab("current"); openCustomerPortalView("offers"); }}
                 />
               ) : originalWorkFinished ? null : followupSchedule?.schedule_date ? (
