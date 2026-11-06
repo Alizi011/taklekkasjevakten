@@ -19,6 +19,7 @@ type Props = {
   compact?: boolean;
   onAgreementCreated?: () => void;
   onStatusChange?: () => void;
+  onApprovalChange?: (approved: boolean) => void;
   onOpenAgreement?: () => void;
 };
 
@@ -27,7 +28,7 @@ const dateLabel = (value: string) => {
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("nb-NO", { day: "numeric", month: "long", year: "numeric" }).format(date);
 };
 
-export default function CustomerAgreementSchedule({ inquiryId, sessionToken, endpoint, previewMode = false, compact = false, onAgreementCreated, onStatusChange, onOpenAgreement }: Props) {
+export default function CustomerAgreementSchedule({ inquiryId, sessionToken, endpoint, previewMode = false, compact = false, onAgreementCreated, onStatusChange, onApprovalChange, onOpenAgreement }: Props) {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -44,7 +45,9 @@ export default function CustomerAgreementSchedule({ inquiryId, sessionToken, end
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.message || "Kunne ikke hente datoforslag.");
       const rows = (Array.isArray(data.proposals) ? data.proposals : []) as Proposal[];
-      setProposals([...rows].sort((a, b) => b.version_no - a.version_no || b.id - a.id));
+      const sorted = [...rows].sort((a, b) => b.version_no - a.version_no || b.id - a.id);
+      setProposals(sorted);
+      onApprovalChange?.(sorted[0]?.status === "approved");
       setError("");
     } catch (e) { setError(e instanceof Error ? e.message : "Kunne ikke hente dato."); }
     finally { setLoading(false); }
