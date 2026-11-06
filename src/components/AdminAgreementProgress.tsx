@@ -94,17 +94,6 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
     return { isChair, signsAlone, checkedAt: brregEvidence.checkedAt };
   };
 
-  // TLV_ADMIN_PREPARE_ACCESS_UI_V1
-  const [recoveryMemberId, setRecoveryMemberId] = useState<number | null>(null);
-  const [recoveryName, setRecoveryName] = useState("");
-  const [recoveryEmail, setRecoveryEmail] = useState("");
-  const [recoveryPhone, setRecoveryPhone] = useState("");
-  const [recoveryReason, setRecoveryReason] = useState("");
-  const [recoveryReviewed, setRecoveryReviewed] = useState(false);
-  const [recoveryBusy, setRecoveryBusy] = useState(false);
-  const [recoveryError, setRecoveryError] = useState("");
-  const [recoveryMessage, setRecoveryMessage] = useState("");
-
   const loadCustomerAccess = useCallback(async (signal?: AbortSignal) => {
     setCustomerAccessLoading(true);
     setCustomerAccessError("");
@@ -226,81 +215,6 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
     })();
     return () => controller.abort();
   }, [inquiryId]);
-
-  const openRecovery = (member: CustomerMemberStatus) => {
-    setRecoveryMemberId(member.id);
-    setRecoveryName(member.full_name || "");
-    setRecoveryEmail(member.email || "");
-    setRecoveryPhone(member.phone || "");
-    setRecoveryReason("");
-    setRecoveryReviewed(false);
-    setRecoveryError("");
-    setRecoveryMessage("");
-  };
-
-  const prepareExistingAdmin = async () => {
-    if (!recoveryMemberId || !recoveryReviewed || recoveryBusy) return;
-
-    if (recoveryReason.trim().length < 8 ||
-        recoveryReason.trim().length > 500 ||
-        !recoveryName.trim() ||
-        !recoveryEmail.trim() ||
-        !recoveryPhone.trim()) {
-      setRecoveryError("Kontroller kontaktopplysningene og skriv en begrunnelse på 8–500 tegn.");
-      return;
-    }
-
-    if (!window.confirm(
-      "Klargjøre eksisterende kundeadministrator for personlig aktivering? Medlemsstatus endres fra pending til invited. Ingen SMS sendes."
-    )) return;
-
-    setRecoveryBusy(true);
-    setRecoveryError("");
-    setRecoveryMessage("");
-
-    try {
-      const response = await fetch(
-        apiUrl("/admin_customer_admin_bootstrap.php"),
-        {
-          method: "POST",
-          credentials: "include",
-          cache: "no-store",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "prepare_existing_admin",
-            inquiry_id: inquiryId,
-            member_id: recoveryMemberId,
-            full_name: recoveryName.trim(),
-            email: recoveryEmail.trim(),
-            phone: recoveryPhone.trim(),
-            review_reason: recoveryReason.trim(),
-            contact_reviewed: true,
-          }),
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok || data?.success !== true) {
-        throw new Error(data?.message || "Klargjøringen mislyktes.");
-      }
-
-      setRecoveryMessage(
-        "Kundetilgangen er klargjort for invitasjon. Ingen SMS er sendt."
-      );
-      setRecoveryMemberId(null);
-      setRecoveryReviewed(false);
-      setRecoveryReason("");
-
-      await loadCustomerAccess();
-    } catch (error) {
-      setRecoveryError(
-        error instanceof Error ? error.message : "Klargjøringen mislyktes."
-      );
-    } finally {
-      setRecoveryBusy(false);
-    }
-  };
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -527,16 +441,8 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
     <div className="space-y-4 border-t border-white/10 pt-4" aria-live="polite">
       <section className="space-y-2 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
         <p className="text-[10px] font-black uppercase tracking-wide text-cyan-300">
-          Kundetilgang og aktivering
+          Kundekontakt og rettigheter
         </p>
-
-        {recoveryError && (
-          <p role="alert" className="text-xs text-red-300">{recoveryError}</p>
-        )}
-
-        {recoveryMessage && (
-          <p role="status" className="text-xs text-emerald-300">{recoveryMessage}</p>
-        )}
 
         {customerAccessLoading ? (
           <p className="text-xs text-slate-400">Henter medlemsstatus …</p>
@@ -577,8 +483,9 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                       <p className="text-[11px] text-slate-400">Ingen bekreftet personkobling til BRREG i denne visningen.</p>
                     );
                   })()}
-                  <p className={member.status === "active" ? "text-emerald-300" : "text-amber-300"}>
-                    Medlemsstatus: {member.status}
+                  <p className={member.status === "active" ? "text-emerald-300" : "text-slate-300"}>
+                    Saksrolle: {member.access_role === "customer_admin" ? "Kundeadministrator" : member.access_role === "board_member" ? "Styremedlem" : "Kontaktperson"}
+                    {member.status === "pending" ? " · Registrert, personlig innlogging ikke bekreftet" : member.status === "active" ? " · Innlogging bekreftet" : member.status === "invited" ? " · Invitert" : " · Tilgang trukket tilbake"}
                   </p>
                   <p className="text-slate-300">
                     Identitet: {member.identity_verified_at ? "Verifisering registrert" : "Ikke verifisert"}
@@ -589,132 +496,6 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                   <p className="text-slate-300">
                     Invitasjon: {member.invitation_sent_at ? "Utsendelsesforsøk registrert" : "Ingen utsendelse registrert"}
                   </p>
-
-                  {member.status === "pending" && (
-                    <p className="mt-2 font-semibold text-amber-200">
-                      Personlig tilgang må klargjøres og aktiveres før kunden kan bruke medlemsfunksjonene.
-                    </p>
-                  )}
-
-                  {member.status === "pending" && (
-                    <div className="mt-3 space-y-3 border-t border-slate-700 pt-3">
-                      {recoveryMemberId !== member.id ? (
-                        <button
-                          type="button"
-                          disabled={recoveryBusy}
-                          onClick={() => openRecovery(member)}
-                          className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-xs font-bold text-cyan-200 disabled:opacity-50"
-                        >
-                          Kontroller og klargjør kundetilgang
-                        </button>
-                      ) : (
-                        <div className="space-y-3">
-                          <p className="font-bold text-white">
-                            Kontroller registrert hovedkontakt
-                          </p>
-
-                          <label className="block space-y-1">
-                            <span>Navn</span>
-                            <input
-                              type="text"
-                              value={recoveryName}
-                              onChange={e => {
-                                setRecoveryName(e.target.value);
-                                setRecoveryReviewed(false);
-                              }}
-                              className="w-full rounded-lg border border-slate-600 bg-slate-900 p-2 text-white"
-                            />
-                          </label>
-
-                          <label className="block space-y-1">
-                            <span>E-post</span>
-                            <input
-                              type="email"
-                              value={recoveryEmail}
-                              onChange={e => {
-                                setRecoveryEmail(e.target.value);
-                                setRecoveryReviewed(false);
-                              }}
-                              className="w-full rounded-lg border border-slate-600 bg-slate-900 p-2 text-white"
-                            />
-                          </label>
-
-                          <label className="block space-y-1">
-                            <span>Mobilnummer</span>
-                            <input
-                              type="tel"
-                              value={recoveryPhone}
-                              onChange={e => {
-                                setRecoveryPhone(e.target.value);
-                                setRecoveryReviewed(false);
-                              }}
-                              className="w-full rounded-lg border border-slate-600 bg-slate-900 p-2 text-white"
-                            />
-                          </label>
-
-                          <label className="block space-y-1">
-                            <span>Begrunnelse for klargjøring</span>
-                            <textarea
-                              value={recoveryReason}
-                              onChange={e => setRecoveryReason(e.target.value)}
-                              maxLength={500}
-                              rows={3}
-                              placeholder="Beskriv hvordan kontaktopplysningene er kontrollert."
-                              className="w-full rounded-lg border border-slate-600 bg-slate-900 p-2 text-white"
-                            />
-                          </label>
-
-                          <label className="flex items-start gap-2 text-slate-200">
-                            <input
-                              type="checkbox"
-                              checked={recoveryReviewed}
-                              onChange={e => setRecoveryReviewed(e.target.checked)}
-                              className="mt-0.5"
-                            />
-                            <span>
-                              Jeg bekrefter at registrert mottaker og
-                              kontaktopplysningene er kontrollert.
-                            </span>
-                          </label>
-
-                          <p className="text-amber-200">
-                            Klargjøring endrer kun status til invited.
-                            Ingen SMS, identitetsverifisering eller
-                            fullmaktstildeling utføres.
-                          </p>
-
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              disabled={
-                                recoveryBusy ||
-                                !recoveryReviewed ||
-                                recoveryReason.trim().length < 8
-                              }
-                              onClick={() => void prepareExistingAdmin()}
-                              className="rounded-lg bg-amber-400 px-3 py-2 font-bold text-slate-950 disabled:opacity-40"
-                            >
-                              {recoveryBusy ? "Klargjør …" : "Bekreft klargjøring"}
-                            </button>
-
-                            <button
-                              type="button"
-                              disabled={recoveryBusy}
-                              onClick={() => {
-                                setRecoveryMemberId(null);
-                                setRecoveryReviewed(false);
-                                setRecoveryReason("");
-                                setRecoveryError("");
-                              }}
-                              className="rounded-lg border border-slate-600 px-3 py-2 text-slate-200 disabled:opacity-40"
-                            >
-                              Avbryt
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
 
                   {member.status === "active" &&
                     member.organisation_role?.trim().toLowerCase() !== "styreleder" && (
