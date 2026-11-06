@@ -79,6 +79,18 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
   };
   const [brregEvidence, setBrregEvidence] = useState<BrregEvidence | null>(null);
   const [brregError, setBrregError] = useState("");
+  const [brregOrg, setBrregOrg] = useState("");
+  const [reviewMember, setReviewMember] = useState<CustomerMemberStatus | null>(null);
+  const [reviewRoleKey, setReviewRoleKey] = useState("");
+  const [reviewNote, setReviewNote] = useState("");
+  const [reviewManualAck, setReviewManualAck] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewError, setReviewError] = useState("");
+  const [reviewSuccess, setReviewSuccess] = useState("");
+  const [reviewHistory, setReviewHistory] = useState<Array<{
+    id: number; brreg_person_name: string; role_name: string;
+    match_mode: string; checked_at: string;
+  }>>([]);
 
   const normalizePersonName = (name: string) =>
     name.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("nb-NO");
@@ -145,6 +157,7 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
   useEffect(() => {
     const controller = new AbortController();
     setBrregEvidence(null);
+    setBrregOrg("");
     setBrregError("");
     void (async () => {
       try {
@@ -155,7 +168,11 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
         const customerData = await customerRes.json();
         if (customerData?.success !== true) throw new Error("Kundeprofil ikke tilgjengelig");
         const orgnr = String(customerData?.customer?.organization_number || "").replace(/\D/g, "");
-        if (!/^\d{9}$/.test(orgnr)) return;
+        if (!/^\d{9}$/.test(orgnr)) {
+          setBrregError("Organisasjonsnummer mangler i kundeprofilen.");
+          return;
+        }
+        setBrregOrg(orgnr);
 
         const response = await fetch(apiUrl(`/tlv_brreg_board.php?orgnr=${orgnr}`), {
           credentials: "include", cache: "no-store", signal: controller.signal,
@@ -215,6 +232,63 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
     })();
     return () => controller.abort();
   }, [inquiryId]);
+
+  const openRepresentativeReview = async (member: CustomerMemberStatus) => {
+    setReviewMember(member);
+    setReviewRoleKey("");
+    setReviewNote("");
+    setReviewManualAck(false);
+    setReviewError("");
+    setReviewSuccess("");
+    setReviewHistory([]);
+    try {
+      const response = await fetch(apiUrl("/admin_representative_verification.php"), {
+        method: "POST", credentials: "include", cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "list", inquiry_id: inquiryId, member_id: member.id }),
+      });
+      const data = await response.json();
+      if (!response.ok || data?.success !== true) throw new Error(data?.message || "Historikk kunne ikke hentes.");
+      setReviewHistory(Array.isArray(data.reviews) ? data.reviews : []);
+    } catch (e) {
+      setReviewError(e instanceof Error ? e.message : "Kontrollhistorikk er utilgjengelig.");
+    }
+  };
+
+  const confirmRepresentativeReview = async () => {
+    if (!reviewMember || !brregEvidence || reviewBusy) return;
+    const selected = brregEvidence.board.find(item => item.name + "|" + (item.role_code || "") === reviewRoleKey);
+    if (!selected) return;
+    const exact = normalizePersonName(reviewMember.full_name) === normalizePersonName(selected.name);
+    if (!exact && (!reviewManualAck || reviewNote.trim().length < 20)) return;
+    setReviewBusy(true);
+    setReviewError("");
+    setReviewSuccess("");
+    try {
+      const response = await fetch(apiUrl("/admin_representative_verification.php"), {
+        method: "POST", credentials: "include", cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "confirm", inquiry_id: inquiryId, member_id: reviewMember.id,
+          brreg_person_name: selected.name, role_code: selected.role_code,
+          reviewed: true, manual_name_match_reviewed: !exact && reviewManualAck,
+          review_note: reviewNote.trim(),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || data?.success !== true) throw new Error(data?.message || "Kontrollen kunne ikke lagres.");
+      setReviewSuccess(data.message || "Representantkontrollen er dokumentert.");
+      setReviewHistory(old => [{
+        id: Number(data.review_id), brreg_person_name: selected.name,
+        role_name: selected.role, match_mode: exact ? "exact" : "manual",
+        checked_at: new Date().toISOString(),
+      }, ...old]);
+    } catch (e) {
+      setReviewError(e instanceof Error ? e.message : "Kontrollen kunne ikke lagres.");
+    } finally {
+      setReviewBusy(false);
+    }
+  };
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -483,6 +557,10 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                       <p className="text-[11px] text-slate-400">Ingen bekreftet personkobling til BRREG i denne visningen.</p>
                     );
                   })()}
+                  <button type="button" onClick={() => void openRepresentativeReview(member)}
+                    className="mt-2 rounded-lg border border-cyan-500/40 px-3 py-2 font-bold text-cyan-200 hover:bg-cyan-500/10">
+                    Kontroller representant i BRREG
+                  </button>
                   <p className={member.status === "active" ? "text-emerald-300" : "text-slate-300"}>
                     Saksrolle: {member.access_role === "customer_admin" ? "Kundeadministrator" : member.access_role === "board_member" ? "Styremedlem" : "Kontaktperson"}
                     {member.status === "pending" ? " · Registrert, personlig innlogging ikke bekreftet" : member.status === "active" ? " · Innlogging bekreftet" : member.status === "invited" ? " · Invitert" : " · Tilgang trukket tilbake"}
@@ -508,6 +586,75 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
           </div>
         )}
       </section>
+      {reviewMember && (
+        <div role="dialog" aria-modal="true" aria-label="Kontroller representant i BRREG"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4">
+          <div className="max-h-[90vh] w-full max-w-xl space-y-4 overflow-y-auto rounded-2xl border border-cyan-500/30 bg-[#101b2b] p-5 text-sm text-white shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="font-bold">Kontroller representant i BRREG</h3>
+              <button type="button" aria-label="Lukk" onClick={() => setReviewMember(null)}
+                className="rounded-lg border border-slate-600 px-3 py-1 text-slate-200">Lukk</button>
+            </div>
+            <p className="text-slate-300">Registrert kontakt: <strong>{reviewMember.full_name}</strong></p>
+            <p className="text-xs text-slate-400">Org.nr.: {brregOrg || "Ukjent"} · BRREG-data må kontrolleres mot virksomheten.</p>
+            {brregError && <p role="alert" className="text-amber-300">{brregError}</p>}
+            {!brregEvidence && !brregError && <p className="text-slate-300">Henter BRREG-data …</p>}
+            {brregEvidence && (
+              <>
+                <label className="block space-y-2">
+                  <span className="font-semibold">Velg en faktisk registrert person og rolle</span>
+                  <select value={reviewRoleKey} onChange={e => { setReviewRoleKey(e.target.value); setReviewManualAck(false); }}
+                    className="w-full rounded-lg border border-slate-600 bg-slate-900 p-3 text-white">
+                    <option value="">Velg fra BRREG</option>
+                    {brregEvidence.board.map((person, i) => (
+                      <option key={i} value={person.name + "|" + (person.role_code || "")}>
+                        {person.name} – {person.role}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {brregEvidence.board.length === 0 && <p className="text-amber-300">Ingen personer returnert i BRREGs styreoversikt.</p>}
+                {(() => {
+                  const chosen = brregEvidence.board.find(p => p.name + "|" + (p.role_code || "") === reviewRoleKey);
+                  if (!chosen) return null;
+                  const same = normalizePersonName(chosen.name) === normalizePersonName(reviewMember.full_name);
+                  return <div className="space-y-3 rounded-lg border border-slate-700 p-3">
+                    <p className={same ? "text-emerald-300" : "text-amber-300"}>
+                      {same ? "Eksakt navnesamsvar" : "Navnene er ulike – manuell vurdering kreves"}
+                    </p>
+                    <p className="text-xs text-slate-300">BRREG-rolle: {chosen.role}. Dette dokumenterer rolleopplysning, ikke identitet eller signaturfullmakt.</p>
+                    <label className="block space-y-1">
+                      <span>Kontrollgrunnlag{same ? " (valgfritt)" : " (min. 20 tegn)"}</span>
+                      <textarea rows={3} value={reviewNote} onChange={e => setReviewNote(e.target.value)}
+                        maxLength={1000} placeholder="Dokumenter kontrollen og eventuelle navneforskjeller."
+                        className="w-full rounded-lg border border-slate-600 bg-slate-900 p-2 text-white"/>
+                    </label>
+                    {!same && <label className="flex items-start gap-2 text-xs">
+                      <input type="checkbox" checked={reviewManualAck} onChange={e => setReviewManualAck(e.target.checked)} />
+                      Jeg har undersøkt og dokumentert hvorfor navnene gjelder samme representant.
+                    </label>}
+                    <button type="button" disabled={reviewBusy || (!same && (!reviewManualAck || reviewNote.trim().length < 20))}
+                      onClick={() => void confirmRepresentativeReview()}
+                      className="rounded-lg bg-cyan-600 px-4 py-2 font-bold text-white disabled:opacity-40">
+                      {reviewBusy ? "Lagrer …" : "Dokumenter representantkontroll"}
+                    </button>
+                  </div>;
+                })()}
+              </>
+            )}
+            {reviewError && <p role="alert" className="text-amber-300">{reviewError}</p>}
+            {reviewSuccess && <p role="status" className="text-emerald-300">{reviewSuccess}</p>}
+            {reviewHistory.length > 0 && <div className="space-y-2 border-t border-slate-700 pt-3">
+              <p className="font-semibold">Tidligere dokumenterte kontroller</p>
+              {reviewHistory.map(entry => (
+                <p key={entry.id} className="text-xs text-slate-300">
+                  {entry.brreg_person_name} · {entry.role_name} · {entry.match_mode === "manual" ? "Manuell navnevurdering" : "Navnesamsvar"} · {entry.checked_at}
+                </p>
+              ))}
+            </div>}
+          </div>
+        </div>
+      )}
 
       {loading ? <p className="text-xs text-slate-400">Henter avtaleoppfølging …</p> : error ?
         <p role="alert" className="text-xs text-amber-300">{error}</p> : <>
