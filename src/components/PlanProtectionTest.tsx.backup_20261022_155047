@@ -1,0 +1,95 @@
+import { useEffect, useState } from "react";
+import { apiUrl } from "../lib/api";
+
+type PlanResponse = {
+  success?: boolean;
+  message?: string;
+  project_id?: number;
+  plan_data?: {
+    plan_ids?: Array<number | string>;
+    errors?: string[];
+  };
+};
+
+export default function PlanProtectionTest({
+  inquiryId
+}: {
+  inquiryId: number;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<number | null>(null);
+  const [data, setData] = useState<PlanResponse | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    setLoading(true);
+    setError("");
+    setData(null);
+    setStatus(null);
+
+    const url = new URL(apiUrl("/tlv_plan_protection_bridge.php"));
+    url.searchParams.set("inquiry_id", String(inquiryId));
+
+    fetch(url.toString(), {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      signal: controller.signal
+    })
+      .then(async (response) => {
+        const body: PlanResponse = await response.json();
+        if (!controller.signal.aborted) {
+          setStatus(response.status);
+          setData(body);
+        }
+      })
+      .catch((e: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(e instanceof Error ? e.message : "Ukjent feil");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [inquiryId]);
+
+  return (
+    <section className="mt-4 rounded-2xl border border-cyan-500/30 bg-slate-950/70 p-5 text-sm text-white">
+      <h3 className="font-bold">Reguleringsplan – API-test</h3>
+
+      {loading && <p className="mt-2">Henter planopplysninger …</p>}
+
+      {error && (
+        <p className="mt-2 text-red-300">{error}</p>
+      )}
+
+      {status !== null && (
+        <p className="mt-2">
+          HTTP-status: <strong>{status}</strong>
+        </p>
+      )}
+
+      {data && (
+        <>
+          <p className="mt-2">
+            Resultat: {data.success ? "OK" : data.message || "Feil"}
+          </p>
+          <p>Core-prosjekt: {data.project_id ?? "Ikke oppgitt"}</p>
+          <p>
+            Reguleringsplaner:{" "}
+            {data.plan_data?.plan_ids?.join(", ") || "Ingen returnert"}
+          </p>
+          {!!data.plan_data?.errors?.length && (
+            <p className="mt-2 text-amber-300">
+              {data.plan_data.errors.join(" | ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}

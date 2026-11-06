@@ -22,6 +22,8 @@ interface PortalAccessResponse {
   expires_at?: string;
   inquiry_id?: number | null;
   assigned_inquiry_ids?: number[];
+  verification_id?: string;
+  expires_in?: number;
   employee?: {
     id?: number | string;
     name?: string;
@@ -63,6 +65,9 @@ export default function ProjectManagerPortal() {
   const [phone, setPhone] = useState("");
   const [requestingLink, setRequestingLink] = useState(false);
   const [requestMessage, setRequestMessage] = useState("");
+  const [verificationId, setVerificationId] = useState("");
+  const [smsCode, setSmsCode] = useState("");
+  const [codeBusy, setCodeBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,8 +173,7 @@ export default function ProjectManagerPortal() {
     };
   }, []);
 
-  const requestLoginLink = async (event: FormEvent) => {
-    event.preventDefault();
+  const requestLoginLink = async () => {
 
     const cleanPhone = phone.replace(/\D+/g, "");
 
@@ -211,6 +215,71 @@ export default function ProjectManagerPortal() {
       );
     } finally {
       setRequestingLink(false);
+    }
+  };
+
+  const requestSmsCode = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const cleanPhone = phone.replace(/\D+/g, "");
+    if (!cleanPhone) {
+      setLoginError("Oppgi mobilnummeret ditt.");
+      return;
+    }
+    setCodeBusy(true);
+    setLoginError("");
+    setRequestMessage("");
+    try {
+      const response = await fetch(apiUrl("/project_manager_code_login.php"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "request_code", phone: cleanPhone }),
+      });
+      const data = (await response.json()) as PortalAccessResponse;
+      if (!response.ok || !data.success || !data.verification_id) {
+        throw new Error(data.message || "Kunne ikke bestille SMS-kode.");
+      }
+      setVerificationId(data.verification_id);
+      setSmsCode("");
+      setRequestMessage("Hvis nummeret er registrert, får du en sekssifret kode på SMS. Skriv den inn her på PC-en.");
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "Kunne ikke bestille SMS-kode.");
+    } finally {
+      setCodeBusy(false);
+    }
+  };
+
+  const verifySmsCode = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!verificationId || !/^\d{6}$/.test(smsCode) || codeBusy) return;
+    setCodeBusy(true);
+    setLoginError("");
+    try {
+      const response = await fetch(apiUrl("/project_manager_code_login.php"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "verify_code",
+          verification_id: verificationId,
+          code: smsCode,
+        }),
+      });
+      const data = (await response.json()) as PortalAccessResponse;
+      if (!response.ok || !data.success || !data.session_token) {
+        throw new Error(data.message || "Koden er ugyldig eller utløpt.");
+      }
+      const authenticated = normalizeEmployee(data.employee);
+      if (!authenticated) {
+        throw new Error("Kontoen har ikke aktiv prosjektledertilgang.");
+      }
+      window.localStorage.setItem(PROJECT_MANAGER_SESSION_KEY, data.session_token);
+      setEmployee(authenticated);
+      setVerificationId("");
+      setSmsCode("");
+      setRequestMessage("");
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "Kunne ikke bekrefte koden.");
+    } finally {
+      setCodeBusy(false);
     }
   };
 
@@ -298,8 +367,8 @@ export default function ProjectManagerPortal() {
           </h1>
 
           <p className="mt-2 text-sm leading-6 text-slate-400">
-            Oppgi mobilnummeret som er registrert på din ansattprofil. Du får
-            en sikker innloggingslenke på SMS.
+            Oppgi mobilnummeret ditt og skriv SMS-koden inn her på PC-en.
+            Du trenger ikke åpne en lenke på mobilen.
           </p>
 
           {loginError && (
@@ -314,41 +383,83 @@ export default function ProjectManagerPortal() {
             </div>
           )}
 
-          <form onSubmit={requestLoginLink} className="mt-6 space-y-4">
-            <label className="block">
-              <span className="mb-2 block text-xs font-bold text-slate-300">
-                Mobilnummer
-              </span>
-
-              <div className="flex items-center rounded-xl border border-slate-700 bg-[#081321] px-3 focus-within:border-amber-500/70">
-                <Phone className="h-4 w-4 text-slate-500" />
+          {!verificationId ? (
+            <form onSubmit={requestSmsCode} className="mt-6 space-y-4">
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold text-slate-300">Mobilnummer</span>
+                <div className="flex items-center rounded-xl border border-slate-700 bg-[#081321] px-3 focus-within:border-amber-500/70">
+                  <Phone className="h-4 w-4 text-slate-500" />
+                  <input
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    value={phone}
+                    onChange={(event) => setPhone(event.target.value)}
+                    placeholder="Mobilnummer"
+                    required
+                    className="w-full bg-transparent px-3 py-3.5 text-sm text-white outline-none placeholder:text-slate-600"
+                  />
+                </div>
+              </label>
+              <button
+                type="submit"
+                disabled={codeBusy}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-4 py-3.5 text-sm font-black text-slate-950 transition hover:bg-amber-400 disabled:opacity-60"
+              >
+                {codeBusy ? <><Loader2 className="h-4 w-4 animate-spin" /> Sender …</> : "Send SMS-kode"}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={verifySmsCode} className="mt-6 space-y-4">
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold text-slate-300">Sekssifret SMS-kode</span>
                 <input
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  value={phone}
-                  onChange={(event) => setPhone(event.target.value)}
-                  placeholder="Mobilnummer"
-                  className="w-full bg-transparent px-3 py-3.5 text-sm text-white outline-none placeholder:text-slate-600"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  required
+                  autoFocus
+                  value={smsCode}
+                  onChange={(event) => setSmsCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="000000"
+                  className="w-full rounded-xl border border-slate-700 bg-[#081321] px-4 py-3.5 text-center text-xl font-bold tracking-[0.35em] text-white outline-none focus:border-amber-500/70"
                 />
-              </div>
-            </label>
+              </label>
+              <button
+                type="submit"
+                disabled={codeBusy || !/^\d{6}$/.test(smsCode)}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-4 py-3.5 text-sm font-black text-slate-950 transition hover:bg-amber-400 disabled:opacity-60"
+              >
+                {codeBusy ? <><Loader2 className="h-4 w-4 animate-spin" /> Kontrollerer …</> : "Bekreft kode og logg inn"}
+              </button>
+              <button
+                type="button"
+                disabled={codeBusy}
+                onClick={() => {
+                  setVerificationId("");
+                  setSmsCode("");
+                  setLoginError("");
+                  setRequestMessage("");
+                }}
+                className="w-full rounded-xl border border-slate-700 px-4 py-3 text-xs font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-60"
+              >
+                Endre nummer eller bestill ny kode
+              </button>
+            </form>
+          )}
 
+          <div className="mt-5 border-t border-slate-800 pt-4">
             <button
-              type="submit"
-              disabled={requestingLink}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-4 py-3.5 text-sm font-black text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+              disabled={requestingLink || codeBusy || !phone.trim()}
+              onClick={() => void requestLoginLink()}
+              className="text-xs text-slate-400 underline underline-offset-4 hover:text-white disabled:opacity-50"
             >
-              {requestingLink ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Sender...
-                </>
-              ) : (
-                "Send sikker innloggingslenke"
-              )}
+              {requestingLink ? "Sender innloggingslenke …" : "Bruk sikker SMS-lenke i stedet"}
             </button>
-          </form>
+          </div>
 
           <p className="mt-5 text-[11px] leading-5 text-slate-500">
             Innlogging gis bare til aktive prosjektansvarlige med registrert

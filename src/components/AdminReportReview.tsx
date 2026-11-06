@@ -419,6 +419,7 @@ export default function AdminReportReview({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [pdfReloadToken, setPdfReloadToken] = useState(0);
   const [approving, setApproving] = useState(false);
   const [returning, setReturning] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -1214,7 +1215,12 @@ export default function AdminReportReview({
     setError("");
     setMessage("");
     try {
-      await saveAdminVersion();
+      await saveAdminVersion(true);
+      setMessage("Rapportteksten er lagret. Oppdaterer PDF-forhåndsvisningen …");
+      const pdfUpdated = await handleGeneratePdf(true);
+      if (!pdfUpdated) {
+        setMessage("Rapportteksten er lagret, men PDF-en ble ikke oppdatert.");
+      }
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Kunne ikke lagre rapporten."
@@ -1224,17 +1230,17 @@ export default function AdminReportReview({
     }
   };
 
-  const handleGeneratePdf = async () => {
+  const handleGeneratePdf = async (alreadySaved = false) => {
     if (!adminText.trim()) return;
 
     setGeneratingPdf(true);
     setError("");
-    setMessage("");
+    if (!alreadySaved) setMessage("");
 
     try {
       // En sluttgodkjent rapport er låst.
       // Generer endelig PDF uten å forsøke å lagre rapporten på nytt.
-      if (report?.status !== "godkjent") {
+      if (!alreadySaved && report?.status !== "godkjent") {
         await saveAdminVersion(true);
       }
 
@@ -1266,12 +1272,15 @@ export default function AdminReportReview({
         }
       }
 
-      setMessage("PDF er oppdatert med admins tekst- og bildevalg.");
+      setPdfReloadToken((v) => v + 1);
+      setMessage("Rapporten er lagret og PDF-forhåndsvisningen er oppdatert.");
       onChanged?.();
+      return true;
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Kunne ikke generere PDF."
       );
+      return false;
     } finally {
       setGeneratingPdf(false);
     }
@@ -1617,6 +1626,11 @@ export default function AdminReportReview({
   };
 
   const invalidatePdfAfterDocumentationChange = async () => {
+    // PUBLISHED_REPORT_PDF_PROTECTION_V1
+    // En publisert Rapport 1 er låst og beholder sin godkjente PDF.
+    if (report?.status === "publisert") {
+      return;
+    }
     try {
       const res = await fetch(apiUrl("/reports.php"), {
         method: "PUT",
@@ -3099,17 +3113,33 @@ export default function AdminReportReview({
                       PDF-forhåndsvisning
                     </p>
                     <p className="text-[11px] text-slate-500 mt-1">
-                      Forhåndsvisningen fornyes automatisk etter at dokumentasjonsvalg er lagret. Bruk «Oppdater PDF» etter redigering av rapportens hovedtekst.
+                      PDF-forhåndsvisningen oppdateres automatisk når du trykker Lagre. «Oppdater PDF» kan også brukes manuelt.
                     </p>
                     {pdfSrc && <a href={pdfSrc} target="_blank" rel="noopener noreferrer"
                       className="mt-2 inline-block text-[11px] font-semibold text-cyan-300 hover:underline">Åpne PDF i ny fane</a>}
                   </div>
+                  {/* PUBLISHED_REPORT_PDF_PANEL_V1 */}
+                  {report.status === "publisert" ? (
+                    pdfSrc ? (
+                      <a
+                        href={pdfSrc}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3.5 py-2 rounded-xl bg-slate-900 border border-emerald-500/30 text-xs font-extrabold text-emerald-300"
+                      >
+                        Åpne publisert PDF
+                      </a>
+                    ) : (
+                      <span className="text-xs font-semibold text-amber-300">
+                        Publisert PDF mangler i rapportdata
+                      </span>
+                    )
+                  ) : (
                   <button
                     type="button"
-                    onClick={handleGeneratePdf}
+                    onClick={() => void handleGeneratePdf()}
                     disabled={
                       generatingPdf ||
-                      report.status === "publisert" ||
                       !adminText.trim()
                     }
                     className="px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
@@ -3121,13 +3151,14 @@ export default function AdminReportReview({
                     )}
                     Oppdater PDF
                   </button>
+                  )}
                 </div>
 
                 {pdfSrc ? (
                   <iframe
-                    key={report.pdf_url || "report-pdf"}
+                    key={`${report.pdf_url || "report-pdf"}-${pdfReloadToken}`}
                     title="Rapport PDF"
-                    src={pdfSrc}
+                    src={pdfSrc ? `${pdfSrc}${pdfSrc.includes("?") ? "&" : "?"}preview=${pdfReloadToken}` : undefined}
                     className="w-full h-[calc(100vh-250px)] min-h-[720px] bg-white"
                   />
                 ) : (

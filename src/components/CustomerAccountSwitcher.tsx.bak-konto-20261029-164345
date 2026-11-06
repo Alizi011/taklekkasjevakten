@@ -1,0 +1,192 @@
+import { useEffect, useState } from "react";
+import { Building2, ChevronDown, UserRound, CheckCircle2 } from "lucide-react";
+
+type Organisation = {
+  customer_id: number;
+  customer_name: string;
+  access_role: string;
+};
+
+type Props = {
+  inquiryId: number;
+  endpoint: string;
+  previewMode?: boolean;
+};
+
+export default function CustomerAccountSwitcher({
+  inquiryId,
+  endpoint,
+  previewMode = false,
+}: Props) {
+  const [open, setOpen] = useState(false);
+  const [organisations, setOrganisations] = useState<Organisation[]>([]);
+  const [privateEnabled, setPrivateEnabled] = useState(false);
+
+  useEffect(() => {
+    if (previewMode) {
+      setOrganisations([
+        {
+          customer_id: -1,
+          customer_name: "Eksempel Sameie",
+          access_role: "customer_admin",
+        },
+        {
+          customer_id: -2,
+          customer_name: "Eksempel Bedrift AS",
+          access_role: "board_member",
+        },
+      ]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function load() {
+      const token = localStorage.getItem(
+        "taklekkasjevakten_customer_session"
+      );
+
+      if (!token || !inquiryId) return;
+
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "list",
+            inquiry_id: inquiryId,
+            session_token: token,
+          }),
+        });
+
+        if (!response.ok) return;
+
+        const data = await response.json();
+
+        if (!cancelled && data.success) {
+          setOrganisations(data.organisations ?? []);
+        }
+      } catch {
+        // Eksisterende kundeportal påvirkes ikke.
+      }
+    }
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [inquiryId, endpoint, previewMode]);
+
+  return (
+    <div className="mb-4 rounded-xl border border-slate-700 bg-slate-900/80 p-3">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 text-left"
+      >
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            Mine kontoer
+          </div>
+          <div className="mt-1 flex items-center gap-2 text-sm font-semibold text-white">
+            <UserRound size={16} className="text-amber-400" />
+            Min personlige konto
+          </div>
+        </div>
+        <ChevronDown
+          size={17}
+          className={open ? "rotate-180 text-white" : "text-slate-400"}
+        />
+      </button>
+
+      {open && (
+        <div className="mt-3 space-y-2 border-t border-slate-700 pt-3">
+          {previewMode && (
+            <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+              Forhåndsvisning – eksempeldata
+            </p>
+          )}
+
+          <div className="rounded-lg bg-slate-800 px-3 py-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-white">
+              <UserRound size={16} />
+              Min personlige konto
+              <CheckCircle2 size={15} className="ml-auto text-emerald-400" />
+            </div>
+
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium text-slate-200">
+                  Privatkunde
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  {privateEnabled
+                    ? "Valgt for forhåndsvisning"
+                    : "Ikke aktivert"}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={privateEnabled}
+                onClick={() => setPrivateEnabled(!privateEnabled)}
+                className={
+                  "relative h-7 w-12 rounded-full transition-colors " +
+                  (privateEnabled ? "bg-emerald-500" : "bg-slate-600")
+                }
+                aria-label="Vis privatkundeaktivering"
+              >
+                <span
+                  className={
+                    "absolute top-1 h-5 w-5 rounded-full bg-white transition-all " +
+                    (privateEnabled ? "left-6" : "left-1")
+                  }
+                />
+              </button>
+            </div>
+
+            <p className="mt-2 text-[11px] text-slate-500">
+              {privateEnabled
+                ? "Privatkundeaktivering blir tilgjengelig når kontotjenesten er ferdig."
+                : "Du kan velge å aktivere privat kundeforhold senere."}
+            </p>
+          </div>
+
+          <p className="px-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Virksomheter og sameier
+          </p>
+
+          {organisations.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-slate-700 px-3 py-3 text-xs text-slate-400">
+              Ingen aktive virksomhetstilknytninger ennå.
+            </p>
+          ) : (
+            organisations.map((org) => (
+              <div
+                key={org.customer_id}
+                className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-800/70 px-3 py-3"
+              >
+                <Building2 size={17} className="shrink-0 text-amber-400" />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-white">
+                    {org.customer_name}
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    {org.access_role === "customer_admin"
+                      ? "Kundeadministrator"
+                      : org.access_role === "board_member"
+                        ? "Styremedlem"
+                        : "Begrenset tilgang"}
+                  </p>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

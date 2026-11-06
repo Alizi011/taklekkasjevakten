@@ -1,3 +1,4 @@
+import NewManualInquiryModal from '../components/NewManualInquiryModal';
 import { useState, useEffect } from "react";
 import {
   Inbox,
@@ -305,6 +306,9 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [activeSubTab, setActiveSubTab] = useState<
     "aktive" | "handling" | "avsluttede" | "rapporter"
   >("aktive");
+  // Egen visningskategori; endrer aldri lagret oppdragsstatus.
+  type WorkTab = "alle" | "kommende" | "utlopt_tilbud" | "kunde" | "rapport" | "utfort" | "avbestilt";
+  const [workTab, setWorkTab] = useState<WorkTab>("alle");
   const [drivingLogTab, setDrivingLogTab] = useState<
     "oversikt" | "kjoringer" | "kjoretoy" | "kilometerstand"
   >("oversikt");
@@ -336,6 +340,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     "lekkasjesok" | "takkontroll" | "completion" | null
   >(null);
   
+  const [showNewManualInquiry, setShowNewManualInquiry] = useState(false);
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [filterType, setFilterType] = useState<string>("alle");
@@ -349,6 +354,43 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [previewEmployee, setPreviewEmployee] = useState<Employee | null>(null);
   const [previewEmployeeFromInquiry, setPreviewEmployeeFromInquiry] = useState(false);
   const [reportStatuses, setReportStatuses] = useState<Record<string, ReportSummary | null>>({});
+  // Tilbudsstatus er separat fra sakens og rapportens status.
+  type OverviewOffer = { id: number; offer_number?: string | null; status: string; offer_context?: string | null; revision_parent_offer_id?: number | null };
+  const [overviewOffers, setOverviewOffers] = useState<Record<string, OverviewOffer[]>>({});
+  // Les kun fakturering som faktisk er registrert for arbeidsetappen i Perun Core.
+  // null betyr ukjent (innlogging, migrering eller kobling mangler) – aldri anta «Nei».
+  type StageInvoiceSummary = { invoiced: boolean; documents: Array<{ document_id: number }> };
+  const [invoiceByCase, setInvoiceByCase] = useState<Record<string, Record<string, StageInvoiceSummary> | null>>({});
+  const fetchStageInvoices = async (items: Inquiry[]) => {
+    const responses = await Promise.all(items.map(async (inq) => {
+      try {
+        const r = await fetch(`${apiUrl("/tlv_invoice_bridge.php")}?action=status&inquiry_id=${encodeURIComponent(String(inq.id))}`, { credentials: "include", cache: "no-store" });
+        if (!r.ok) return [String(inq.id), null] as const;
+        const payload = await r.json();
+        return [String(inq.id), payload.success && payload.stages ? payload.stages as Record<string, StageInvoiceSummary> : null] as const;
+      } catch { return [String(inq.id), null] as const; }
+    }));
+    setInvoiceByCase(Object.fromEntries(responses));
+  };
+
+  const fetchOverviewOffers = async (items: Inquiry[]) => {
+    const results = await Promise.all(items.map(async (inq) => {
+      try {
+        const response = await fetch(apiUrl(`/offers.php?inquiry_id=${encodeURIComponent(String(inq.id))}&all=1`));
+        if (!response.ok) return [String(inq.id), null] as const;
+        const data = await response.json();
+        return [String(inq.id), data.success && Array.isArray(data.offers) ? data.offers as OverviewOffer[] : null] as const;
+      } catch { return [String(inq.id), null] as const; }
+    }));
+    setOverviewOffers((previous) => {
+      const next = { ...previous };
+      for (const [id, offers] of results) {
+        if (offers !== null) next[id] = offers;
+      }
+      return next;
+    });
+  };
+
   const [reportArchive, setReportArchive] = useState<ReportArchiveItem[]>([]);
   const [reportArchiveCounts, setReportArchiveCounts] = useState<ReportArchiveCounts>({
     all: 0,
@@ -606,6 +648,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       if (Array.isArray(data)) {
         setInquiries(data);
         await fetchReportStatuses(data);
+        await fetchOverviewOffers(data);
+        void fetchStageInvoices(data);
       }
     } catch (err) {
       console.error("Feil ved henting av henvendelser:", err);
@@ -931,6 +975,49 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         Ikke klassifisert
       </span>
     );
+  };
+
+  // En revisjon er samme arbeidsetappe. Vis kun den siste relevante arbeidsfasen.
+  const latestFollowup = (inq: Inquiry): OverviewOffer | undefined => {
+    const offers = overviewOffers[String(inq.id)] || [];
+    return offers.filter(o => o.offer_context === "followup" && o.status !== "avvist")
+      .sort((a, b) => b.id - a.id)[0];
+  };
+  const currentStageKey = (inq: Inquiry): string => {
+    if (latestFollowup(inq)) return "varig_utbedring";
+    const service = String(inq.inquiry_type || (inq as any).recommended_service || "").toLowerCase();
+    if (service.includes("takkontroll")) return "takkontroll";
+    if (service.includes("service") || service.includes("akutt")) return "service";
+    return "lekkasjesok";
+  };
+  const getCurrentStageBadge = (inq: Inquiry) => {
+    const followup = latestFollowup(inq);
+    if (followup) return <span className="rounded-xl border border-purple-500/30 bg-purple-500/10 px-3 py-1 text-xs font-bold text-purple-200">Varig utbedring</span>;
+    return getServiceBadge(inq);
+  };
+  const getStageInvoiceBadge = (inq: Inquiry) => {
+    const stage = invoiceByCase[String(inq.id)]?.[currentStageKey(inq)];
+    if (!stage) return <span className="text-xs text-[#d9b8c3]" title="Fakturastatus er ikke bekreftet i Perun Core">Ukjent</span>;
+    return stage.invoiced
+      ? <span className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 font-bold text-emerald-300">Ja</span>
+      : <span className="rounded-lg border border-slate-500/30 bg-slate-500/10 px-2 py-1 font-bold text-slate-200">Nei</span>;
+  };
+  const getOfferStatusBadges = (inq: Inquiry) => {
+    const followup = latestFollowup(inq);
+    if (followup) {
+      const label = ({ utkast: "Utkast", publisert: "Avventer kunde", akseptert: "Akseptert", avvist: "Avvist" } as Record<string, string>)[followup.status] || followup.status;
+      return <div className="flex flex-col items-start gap-1">
+        <span className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold ${followup.status === "akseptert" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-purple-500/30 bg-purple-500/10 text-purple-200"}`}>{label}</span>
+        {followup.offer_number && <span className="text-[10px] text-[#d9b8c3]">{followup.offer_number}</span>}
+      </div>;
+    }
+    const originals = overviewOffers[String(inq.id)] || [];
+    const original = originals.filter(o => o.offer_context !== "followup").sort((a,b)=>b.id-a.id)[0];
+    if (original && ["akseptert", "publisert", "utkast"].includes(original.status)) {
+      const label = original.status === "akseptert" ? "Akseptert" : original.status === "publisert" ? "Tilbud sendt · avventer kunde" : "Tilbudsutkast";
+      return <span className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] font-bold text-amber-200">{label}</span>;
+    }
+    return getWorkflowBadge(inq);
   };
 
   const getWorkflowBadge = (inq: Inquiry) => {
@@ -1747,10 +1834,78 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
 
 
+  // Én visningskategori per sak, kun når eksisterende data dokumenterer den.
+  // Saker uten sikker klassifisering ligger alltid i «Alle oppdrag».
+  const getWorkCategory = (inq: Inquiry): WorkTab | "uavklart" => {
+    const status = String(inq.status || "").toLowerCase();
+    const bookingStatus = String(
+      (inq as any).latest_field_schedule_status || ""
+    ).trim().toLowerCase();
+
+    // Siste registrerte booking avgjør om oppdraget er avbestilt.
+    // Tilbudsstatus og historikk endres ikke.
+    if (["avlyst", "avbestilt", "kansellert", "cancelled"].includes(bookingStatus)) {
+      return "avbestilt";
+    }
+
+    const stage = String(inq.stage || "").toLowerCase();
+    const report = reportStatuses[String(inq.id)];
+    const offers = overviewOffers[String(inq.id)] || [];
+    const latest = [...offers].sort((a, b) => b.id - a.id)[0];
+    const followup = latestFollowup(inq);
+    const hasAcceptedFollowup = followup?.status === "akseptert";
+    const reportPublished = report?.status === "publisert";
+    const finishedReport = reportPublished && report?.report_type === "rapport2";
+
+    if (["avbestilt", "avlyst", "kansellert", "cancelled", "tilbud_avvist"].includes(status) ||
+        (status === "avsluttet" && !finishedReport && latest?.status === "avvist")) return "avbestilt";
+    // En avsluttet sak skal ikke klassifiseres som rapportarbeid
+    // på grunn av en gammel rapportstatus.
+    // Avviste/avbestilte saker håndteres i regelen over.
+    if (status === "avsluttet") return "utfort";
+    if (finishedReport) return "utfort";
+    if (["utfort", "rapport_funn"].includes(status) || stage === "rapport_funn" ||
+        (report && ["utkast", "sendt_til_admin", "under_gjennomgang", "godkjent", "returnert_til_prosjektansvarlig"].includes(report.status))) return "rapport";
+    // Nyeste relevante tilbud avgjør om saken har et utløpt tilbud.
+    // Et allerede akseptert tilbud skal ikke utløpe på nytt.
+    const latestOfferStatus = String(
+      latest?.status || (inq as any).latest_offer_status || ""
+    ).trim().toLowerCase();
+
+    if (
+      ["utlopt", "utløpt", "expired"].includes(latestOfferStatus) &&
+      !["akseptert", "accepted"].includes(latestOfferStatus)
+    ) {
+      return "utlopt_tilbud";
+    }
+    // Avventende tilbud/booking og kundens opplysninger er eksplisitte kundehendelser.
+    if (["tilbud_sendt", "digital_befaring_tid_forslag", "foreslatt_av_prosjektleder", "venter_pa_kundeopplysninger"].includes(status) ||
+        latest?.status === "publisert") return "kunde";
+    if (["pagaende", "under_utforelse", "under_utforing"].includes(status)) return "uavklart";
+    // Rapport 1 er ferdig, men akseptert oppfølgingsarbeid er ikke nødvendigvis ferdig.
+    if (hasAcceptedFollowup && ["planlagt", "tilbud_akseptert", "tildelt_prosjektansvarlig"].includes(status)) return "kommende";
+    if (reportPublished && !hasAcceptedFollowup && !followup) return "utfort";
+    if (["planlagt", "tilbud_akseptert", "tildelt_prosjektansvarlig", "digital_befaring_bekreftet", "ny", "ny_henvendelse", "mottatt"].includes(status)) return "kommende";
+    return "uavklart";
+  };
+
+  const workTabOptions: { id: WorkTab; label: string }[] = [
+    { id: "kunde", label: "Venter på kunde" },
+    { id: "rapport", label: "Venter på rapport" },
+    { id: "kommende", label: "Kommende" },
+    { id: "utfort", label: "Utført" },
+    { id: "utlopt_tilbud", label: "Utløpte tilbud" },
+    { id: "avbestilt", label: "Avbestilt" },
+    { id: "alle", label: "Alle oppdrag" }
+  ];
+  const workTabCounts = Object.fromEntries(workTabOptions.map((tab) => [tab.id,
+    inquiries.filter((inq) => Number(inq.id) !== 19 && (tab.id === "alle" || getWorkCategory(inq) === tab.id)).length
+  ])) as Record<WorkTab, number>;
+
   // Visningen bygger på de eksisterende oppdrags- og rapport-API-ene.
   // Filtrene er kun visuelle; ingen statuser endres uten en eksplisitt handling.
   const dashboardRows = inquiries
-    .filter((i) => Number(i.id) !== 19 && (activeSubTab === "rapporter" || isActiveInquiry(i) || String(i.status || "").toLowerCase() === "tilbud_sendt"))
+    .filter((i) => Number(i.id) !== 19 && (activeSubTab === "aktive" || activeSubTab === "rapporter" || isActiveInquiry(i) || String(i.status || "").toLowerCase() === "tilbud_sendt"))
     .filter((i) => {
       const status = String(i.status || "").toLowerCase();
       const reportNeedsAdmin = needsAdminReportAction(reportStatuses[i.id.toString()]);
@@ -1761,6 +1916,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       const query = searchQuery.trim().toLocaleLowerCase("nb-NO");
       const haystack = [i.id, i.customer_name, i.customerName, i.address, i.city, i.postal_code, responsible]
         .map((v) => String(v || "")).join(" ").toLocaleLowerCase("nb-NO");
+      if (workTab !== "alle" && getWorkCategory(i) !== workTab) return false;
       if (query && !haystack.includes(query)) return false;
       if (managerFilter !== "alle" && !(managerFilter === "uten" ? unassigned : managerId === managerFilter)) return false;
       if (serviceFilter !== "alle" && !service.includes(serviceFilter)) return false;
@@ -1793,6 +1949,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
   const openDashboardView = (tab: "aktive" | "handling" | "rapporter" | "avsluttede", filter = "alle") => {
     setActiveSubTab(tab);
+    setWorkTab("alle");
     setFilterType(filter);
     setSearchQuery("");
     setManagerFilter("alle");
@@ -2284,7 +2441,33 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         : "Administrasjon og operativ oversikt i Perun AS."}
             </p>
             </div>
-            {activeTab === "oppdrag" && <div className="flex items-center gap-2 rounded-xl border border-[#673344] bg-[#290f19] px-4 py-3 text-xs font-semibold text-[#e9cbd3]"><Calendar className="h-4 w-4 text-rose-300" />{new Intl.DateTimeFormat("nb-NO",{weekday:"long",day:"numeric",month:"long",year:"numeric"}).format(new Date())}</div>}
+            {activeTab === "oppdrag" && (
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowNewManualInquiry(true)}
+                  className="rounded-xl bg-rose-700 px-4 py-3 text-sm font-bold text-white hover:bg-rose-600"
+                >
+                  <Plus className="mr-1 inline h-4 w-4" />
+                  Nytt oppdrag
+                </button>
+                <div className="flex items-center gap-2 rounded-xl border border-[#673344] bg-[#290f19] px-4 py-3 text-xs font-semibold text-[#e9cbd3]">
+                  <Calendar className="h-4 w-4 text-rose-300" />
+                  {new Intl.DateTimeFormat("nb-NO",{weekday:"long",day:"numeric",month:"long",year:"numeric"}).format(new Date())}
+                </div>
+              </div>
+            )}
+            {activeTab === "oppdrag" && (
+              <NewManualInquiryModal
+                open={showNewManualInquiry}
+                onClose={() => setShowNewManualInquiry(false)}
+                endpoint={apiUrl("/admin_manual_inquiry.php")}
+                onCreated={async () => {
+                  await fetchInquiries();
+                  setActiveSubTab("aktive");
+                }}
+              />
+            )}
           </div>
 
         {/* NYTT OPERATIVT OPPDRAGSDASHBOARD – eksisterende funksjoner beholdes */}
@@ -2433,12 +2616,30 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               </div>
             </section>
 
+            {/* OPPDRAGSKATEGORIER – kun lesefiltre, ingen statuser skrives tilbake */}
+            <nav aria-label="Oppdrag etter arbeidsfase" className="flex flex-wrap gap-2 rounded-2xl border border-[#5d2937] bg-[#2c111c] p-3">
+              {workTabOptions.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  aria-current={workTab === tab.id ? "page" : undefined}
+                  onClick={() => { setWorkTab(tab.id); setActiveSubTab("aktive"); setFilterType("alle"); }}
+                  className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2.5 text-[11px] font-bold transition ${workTab === tab.id ? "border-rose-400/60 bg-[#62263a] text-white" : "border-[#613244] bg-[#24101a] text-[#e0bdc9] hover:bg-[#432033]"}`}
+                >
+                  {tab.label}
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${workTab === tab.id ? "bg-rose-300/20 text-rose-100" : "bg-[#442030] text-[#e0bdc9]"}`}>
+                    {workTabCounts[tab.id]}
+                  </span>
+                </button>
+              ))}
+            </nav>
+
             {/* RESULTATLISTE */}
             {activeSubTab !== "avsluttede" && (
               <section id="oppdrag-resultatliste" className="scroll-mt-24 overflow-hidden rounded-2xl border border-[#65313e] bg-[#2a101a]">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#572636] px-5 py-4">
                   <div>
-                    <h3 className="text-base font-black text-white">{activeSubTab === "handling" ? "Oppdrag som krever handling" : activeSubTab === "rapporter" ? "Rapporter til behandling" : "Aktive oppdrag"}</h3>
+                    <h3 className="text-base font-black text-white">{workTab !== "alle" ? workTabOptions.find((tab) => tab.id === workTab)?.label : activeSubTab === "handling" ? "Oppdrag som krever handling" : activeSubTab === "rapporter" ? "Rapporter til behandling" : "Aktive oppdrag"}</h3>
                     <p className="mt-1 text-xs text-[#d9b8c3]">{dashboardRows.length} oppdrag vises · åpne en rad for full saksinformasjon</p>
                   </div>
                   <button type="button" onClick={() => setSortNewest((v) => !v)} className="inline-flex items-center gap-2 rounded-lg border border-[#693546] bg-[#391a27] px-3 py-2 text-xs font-semibold text-[#ecd0d8]"><ArrowUpDown className="h-3.5 w-3.5" /> Nummer {sortNewest ? "nyeste først" : "eldste først"}</button>
@@ -2449,15 +2650,14 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   <div className="p-12 text-center text-sm text-[#d9b8c3]">Ingen oppdrag samsvarer med filtrene.</div>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-[1050px] text-left text-xs">
+                    <table className="w-full min-w-[760px] text-left text-xs">
                       <thead className="bg-[#200c14] text-[10px] font-extrabold uppercase tracking-wider text-[#d4b1bd]">
                         <tr>
                           <th className="px-5 py-4">Kunde / adresse</th>
-                          <th className="px-3 py-4">Prosjektansvarlig</th>
-                          <th className="px-3 py-4">Tjeneste</th>
+                          <th className="px-3 py-4">Fakturert</th>
+                          <th className="px-3 py-4">Arbeidsfase</th>
                           <th className="px-3 py-4">Dato</th>
                           <th className="px-3 py-4">Status</th>
-                          <th className="px-3 py-4">Neste steg</th>
                           <th className="px-3 py-4 text-right">Handling</th>
                         </tr>
                       </thead>
@@ -2467,8 +2667,6 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                           const responsible = String((inq as any).assigned_to || "").trim();
                           const unassigned = !responsible && !(inq as any).assigned_project_manager_id;
                           const needsReport = needsAdminReportAction(reportStatuses[id]);
-                          const status = String(inq.status || "").toLowerCase();
-                          const nextLabel = needsReport ? "Behandle rapport" : unassigned ? "Tildel prosjektansvarlig" : status === "planlagt" ? "Åpne planlagt oppdrag" : "Åpne oppdrag";
                           return (
                             <tr key={id} onClick={() => setSelectedInquiry(inq)} className="group cursor-pointer bg-[#2c111b] transition-colors even:bg-[#321520] hover:bg-[#4a2030]">
                               <td className="px-5 py-4">
@@ -2484,24 +2682,20 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                   </div>
                                 </div>
                               </td>
-                              <td className={`px-3 py-4 font-bold ${unassigned ? "text-rose-300" : "text-[#f2e3e8]"}`}>{unassigned ? "Ikke tildelt" : responsible || `Prosjektleder #${(inq as any).assigned_project_manager_id}`}</td>
-                              <td className="px-3 py-4">{getServiceBadge(inq)}</td>
+                              <td className="px-3 py-4">{getStageInvoiceBadge(inq)}</td>
+                              <td className="px-3 py-4">{getCurrentStageBadge(inq)}</td>
                               <td className="whitespace-nowrap px-3 py-4 text-[#ecd4dd]">{parseCompactBookingDetails(inq.notes, inq.created_at, (inq as any).booking_date)}</td>
-                              <td className="px-3 py-4">{getWorkflowBadge(inq)}</td>
-                              <td className="px-3 py-4" onClick={(e) => e.stopPropagation()}>
-                                {unassigned && !needsReport ? (
-                                  <div className="flex min-w-[180px] flex-col gap-2">
-                                    <select aria-label={`Velg prosjektansvarlig for oppdrag ${id}`} value={quickManagerSelections[id] || ""} onChange={(e) => setQuickManagerSelections((prev) => ({ ...prev, [id]: e.target.value }))} className="min-w-[175px] rounded-lg border border-[#774051] bg-[#210c15] px-2 py-2 text-[11px] text-white">
+                              <td className="px-3 py-4">{getOfferStatusBadges(inq)}</td>
+                              <td className="px-3 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                                {unassigned && !needsReport && (
+                                  <div className="mb-2 flex flex-col items-end gap-1.5">
+                                    <select aria-label={`Velg prosjektansvarlig for oppdrag ${id}`} value={quickManagerSelections[id] || ""} onChange={(e) => setQuickManagerSelections((prev) => ({ ...prev, [id]: e.target.value }))} className="max-w-[170px] rounded-lg border border-[#774051] bg-[#210c15] px-2 py-2 text-[11px] text-white">
                                       <option value="">Velg prosjektansvarlig</option>
                                       {adminEmployees.filter((emp) => emp.status === "Aktiv" && emp.role === "Prosjektleder").map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
                                     </select>
-                                    <button type="button" disabled={!quickManagerSelections[id] || quickAssignBusyId === id} onClick={() => void quickAssignProjectManager(inq)} className="rounded-lg bg-rose-600 px-3 py-2 text-[11px] font-black text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40">{quickAssignBusyId === id ? "Tildeler…" : "Tildel"}</button>
+                                    <button type="button" disabled={!quickManagerSelections[id] || quickAssignBusyId === id} onClick={() => void quickAssignProjectManager(inq)} className="rounded-lg bg-rose-600 px-3 py-2 text-[11px] font-black text-white disabled:opacity-40">{quickAssignBusyId === id ? "Tildeler…" : "Tildel"}</button>
                                   </div>
-                                ) : (
-                                  <button type="button" onClick={() => (needsReport ? setReviewInquiry(inq) : setSelectedInquiry(inq))} className="inline-flex items-center gap-1.5 rounded-lg border border-[#794052] bg-[#431827] px-3 py-2 text-[11px] font-bold text-white transition hover:border-rose-400"><ArrowRight className="h-3.5 w-3.5" />{nextLabel}</button>
                                 )}
-                              </td>
-                              <td className="px-3 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                                 <div className="relative inline-flex">
                                   <button type="button" aria-label={`Flere handlinger for oppdrag ${id}`} aria-expanded={openActionMenuId === id} onClick={() => setOpenActionMenuId((current) => (current === id ? null : id))} className="rounded-lg border border-[#714050] bg-[#1e0b13] p-2 text-[#f2dbe2] hover:bg-[#4b2331]"><MoreHorizontal className="h-4 w-4" /></button>
                                   {openActionMenuId === id && (

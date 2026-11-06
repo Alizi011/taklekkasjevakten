@@ -63,6 +63,9 @@ interface PropertyResponse {
 }
 
 interface MunicipalEntry {
+  case_number?: string | number | null;
+  last_document_date?: string | null;
+  last_activity?: string | null;
   identifier: string;
   parent_identifier?: string;
   title: string;
@@ -142,12 +145,42 @@ function valueOrDash(value: unknown): string {
 }
 
 function municipalMeta(entry: MunicipalEntry): string[] {
-  const props = entry.properties || {};
+  const props: Record<string, unknown> = {
+    ...(entry.properties || {}),
+    case_number: entry.case_number ?? entry.properties?.case_number,
+    last_document_date: entry.last_document_date ?? entry.properties?.last_document_date,
+    last_activity: entry.last_activity ?? entry.properties?.last_activity,
+  };
 
   return [
-    props.saksnummer ? `Sak ${String(props.saksnummer)}` : "",
+    props.saksnummer || props.case_number ? `Saksnr. ${String(props.saksnummer || props.case_number)}` : "",
     props.dokumentID ? `Dokument ${String(props.dokumentID)}` : "",
-    props.dato ? String(props.dato) : "",
+    props.last_document_date ? `Siste dokument: ${String(props.last_document_date)}` : "",
+    props.last_activity && !props.last_document_date ? String(props.last_activity) : "",
+    (() => {
+      const fields = props as Record<string, unknown>;
+      const dateFields = [
+        ["Vedtaksdato", fields.vedtaksdato],
+        ["Saksdato", fields.saksdato],
+        ["Dokumentdato", fields.dokumentdato],
+        ["Dato", fields.dato],
+        ["Registrert", fields.registrertDato],
+      ] as const;
+
+      const found = dateFields.find(([, value]) =>
+        value !== null && value !== undefined && String(value).trim() !== ""
+      );
+
+      if (!found) return "";
+
+      const [label, value] = found;
+      const raw = String(value).trim();
+      const date = /^\d{4}-\d{2}-\d{2}/.test(raw)
+        ? `${raw.slice(8, 10)}.${raw.slice(5, 7)}.${raw.slice(0, 4)}`
+        : raw;
+
+      return `${label}: ${date}`;
+    })(),
     props.avsender ? `Fra ${String(props.avsender)}` : "",
     props.mottaker ? `Til ${String(props.mottaker)}` : "",
   ].filter(Boolean);
@@ -333,6 +366,10 @@ export default function PropertyAndBuildingCase({
     );
   };
 
+
+
+  const [showMunicipalDetails, setShowMunicipalDetails] = useState(false);
+
   const renderMunicipalEntry = (
     entry: MunicipalEntry,
     tone: "confirmed" | "possible" = "confirmed"
@@ -341,7 +378,7 @@ export default function PropertyAndBuildingCase({
 
     return (
       <article
-        key={entry.identifier}
+        key={String(entry.identifier || entry.case_number || `${entry.type}-${entry.title}`)}
         className={`rounded-2xl border p-4 ${
           tone === "confirmed"
             ? "border-slate-700 bg-slate-950/70"
@@ -380,8 +417,8 @@ export default function PropertyAndBuildingCase({
 
             {meta.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-500">
-                {meta.map((value) => (
-                  <span key={value}>{value}</span>
+                {meta.map((value, index) => (
+                  <span key={`${index}-${value}`}>{value}</span>
                 ))}
               </div>
             )}
@@ -429,6 +466,7 @@ export default function PropertyAndBuildingCase({
         )}
 
         <section className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0b0f17]">
+          {/* KOMMUNALT_INNSYN_COLLAPSIBLE_V1 */}
           <div className="flex flex-col gap-4 border-b border-slate-800 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="flex items-center gap-2">
@@ -577,6 +615,16 @@ export default function PropertyAndBuildingCase({
                   <h2 className="mt-1 text-base font-extrabold">
                     Byggesaker og dokumenter
                   </h2>
+                  {/* MUNICIPAL_TOGGLE_FINAL */}
+                  <button
+                    type="button"
+                    onClick={() => setShowMunicipalDetails(v => !v)}
+                    aria-expanded={showMunicipalDetails}
+                    className="mt-2 inline-flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-bold text-cyan-200"
+                  >
+                    {showMunicipalDetails ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    {showMunicipalDetails ? "Skjul byggesaker" : `Vis byggesaker (${confirmedCases.length})`}
+                  </button>
                 </div>
               </div>
 
@@ -620,7 +668,7 @@ export default function PropertyAndBuildingCase({
               </div>
             </div>
           ) : (
-            <div className="p-5">
+            <div className={showMunicipalDetails ? "p-5" : "hidden"}>
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 {[
                   [
@@ -782,27 +830,54 @@ export default function PropertyAndBuildingCase({
           )}
         </section>
 
-        <section className="rounded-3xl border border-slate-800 bg-[#0b0f17] p-5">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-violet-500/20 bg-violet-500/10">
+        <section className="rounded-3xl border border-slate-700 bg-[#0b0f17] p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
               <FileText className="h-5 w-5 text-violet-300" />
-            </div>
-
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-violet-400">
-                Neste utvidelse
-              </p>
-              <h2 className="mt-1 text-base font-extrabold">
+              <h2 className="text-base font-extrabold text-white">
                 Plan & regulering
               </h2>
-              <p className="mt-2 max-w-3xl text-xs leading-5 text-slate-500">
-                Denne delen er klargjort for reguleringsplan,
-                kommuneplan, planbestemmelser og andre relevante plandata.
-                Vi kobler den på som neste datakilde uten å endre resten av
-                prosjektmodulen.
+            </div>
+            <span className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-200">
+              Ikke kontrollert
+            </span>
+          </div>
+
+          <p className="mt-3 text-sm leading-6 text-slate-300">
+            Kontroller gjeldende planer og eventuell søknadsplikt før
+            arbeid som kan påvirke bygningens utseende eller verneverdier.
+          </p>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
+              <h3 className="text-sm font-bold text-white">Reguleringsplan</h3>
+              <p className="mt-2 text-sm leading-6 text-slate-300">
+                Kontroller gjeldende plan, bevaringsbestemmelser og
+                eventuelle begrensninger for synlige endringer.
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
+              <h3 className="text-sm font-bold text-white">Vernestatus</h3>
+              <p className="mt-2 text-sm leading-6 text-slate-300">
+                Kontroller registrert vern og eventuelle særskilte
+                bestemmelser for eiendommen.
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
+              <h3 className="text-sm font-bold text-white">Søknadsplikt</h3>
+              <p className="mt-2 text-sm leading-6 text-slate-300">
+                Avklar om tiltak på tak, piper, beslag eller fasade
+                krever søknad eller annen myndighetsavklaring.
               </p>
             </div>
           </div>
+
+          <p className="mt-4 text-xs leading-5 text-slate-400">
+            Dette er en kontrolliste, ikke en bekreftelse på at
+            planbestemmelser eller søknadsplikt er undersøkt.
+          </p>
         </section>
       </main>
     </div>

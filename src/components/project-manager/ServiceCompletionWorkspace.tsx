@@ -501,6 +501,7 @@ export default function ServiceCompletionWorkspace({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
         action: "save_completion",
         completion_id: completion?.id || null,
         inquiry_id: inquiryId,
@@ -530,6 +531,7 @@ export default function ServiceCompletionWorkspace({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
         action: "save_items",
         completion_id: completionId,
         items: items.map((rawItem, index) => {
@@ -659,6 +661,7 @@ export default function ServiceCompletionWorkspace({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+        session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
           action: "save_completion",
           completion_id: completion?.id || null,
           inquiry_id: inquiryId,
@@ -698,6 +701,7 @@ export default function ServiceCompletionWorkspace({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+        session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
           action: "save_items",
           completion_id: completionId,
           items: items.map((rawItem, index) => {
@@ -727,6 +731,7 @@ export default function ServiceCompletionWorkspace({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+        session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
           action: "save_controls",
           completion_id: completionId,
           agreed_scope_completed: boolValue(controls.agreed_scope_completed),
@@ -1575,3 +1580,4 @@ export default function ServiceCompletionWorkspace({
     </section>
   );
 }
+

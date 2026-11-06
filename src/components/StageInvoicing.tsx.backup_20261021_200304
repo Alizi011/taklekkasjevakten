@@ -1,0 +1,230 @@
+import { useEffect, useState } from "react";
+import { apiUrl } from "../lib/api";
+
+type StageKey = "lekkasjesok" | "varig_utbedring" | "service" | "takkontroll";
+type InvoiceDoc = {
+  document_id: number;
+  original_name: string;
+  created_at: string;
+};
+type StageData = {
+  invoiced: boolean;
+  documents: InvoiceDoc[];
+};
+type ApiPayload = {
+  success: boolean;
+  message?: string;
+  project_id?: number;
+  document_id?: number;
+  document?: { id: number };
+  stages?: Partial<Record<StageKey, StageData>>;
+};
+
+const stageNames: Record<StageKey, string> = {
+  lekkasjesok: "Lekkasjesøk",
+  varig_utbedring: "Varig utbedring",
+  service: "Service / midlertidig utbedring",
+  takkontroll: "Takkontroll"
+};
+
+const BRIDGE = apiUrl("/tlv_invoice_bridge.php");
+
+async function readJson(response: Response): Promise<ApiPayload> {
+  const raw = await response.text();
+  let data: ApiPayload;
+
+  try {
+    data = JSON.parse(raw) as ApiPayload;
+  } catch {
+    throw new Error(`Ugyldig serversvar (HTTP ${response.status}).`);
+  }
+
+  if (!response.ok || !data.success) {
+    throw new Error(
+      data.message ||
+      (response.status === 401 || response.status === 403
+        ? "Du har ikke tilgang til fakturaadministrasjon."
+        : `HTTP ${response.status}`)
+    );
+  }
+
+  return data;
+}
+
+export default function StageInvoicing({
+  inquiryId,
+  stageKey
+}: {
+  inquiryId: number;
+  stageKey: StageKey;
+}) {
+  const [projectId, setProjectId] = useState<number | null>(null);
+  const [stage, setStage] = useState<StageData>({
+    invoiced: false,
+    documents: []
+  });
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function load() {
+    const result = await readJson(
+      await fetch(
+        `${BRIDGE}?action=status&inquiry_id=${encodeURIComponent(inquiryId)}`,
+        { credentials: "include", cache: "no-store" }
+      )
+    );
+
+    setProjectId(result.project_id ?? null);
+    setStage(result.stages?.[stageKey] ?? {
+      invoiced: false,
+      documents: []
+    });
+  }
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setProjectId(null);
+    setError("");
+    setMessage("");
+
+    void (async () => {
+      try {
+        const result = await readJson(
+          await fetch(
+            `${BRIDGE}?action=status&inquiry_id=${encodeURIComponent(inquiryId)}`,
+            { credentials: "include", cache: "no-store" }
+          )
+        );
+
+        if (active) {
+          setProjectId(result.project_id ?? null);
+          setStage(result.stages?.[stageKey] ?? {
+            invoiced: false,
+            documents: []
+          });
+        }
+      } catch (e) {
+        if (active) {
+          setError(e instanceof Error ? e.message : "Kunne ikke hente fakturastatus.");
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+
+    return () => { active = false; };
+  }, [inquiryId, stageKey]);
+
+  async function upload() {
+    if (!file || !projectId || busy) return;
+
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setError("Velg en fakturakopi i PDF-format.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const body = new FormData();
+      body.append("project_id", String(projectId));
+      body.append("kind", "invoice");
+      body.append(
+        "description",
+        `TLV sak ${inquiryId} – ${stageNames[stageKey]} – fakturakopi`
+      );
+      body.append("file", file);
+
+      const uploaded = await readJson(
+        await fetch(`${BRIDGE}?action=upload`, {
+          method: "POST",
+          credentials: "include",
+          body
+        })
+      );
+
+      const documentId = Number(
+        uploaded.document?.id ?? uploaded.document_id ?? 0
+      );
+
+      if (!documentId) {
+        throw new Error(
+          "Filen er mottatt, men dokument-ID mangler. Kontroller Core før nytt forsøk."
+        );
+      }
+
+      await readJson(
+        await fetch(`${BRIDGE}?action=link`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            inquiry_id: inquiryId,
+            stage_key: stageKey,
+            document_id: documentId
+          })
+        })
+      );
+
+      await load();
+      setFile(null);
+      setMessage("Fakturakopi registrert i Perun Core.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Kunne ikke lagre fakturakopien.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 space-y-3 rounded-xl border border-slate-700 bg-slate-950/60 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-bold text-white">
+          Fakturert
+        </span>
+        <span className={`rounded-lg border px-3 py-1 text-xs font-bold ${
+          stage.invoiced
+            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+            : "border-slate-600 bg-slate-900 text-slate-300"
+        }`}>
+          {loading ? "Kontrollerer…" : error ? "Ukjent" : stage.invoiced ? "Ja" : "Nei"}
+        </span>
+      </div>
+
+      {stage.documents.map(doc => (
+        <p key={doc.document_id} className="break-words text-xs text-slate-300">
+          Fakturakopi: {doc.original_name}
+        </p>
+      ))}
+
+      {!loading && !stage.invoiced && (
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="file"
+            accept=".pdf,application/pdf"
+            aria-label={`Fakturakopi for ${stageNames[stageKey]}`}
+            onChange={e => setFile(e.target.files?.[0] ?? null)}
+            className="max-w-full text-xs text-slate-300"
+          />
+          <button
+            type="button"
+            disabled={!file || !projectId || busy}
+            onClick={() => void upload()}
+            className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-40"
+          >
+            {busy ? "Lagrer…" : "Registrer fakturakopi"}
+          </button>
+        </div>
+      )}
+
+      {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
+      {message && <p role="status" className="text-xs text-emerald-300">{message}</p>}
+    </div>
+  );
+}

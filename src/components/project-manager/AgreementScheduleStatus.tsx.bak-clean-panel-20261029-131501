@@ -1,0 +1,114 @@
+import { useCallback, useEffect, useState } from "react";
+import { apiUrl } from "../../lib/api";
+
+type Proposal = {
+  id: number;
+  offer_number?: string;
+  proposed_start_date: string;
+  estimated_duration: string;
+  status: string;
+  customer_response_note?: string | null;
+};
+
+type Props = {
+  inquiryId: number;
+  offerNumber: string;
+};
+
+const SESSION_KEY = "taklekkasjevakten_project_manager_session";
+
+
+export default function AgreementScheduleStatus({ inquiryId, offerNumber }: Props) {
+  const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [hint, setHint] = useState("");
+
+  const load = useCallback(async () => {
+    const token = window.localStorage.getItem(SESSION_KEY);
+    if (!token || !inquiryId || !offerNumber) {
+      setError("Prosjektlederinnlogging eller tilbudsnummer mangler.");
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await fetch(apiUrl("/project_manager_agreement_schedule.php"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ action: "list", inquiry_id: inquiryId, session_token: token }),
+      });
+      const data = await response.json();
+      if (!response.ok || data?.success !== true) throw new Error(data?.message || "Kunne ikke hente datoforslag.");
+      const matching = (Array.isArray(data.proposals) ? data.proposals : [])
+        .filter((row: Proposal) => row.offer_number === offerNumber)
+        .sort((a: Proposal, b: Proposal) => Number(b.id) - Number(a.id));
+      setProposal(matching[0] ?? null);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Kunne ikke hente avtalestatus.");
+    } finally {
+      setLoading(false);
+    }
+  }, [inquiryId, offerNumber]);
+
+  useEffect(() => { void load(); }, [load]);
+
+
+  const status = proposal?.status ?? "";
+  const nextAction = !proposal
+    ? "Fastsett oppstartsdato"
+    : status === "pending_customer"
+      ? "Avventer kundens bekreftelse"
+      : status === "change_requested" || status === "superseded" || status === "cancelled"
+        ? "Foreslå ny oppstartsdato"
+        : status === "approved"
+          ? "Dato godkjent – arbeidsavtale og signering"
+          : "Kontroller datoforslaget";
+
+  const canPlan = !proposal || status === "pending_customer" || status === "change_requested" || status === "superseded" || status === "cancelled";
+
+  function openPlanning() {
+    const target = document.getElementById(`pm-agreement-planning-${inquiryId}`);
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHint("");
+    } else {
+      setHint("Åpne oppfølgingstilbudet i oppdraget for å vise datoplanleggingen.");
+    }
+  }
+
+  return (
+    <div className="space-y-2" aria-live="polite">
+      {loading ? (
+        <p className="text-xs text-slate-300">Henter datoforslag …</p>
+      ) : error ? (
+        <p className="text-xs text-amber-300">{error}</p>
+      ) : (
+        <>
+          <p className="text-xs font-bold text-white">{nextAction}</p>
+          {proposal && (
+            <p className="text-xs text-slate-300">
+              Oppstart {proposal.proposed_start_date} · {proposal.estimated_duration}
+              {status === "pending_customer" ? " · Registrert av prosjektleder" : ""}
+            </p>
+          )}
+          {proposal?.customer_response_note && status === "change_requested" && (
+            <p className="text-xs text-slate-300">Kundens merknad: {proposal.customer_response_note}</p>
+          )}
+          {canPlan && (
+            <button type="button" onClick={openPlanning}
+              className="rounded-lg border border-amber-500/50 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-500/10">
+              {proposal ? "Åpne datoplanlegging" : "Foreslå oppstartsdato"}
+            </button>
+          )}
+          {hint && <p className="text-xs text-slate-300">{hint}</p>}
+        </>
+      )}
+      <button type="button" onClick={() => void load()} className="block text-[11px] text-cyan-300 hover:underline">
+        Oppdater avtalestatus
+      </button>
+    </div>
+  );
+}

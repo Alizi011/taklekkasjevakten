@@ -43,6 +43,7 @@ interface OfferDraft {
   pricing_mode?: "hourly" | "fixed";
   fixed_price?: number;
   calculation_json?: string;
+  pdf_url?: string | null;
   status?: string;
 }
 interface OfferGeneratorProps {
@@ -56,6 +57,8 @@ interface OfferGeneratorProps {
   followUpReason?: string;
   sourceReportId?: number | null;
   initialOffer?: Partial<OfferDraft> | null;
+  publicationFlow?: "standard" | "direct";
+  projectManagerSessionToken?: string | null;
   allowPublish?: boolean;
   onDraftSaved?: (offerId: number) => void | Promise<void>;
   onClose: () => void;
@@ -118,6 +121,8 @@ export default function OfferGenerator({
   followUpReason = "",
   sourceReportId = null,
   initialOffer = null,
+  publicationFlow = "standard",
+  projectManagerSessionToken = null,
   allowPublish = true,
   onDraftSaved,
   onClose,
@@ -202,7 +207,13 @@ export default function OfferGenerator({
       pricingMode: "hourly",
       lines: EMPTY_CALCULATION.lines.map((line) => ({ ...line })),
     });
-    setPdfUrl(null);
+    // DIRECT_OFFER_PDF_RESTORE_V1
+    // Behold eksisterende kunde-PDF ved gjenåpning av et utkast.
+    setPdfUrl(
+      initialOffer?.id && initialOffer.pdf_url
+        ? initialOffer.pdf_url
+        : null
+    );
     setPdfDirty(false);
     setAiEstimate(null);
     setError("");
@@ -234,8 +245,14 @@ export default function OfferGenerator({
     try {
       const res = await fetch(`${API_BASE}/generate_offer_pdf.php`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ offer_id: draft.id }),
+        body: JSON.stringify({
+          offer_id: draft.id,
+          ...(projectManagerSessionToken
+            ? { session_token: projectManagerSessionToken }
+            : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.success || !data.pdf_url) {
@@ -410,6 +427,53 @@ export default function OfferGenerator({
       setGeneratingAi(false);
     }
   };
+  // Aktiveres først etter godkjent backend-integrasjon.
+  const DIRECT_PUBLISH_BACKEND_READY = false;
+
+  const publishDirectOffer = async () => {
+    if (!DIRECT_PUBLISH_BACKEND_READY || !allowPublish) {
+      setError("Direkte publisering er ikke aktivert ennå.");
+      return;
+    }
+
+    if (!draft.id || !pdfUrl || pdfDirty) {
+      setError("Lagre utkastet og generer en oppdatert PDF før publisering.");
+      return;
+    }
+
+    setPublishing(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/admin_direct_offer_publish.php`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ offer_id: Number(draft.id) }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success || !data.published) {
+        throw new Error(data.message || "Kunne ikke publisere tilbudet.");
+      }
+
+      setMessage("Tilbudet er publisert til kunden.");
+
+      await onPublished?.();
+      onClose();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Publisering mislyktes."
+      );
+    } finally {
+      setPublishing(false);
+    }
+  };
   const saveDraft = async (publish = false) => {
     if (initialOffer?.id && initialOffer.status && initialOffer.status !== "utkast") {
       setError("Tilbudet er ikke et utkast og kan ikke redigeres her.");
@@ -428,9 +492,43 @@ export default function OfferGenerator({
       const fixedPrice =
         calculation.pricingMode === "fixed" ? totals.exclVat : 0;
       let offerId = draft.id;
+      if (publish && mode === "followup") {
+        if (!allowPublish || publicationFlow === "direct") {
+          throw new Error("Publisering er ikke tilgjengelig for dette tilbudet.");
+        }
+        if (!offerId || !pdfUrl || pdfDirty) {
+          throw new Error(
+            "Lagre utkastet og generer en oppdatert PDF før publisering."
+          );
+        }
+
+        const publishRes = await fetch(`${API_BASE}/offers.php`, {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: offerId,
+            publish: true,
+            ...(projectManagerSessionToken
+              ? { session_token: projectManagerSessionToken }
+              : {}),
+          }),
+        });
+        const publishData = await publishRes.json();
+        if (!publishRes.ok || !publishData.success) {
+          throw new Error(
+            publishData.message || "Tilbudet kunne ikke publiseres."
+          );
+        }
+        setMessage("Oppfølgingstilbudet er publisert til kunden.");
+        await onPublished?.();
+        onClose();
+        return;
+      }
       if (!offerId) {
         const createRes = await fetch(`${API_BASE}/offers.php`, {
           method: "POST",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             inquiry_id: Number(inquiry.id),
@@ -452,6 +550,7 @@ export default function OfferGenerator({
             status: "utkast",
             digital_inspection_comment: digitalInspectionComment,
             offer_context: mode,
+            ...(projectManagerSessionToken ? { session_token: projectManagerSessionToken } : {}),
             follow_up_reason: followUpReason || null,
             source_report_id: sourceReportId,
             created_by_employee_id: employee?.id || null,
@@ -469,6 +568,7 @@ export default function OfferGenerator({
       } else {
         const updateRes = await fetch(`${API_BASE}/offers.php`, {
           method: "PUT",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             id: offerId,
@@ -488,6 +588,7 @@ export default function OfferGenerator({
             gross_profit: totals.grossProfit,
             gross_margin_percent: totals.grossMarginPercent,
             offer_context: mode,
+            ...(projectManagerSessionToken ? { session_token: projectManagerSessionToken } : {}),
             follow_up_reason: followUpReason || null,
             source_report_id: sourceReportId,
           }),
@@ -507,6 +608,11 @@ export default function OfferGenerator({
         setMessage("Utkastet er lagret internt. Kunden kan ikke se det.");
         return;
       }
+      if (publicationFlow === "direct") {
+        throw new Error(
+          "Direkte publisering aktiveres etter at sikker backend er installert."
+        );
+      }
       if (!allowPublish) {
         throw new Error(
           mode === "followup"
@@ -521,8 +627,9 @@ export default function OfferGenerator({
       }
       const publishRes = await fetch(`${API_BASE}/offers.php`, {
         method: "PUT",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: offerId, publish: true }),
+        body: JSON.stringify({ id: offerId, publish: true, ...(projectManagerSessionToken ? { session_token: projectManagerSessionToken } : {}) }),
       });
       const publishData = await publishRes.json();
       if (!publishRes.ok || !publishData.success) {
@@ -1055,10 +1162,10 @@ export default function OfferGenerator({
                 </span>
               )}
             </button>
-            {allowPublish ? (
+            {allowPublish && (publicationFlow !== "direct" || DIRECT_PUBLISH_BACKEND_READY) ? (
               <button
                 type="button"
-                onClick={() => saveDraft(true)}
+                onClick={() => publicationFlow === "direct" ? publishDirectOffer() : saveDraft(true)}
                 disabled={saving || publishing || !pdfUrl || pdfDirty}
                 className="rounded-xl bg-[#F5B800] px-5 py-2.5 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:opacity-50"
               >
@@ -1076,7 +1183,7 @@ export default function OfferGenerator({
               </button>
             ) : (
               <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.07] px-4 py-2.5 text-center text-[10px] font-bold text-amber-200">
-                Lagre som utkast nå · publiseres sammen med godkjent rapport
+                {publicationFlow === "direct" ? "Direkte publisering aktiveres etter godkjent backend-test." : "Lagre som utkast nå · publiseres sammen med godkjent rapport"}
               </div>
             )}
           </div>

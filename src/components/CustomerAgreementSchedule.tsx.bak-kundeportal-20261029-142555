@@ -1,0 +1,193 @@
+import { useEffect, useState } from "react";
+
+type Proposal = {
+  id: number;
+  version_no: number;
+  proposed_start_date: string;
+  estimated_duration: string;
+  proposal_note: string | null;
+  status: string;
+  customer_response_note: string | null;
+  created_at: string;
+};
+
+type Props = {
+  inquiryId: number;
+  sessionToken: string;
+  endpoint: string;
+  previewMode?: boolean;
+};
+
+export default function CustomerAgreementSchedule({
+  inquiryId,
+  sessionToken,
+  endpoint,
+  previewMode = false,
+}: Props) {
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [note, setNote] = useState("");
+
+  async function load() {
+    if (previewMode || !sessionToken || inquiryId <= 0) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "list",
+          inquiry_id: inquiryId,
+          session_token: sessionToken,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Kunne ikke hente datoforslag.");
+      }
+
+      setProposals(Array.isArray(data.proposals) ? data.proposals : []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Kunne ikke hente dato.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, [inquiryId, sessionToken, endpoint, previewMode]);
+
+  async function respond(action: "approve" | "request_change", id: number) {
+    if (saving || previewMode) return;
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          inquiry_id: inquiryId,
+          session_token: sessionToken,
+          proposal_id: id,
+          note,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Kunne ikke registrere svaret.");
+      }
+
+      setMessage(
+        action === "approve"
+          ? "Arbeidsdatoen er godkjent."
+          : "Ønske om endring er registrert."
+      );
+      setNote("");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Handlingen feilet.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (previewMode) return null;
+
+  const latest = proposals[0];
+
+  return (
+    <section className="rounded-2xl border border-amber-500/30 bg-[#0b1422] p-5 text-white">
+      <h2 className="text-lg font-bold">Arbeidsdato og avtale</h2>
+      <p className="mt-2 text-sm text-slate-400">
+        Prosjektansvarlig foreslår arbeidsdato og varighet.
+        Datoen skal godkjennes før arbeidsavtalen opprettes.
+      </p>
+
+      {loading && <p className="mt-4 text-sm">Henter datoforslag …</p>}
+
+      {!loading && !latest && !error && (
+        <p className="mt-4 text-sm text-slate-300">
+          Prosjektansvarlig har ikke sendt et datoforslag ennå.
+        </p>
+      )}
+
+      {latest && (
+        <div className="mt-4 space-y-3 rounded-xl border border-slate-700 bg-slate-950/60 p-4">
+          <p className="text-xs text-slate-400">
+            Forslag nr. {latest.version_no}
+          </p>
+          <p className="text-base font-bold">
+            Arbeidsstart: {latest.proposed_start_date}
+          </p>
+          <p className="text-sm">Varighet: {latest.estimated_duration}</p>
+          {latest.proposal_note && (
+            <p className="text-sm text-slate-300">{latest.proposal_note}</p>
+          )}
+
+          {latest.status === "pending_customer" ? (
+            <>
+              <p className="text-xs text-amber-300">
+                Avventer godkjenning fra verifisert styreleder
+              </p>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                maxLength={2000}
+                rows={3}
+                placeholder="Merknad eller begrunnelse ved ønske om endring"
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 p-3 text-sm text-white"
+              />
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void respond("approve", latest.id)}
+                  className="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50"
+                >
+                  Godkjenn dato
+                </button>
+                <button
+                  type="button"
+                  disabled={saving || !note.trim()}
+                  onClick={() => void respond("request_change", latest.id)}
+                  className="rounded-lg border border-slate-600 px-4 py-2 text-sm disabled:opacity-50"
+                >
+                  Be om endring
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-slate-300">
+              Status: {latest.status === "approved"
+                ? "Dato godkjent"
+                : latest.status === "change_requested"
+                ? "Endring etterspurt"
+                : latest.status}
+            </p>
+          )}
+        </div>
+      )}
+
+      {error && <p role="alert" className="mt-3 text-sm text-red-300">{error}</p>}
+      {message && <p role="status" className="mt-3 text-sm text-emerald-300">{message}</p>}
+    </section>
+  );
+}

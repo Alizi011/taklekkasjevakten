@@ -147,6 +147,7 @@ export default function WorkCompletionPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+        session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
           action: "save_completion",
           completion_id: completion?.id || null,
           inquiry_id: inquiryId,
@@ -180,6 +181,7 @@ export default function WorkCompletionPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+        session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
           action: "save_controls",
           completion_id: completionId,
           ...controls,
@@ -479,3 +481,4 @@ export default function WorkCompletionPanel({
     </section>
   );
 }
+

@@ -73,36 +73,34 @@ export default function Layout() {
         }`}
       >
         {/* Akuttvakt */}
-        <div className="bg-red-950/90 text-white text-xs py-1.5 px-4 border-b border-red-800/60 backdrop-blur-md">
-          <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-1 md:gap-3">
-            <div className="flex flex-wrap items-center gap-2 text-center md:text-left justify-center md:justify-start">
-              <span className="relative flex h-2 w-2">
+        <div className="bg-red-950/90 text-white border-b border-red-800/60 backdrop-blur-md">
+          <div className="max-w-7xl mx-auto px-4 md:px-8 py-2.5 flex flex-col md:flex-row items-center justify-between gap-2 md:gap-5">
+            <div className="flex flex-wrap items-center justify-center md:justify-start gap-x-3 gap-y-1">
+              <span className="relative flex h-2.5 w-2.5 shrink-0">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
               </span>
 
-              <span className="font-bold tracking-wide text-red-100 uppercase text-[11px]">
-                Døgnåpen Akuttvakt:
+              <span className="font-extrabold tracking-wide text-red-100 uppercase text-xs whitespace-nowrap">
+                Døgnåpen Akuttvakt
               </span>
 
-              <span className="text-red-200 text-[11px]">
+              <span className="text-red-100 text-xs sm:text-sm text-center md:text-left">
                 Utrykning (2 mann):{" "}
-                <strong>kr 3 920,- eks. mva / t</strong> (+ kr 340,- bil/drift)
+                <strong className="text-white">kr 3 920,- eks. mva/t</strong>
+                {" "}(+ kr 340,- bil/drift)
               </span>
             </div>
 
-            <div className="flex items-center gap-3">
-              <a
-                href="tel:92029090"
-                className="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 text-white font-extrabold px-3 py-0.5 rounded-full text-[11px] transition-colors shadow-md whitespace-nowrap"
-              >
-                <Phone className="w-3 h-3" />
-                <span>Ring Akuttvakt: 92 02 90 90</span>
-              </a>
-            </div>
+            <a
+              href="tel:92029090"
+              className="inline-flex shrink-0 items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-extrabold px-4 py-1.5 rounded-full text-xs transition-colors shadow-md whitespace-nowrap"
+            >
+              <Phone className="w-3.5 h-3.5" />
+              <span>Ring Akuttvakt: 92 02 90 90</span>
+            </a>
           </div>
         </div>
-
         {/* Hovedlinje */}
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-2 md:py-3 flex items-center justify-between">
           {/* Logo */}

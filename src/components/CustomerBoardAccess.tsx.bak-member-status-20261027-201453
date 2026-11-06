@@ -1,0 +1,315 @@
+import { useEffect, useState } from "react";
+import { Users, RefreshCw, X } from "lucide-react";
+
+type Member = {
+  id: number;
+  full_name: string;
+  access_role: string;
+  status: string;
+  organisation_role?: string;
+};
+
+type BoardPerson = {
+  name: string;
+  role: string;
+  role_code: string;
+};
+
+type Props = {
+  inquiryId: number;
+  sessionToken: string;
+  boardEndpoint: string;
+  membersEndpoint: string;
+  previewMode?: boolean;
+  embedded?: boolean;
+};
+
+export default function CustomerBoardAccess({
+  inquiryId,
+  sessionToken,
+  boardEndpoint,
+  membersEndpoint,
+  previewMode = false,
+  embedded = false,
+}: Props) {
+  const [open, setOpen] = useState(embedded);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [sendingId, setSendingId] = useState<number | null>(null);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [board, setBoard] = useState<BoardPerson[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [selected, setSelected] = useState<BoardPerson | null>(null);
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+
+  async function post(
+    endpoint: string,
+    payload: Record<string, unknown>
+  ) {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...payload,
+        inquiry_id: inquiryId,
+        session_token: sessionToken,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+      throw new Error(data.message || "Forespørselen feilet.");
+    }
+
+    return data;
+  }
+
+  async function load() {
+    if (!sessionToken && !previewMode) {
+      setError("Gyldig kundeinnlogging kreves.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const [boardResult, membersResult] = await Promise.allSettled([
+        previewMode
+          ? fetch(boardEndpoint, {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                inquiry_id: inquiryId,
+                admin_preview: true,
+              }),
+            }).then(async (response) => {
+              const data = await response.json();
+              if (!response.ok || !data.success) {
+                throw new Error(data.message || "Brreg-oppslaget feilet.");
+              }
+              return data;
+            })
+          : post(boardEndpoint, {}),
+        previewMode ? Promise.resolve({ members: [] }) : post(membersEndpoint, { action: "list" }),
+      ]);
+
+      if (boardResult.status === "fulfilled") {
+        setBoard(boardResult.value.board_members || []);
+      } else {
+        setBoard([]);
+        throw boardResult.reason;
+      }
+
+      if (membersResult.status === "fulfilled") {
+        setMembers(membersResult.value.members || []);
+      } else {
+        setMembers([]);
+      }
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Kunne ikke hente styret."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function sendInvitation(memberId: number) {
+    if (!window.confirm("Vil du sende SMS-invitasjon til dette styremedlemmet?")) {
+      return;
+    }
+
+    setSendingId(memberId);
+    setError("");
+    setMessage("");
+
+    try {
+      const result = await post(membersEndpoint, {
+        action: "send_invitation",
+        member_id: memberId,
+      });
+
+      if (!result.sms_sent) {
+        throw new Error("SMS-utsendelsen ble ikke bekreftet.");
+      }
+
+      setMessage("SMS-invitasjonen er sendt via STRIB.");
+      await load();
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Kunne ikke sende invitasjonen."
+      );
+    } finally {
+      setSendingId(null);
+    }
+  }
+  useEffect(() => {
+    if (embedded) void load();
+  }, [embedded, inquiryId, sessionToken]);
+  async function register() {
+    if (!selected || !email.trim() || !phone.trim()) {
+      setError("Fyll inn e-post og mobilnummer.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const result = await post(membersEndpoint, {
+        action: "add_member",
+        full_name: selected.name,
+        organisation_role: selected.role,
+        access_role: "board_member",
+        email: email.trim(),
+        phone: phone.trim(),
+      });
+
+      await post(membersEndpoint, {
+        action: "prepare_invitation",
+        member_id: result.member_id,
+      });
+
+      setMessage(
+        "Medlemmet er registrert og klargjort. SMS er ikke sendt."
+      );
+      setSelected(null);
+      setEmail("");
+      setPhone("");
+      await load();
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Registreringen feilet."
+      );
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className={embedded ? "rounded-2xl border border-slate-800 bg-slate-950/60 p-5" : "mb-3"}>
+      {!embedded && <button
+        type="button"
+        onClick={() => {
+          if (!open) void load();
+          setOpen(!open);
+        }}
+        className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-xs font-bold text-slate-300 hover:bg-slate-900"
+      >
+        <Users className="h-4 w-4" />
+        Styret og tilganger
+      </button>}
+
+      {open && (
+        <div className="rounded-xl border border-slate-700 bg-slate-900 p-3 text-xs text-slate-200">
+          <div className="mb-3 flex items-center justify-between">
+            <strong>Styremedlemmer</strong>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => void load()} aria-label="Oppdater">
+                <RefreshCw className="h-4 w-4" />
+              </button>
+              <button type="button" onClick={() => setOpen(false)} aria-label="Lukk">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          {loading && <p>Henter opplysninger …</p>}
+          {error && <p role="alert" className="mb-2 text-red-300">{error}</p>}
+          {message && <p role="status" className="mb-2 text-amber-300">{message}</p>}
+
+          {members.length > 0 && (
+            <div className="mb-3 border-b border-slate-700 pb-3">
+              <p className="mb-2 font-bold">Registrerte kontakter</p>
+              {members.map((m) => (
+                <div key={m.id} className="mb-2">
+                  <div>{m.full_name}</div>
+                  <div className="text-slate-400">
+                    {m.access_role} · {m.status}
+                  </div>
+                  {m.status === "invited" && !previewMode && (
+                    <button
+                      type="button"
+                      disabled={sendingId !== null}
+                      onClick={() => void sendInvitation(m.id)}
+                      className="mt-1 rounded-lg border border-amber-500/40 px-2 py-1 text-amber-300 disabled:opacity-50"
+                    >
+                      {sendingId === m.id
+                        ? "Sender SMS …"
+                        : "Send SMS-invitasjon"}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {board.map((person, index) => (
+            <button
+              key={`${person.name}-${index}`}
+              type="button"
+              onClick={() => {
+                setSelected(person);
+                setError("");
+              }}
+              className="mb-2 block w-full rounded-lg border border-slate-700 p-2 text-left hover:border-amber-500"
+            >
+              <span className="block font-bold">{person.name}</span>
+              <span className="text-slate-400">{person.role}</span>
+            </button>
+          ))}
+
+          {selected && (
+            <div className="mt-3 border-t border-slate-700 pt-3">
+              <p className="mb-2 font-bold">{selected.name}</p>
+
+              <input
+                type="email"
+                aria-label="E-postadresse"
+                placeholder="E-postadresse"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="mb-2 w-full rounded-lg border border-slate-600 bg-slate-950 p-2"
+              />
+
+              <input
+                type="tel"
+                aria-label="Mobilnummer"
+                placeholder="Mobilnummer"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className="mb-2 w-full rounded-lg border border-slate-600 bg-slate-950 p-2"
+              />
+
+              <button
+                type="button"
+                disabled={saving || previewMode}
+                onClick={() => void register()}
+                className="w-full rounded-lg bg-amber-500 p-2 font-bold text-slate-950 disabled:opacity-50"
+              >
+                {saving ? "Registrerer …" : "Klargjør invitasjon"}
+              </button>
+            </div>
+          )}
+
+          <p className="mt-3 text-[10px] text-slate-400">
+            Tilgang til portalen er ikke det samme som signaturrett.
+            Invitasjoner er ikke sendt via SMS.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
+
+

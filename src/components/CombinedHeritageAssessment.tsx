@@ -1,0 +1,238 @@
+import { useEffect, useState } from "react";
+import { ExternalLink, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { apiUrl } from "../lib/api";
+
+type HeritageItem = { layer?: string; feature_id?: string; attributes?: Record<string, unknown> };
+type HeritageResponse = {
+  success?: boolean; message?: string; checked_at?: string;
+  direct_matches?: HeritageItem[]; warnings?: string[];
+  cache?: { checked_at?: string; source?: string; refresh_failed?: boolean };
+};
+type PlanDocument = { url?: string; error?: string; supersession_notice_detected?: boolean; excerpts?: { line?: number; text?: string }[] };
+type PlanResponse = {
+  success?: boolean; message?: string; checked_at?: string; address?: string;
+  plan_data?: { plan_ids?: (string | number)[]; documents?: Record<string, PlanDocument>;
+    layers?: Record<string, { checked?: boolean; features?: unknown[] }>; errors?: string[] };
+};
+type ScopeItem = { code?: string; label?: string; visibility?: string; evidence?: { excerpt?: string }[] };
+type WorkResponse = {
+  success?: boolean;
+  message?: string;
+  work?: {
+    source?: { kind?: string; number?: string | null; status?: string; reliability?: string } | null;
+    scope_items?: ScopeItem[];
+    notes?: string[];
+    assessment?: { state?: string; explanation?: string };
+  };
+  assessment_status?: string;
+  decision_note?: string;
+  decision_support?: {
+    status?: string;
+    headline?: string;
+    resolved?: string[];
+    scope_assessments?: Array<{ code?: string; label?: string; impact?: string; summary?: string; conditions?: string[]; legal_status?: string }>;
+    open_questions?: Array<{ code?: string; question?: string; reason?: string }>;
+    permission_confirmed?: boolean;
+  };
+};
+const visibilityText: Record<string, string> = {
+  primarily_concealed: "Hovedsakelig skjult arbeid",
+  potentially_visible: "Kan påvirke synlig utforming",
+  visible: "Synlig utvendig arbeid",
+};
+const labels: Record<string, string> = {
+  KOM: "Kommunalt listeført", AUT: "Automatisk fredet", VED: "Vedtaksfredet",
+  FOR: "Forskriftsfredet", PBL: "Vern etter plan- og bygningsloven"
+};
+const asText = (value: unknown): string => typeof value === "string" || typeof value === "number" ? String(value) : "";
+const safeOfficialUrl = (value: string): boolean => /^https:\/\/(?:www\.)?(?:kulturminnesok\.no|askeladden\.ra\.no)\//i.test(value);
+const safePlanUrl = (value: string): boolean => /^https:\/\/innsyn\.pbe\.oslo\.kommune\.no\/saksinnsyn\/showregbest\.asp\?planid=\d+$/i.test(value);
+
+export default function CombinedHeritageAssessment({ inquiryId, address }: { inquiryId: number; address: string }) {
+  const [heritage, setHeritage] = useState<HeritageResponse | null>(null);
+  const [plans, setPlans] = useState<PlanResponse | null>(null);
+  const [workData, setWorkData] = useState<WorkResponse | null>(null);
+  const [workError, setWorkError] = useState("");
+  const [heritageError, setHeritageError] = useState("");
+  const [planError, setPlanError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [forceRefresh, setForceRefresh] = useState(false);
+
+  useEffect(() => {
+    const abort = new AbortController();
+    setBusy(true); setHeritageError(""); setPlanError(""); setWorkError(""); setHeritage(null); setPlans(null); setWorkData(null);
+    const load = async () => {
+      const heritageUrl = new URL(apiUrl("/tlv_heritage_lookup_bridge.php"), window.location.href);
+      heritageUrl.searchParams.set("inquiry_id", String(inquiryId));
+      if (forceRefresh) heritageUrl.searchParams.set("refresh", "1");
+      const planUrl = new URL(apiUrl("/tlv_plan_protection_bridge.php"), window.location.href);
+      planUrl.searchParams.set("inquiry_id", String(inquiryId));
+      const workUrl = new URL(apiUrl("/tlv_work_protection_bridge.php"), window.location.href);
+      workUrl.searchParams.set("inquiry_id", String(inquiryId));
+      const get = async <T,>(url: URL): Promise<T> => {
+        const response = await fetch(url.toString(), { credentials: "include", cache: "no-store", signal: abort.signal });
+        const json = await response.json() as T & { success?: boolean; message?: string };
+        if (!response.ok || !json.success) throw new Error(json.message || `HTTP ${response.status}`);
+        return json;
+      };
+      await Promise.all([
+        get<HeritageResponse>(heritageUrl).then(v => { if (!abort.signal.aborted) setHeritage(v); }).catch(e => { if (!abort.signal.aborted) setHeritageError(e instanceof Error ? e.message : "Registerkontroll feilet."); }),
+        get<PlanResponse>(planUrl).then(v => { if (!abort.signal.aborted) setPlans(v); }).catch(e => { if (!abort.signal.aborted) setPlanError(e instanceof Error ? e.message : "Plankontroll feilet."); }),
+        get<WorkResponse>(workUrl).then(v => { if (!abort.signal.aborted) setWorkData(v); }).catch(e => { if (!abort.signal.aborted) setWorkError(e instanceof Error ? e.message : "Arbeidsvurderingen kunne ikke hentes."); })
+      ]);
+      if (!abort.signal.aborted) setBusy(false);
+    };
+    void load();
+    return () => abort.abort();
+  }, [inquiryId, refreshKey, forceRefresh]);
+
+  const matches = Array.isArray(heritage?.direct_matches) ? heritage.direct_matches : [];
+  const primary = matches.find(m => m.layer === "app:Enkeltminne") || matches[0];
+  const code = asText(primary?.attributes?.vernetype).toUpperCase();
+  const label = primary ? (labels[code] || `Registrert vernetype ${code || "ukjent"}`)
+    : heritage ? (heritage.warnings?.length ? "Registerkontroll med merknader" : "Ingen direkte registertreff") : "Registerstatus ikke tilgjengelig";
+  const heritageId = asText(primary?.attributes?.kulturminneId || primary?.feature_id);
+  const officialUrl = asText(primary?.attributes?.linkKulturminnesøk || primary?.attributes?.linkAskeladden);
+  const ids = plans?.plan_data?.plan_ids || [];
+  const documents = Object.entries(plans?.plan_data?.documents || {});
+  const hasOldPlanWarning = documents.some(([,doc]) => doc.supersession_notice_detected ||
+    (doc.excerpts || []).some(ex => /helt eller delvis opphevet|opphevet som følge av/i.test(ex.text || "")));
+  const planErrors = plans?.plan_data?.errors || [];
+  const protectionLayers = ["RBBEVARINGOMRAADE", "RPANGITTHENSYNSONE_2", "RPBESTEMMELSEOMRAADE_2", "RPBAANDLEGGINGSONE_2"];
+  const areaHits = protectionLayers.flatMap(name => {
+    const layer = plans?.plan_data?.layers?.[name];
+    return layer?.checked && Array.isArray(layer.features) && layer.features.length > 0 ? [{ name, count: layer.features.length }] : [];
+  });
+
+  const scope = workData?.work?.scope_items || [];
+  const decision = workData?.decision_support;
+  const decisionsByCode = new Map((decision?.scope_assessments || []).map(d => [d.code, d]));
+  const source = workData?.work?.source;
+  const isUnaccepted = source?.reliability === "published_proposal_not_accepted";
+  const isDraft = source?.reliability === "draft_preliminary";
+  const verifiedListing = code === "KOM";
+  const higherProtection = ["AUT", "VED", "FOR", "PBL"].includes(code);
+  const incompleteSources = Boolean(heritageError || planError || workError || planErrors.length);
+  const canAssess = Boolean(source && scope.length && heritage && plans && !incompleteSources);
+
+  const advice = (item: ScopeItem): { level: string; title: string; reason: string; next: string } => {
+    const key = item.code || "";
+    if (key === "undertak_reparasjon") return {
+      level: "Begrenset visuell påvirkning – betinget",
+      title: "Reparasjon av undertak",
+      reason: "Arbeidet er klassifisert som hovedsakelig skjult. Dersom reparasjonen ikke endrer takform, synlig tekking eller historiske bygningsdeler, er direkte påvirkning på det utvendige uttrykket normalt begrenset.",
+      next: "Avgrens skadene, dokumenter eksisterende materialer og kontroller om utskiftingen også berører synlige eller verneverdige deler."
+    };
+    if (key === "takkonstruksjon_reparasjon") return {
+      level: "Omfanget må avklares",
+      title: "Reparasjon av takkonstruksjon",
+      reason: "Lokal forsterkning eller utskifting kan være lite synlig, men inngrep i opprinnelig konstruksjon og endring av takets geometri kan være relevante både teknisk og for vern.",
+      next: "Beskriv hvilke sperrer/takstoler som berøres, om arbeidet er lokalt, og om bæresystem eller takform endres. Avklar aktuelle krav før vesentlig inngrep."
+    };
+    if (key === "midlertidig_pipetetting") return {
+      level: "Utvendig utførelse må dokumenteres",
+      title: "Midlertidig tetting rundt pipe",
+      reason: "Tettingen kan bli synlig på taket og rundt en eldre mursteinspipe. Utseende, materialvalg, inngrep i murverk og reverserbarhet er derfor relevante vernehensyn.",
+      next: "Dokumenter beslag/tettemetode, farge, synlighet og varighet. Hold tiltaket så begrenset og skånsomt som praktisk mulig; avklar ved usikkerhet om synlig endring."
+    };
+    if (/beslag|taktekking|fasade|pipe/i.test(key) || item.visibility === "visible" || item.visibility === "potentially_visible") return {
+      level: "Synlig endring – undersøk nærmere",
+      title: item.label || "Utvendig arbeid",
+      reason: "Arbeidet kan endre bygningens ytre uttrykk. Registrert verneverdi tilsier at form, materialer, farge og detaljering må vurderes konkret.",
+      next: "Sammenlign eksisterende og foreslått løsning med foto og mål. Kontroller gjeldende bestemmelser og avklar behovet for kommunal behandling."
+    };
+    return {
+      level: "Tiltaket trenger faglig avgrensning",
+      title: item.label || "Arbeidsoppgave",
+      reason: "Arbeidet er hentet fra tilbudsgrunnlaget, men påvirkningen på verneverdiene kan ikke fastslås ut fra klassifiseringen alene.",
+      next: "Beskriv inngrep, eksisterende materialer og om endringen blir synlig før videre vurdering."
+    };
+  };
+
+  return <section className="mt-4 space-y-4 text-slate-100" aria-label="Vernestatus og beslutningsstøtte">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-amber-300" />
+        <div><h3 className="text-lg font-bold text-white">Tiltaksvurdering og vernestatus</h3><p className="text-xs text-slate-400">{address || `Sak ${inquiryId}`}</p></div>
+      </div>
+      <button type="button" disabled={busy} onClick={() => { setForceRefresh(true); setRefreshKey(n => n + 1); }} className="inline-flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-2 text-xs font-semibold disabled:opacity-50"><RefreshCw className="h-4 w-4" />Oppdater kontroll</button>
+    </div>
+    {busy && <p className="flex items-center gap-2 text-xs text-slate-300"><Loader2 className="h-4 w-4 animate-spin" />Henter vurderingsgrunnlag …</p>}
+
+    <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-5 space-y-4">
+      <h4 className="font-bold text-white">1. Kilder, registerfunn og dokumentasjon</h4>
+      <div className="mt-4 space-y-4">
+        <div className="space-y-2"><h5 className="font-semibold text-white">Kulturminneregister</h5><p className="text-sm">{label}{heritageId ? ` · Kulturminne-ID ${heritageId}` : ""}</p>
+          {officialUrl && safeOfficialUrl(officialUrl) && <a className="inline-flex items-center gap-1 text-sm text-cyan-300 underline" href={officialUrl} target="_blank" rel="noopener noreferrer">Offisiell registrering <ExternalLink className="h-3.5 w-3.5" /></a>}
+          {heritage && <p className="text-xs text-slate-400">Kontrollert: {heritage.cache?.checked_at || heritage.checked_at || "Ukjent"}</p>}
+          {heritageError && <p role="alert" className="text-sm text-rose-300">{heritageError}</p>}
+        </div>
+        <div className="space-y-2"><h5 className="font-semibold text-white">Planer og bestemmelser</h5>
+          <p className="text-sm">{plans ? ids.length ? `Registrerte plan-ID-er: ${ids.join(", ")}` : "Ingen planobjekter fra undersøkt tjeneste" : "Planopplysninger ikke tilgjengelige"}</p>
+          {areaHits.length > 0 && <p className="text-sm text-amber-200">Kartfunn: {areaHits.map(x => `${x.name} (${x.count})`).join(", ")}. Rettsvirkning ikke fastslått.</p>}
+          {documents.map(([planId, doc]) => <div key={planId} className="rounded-lg border border-slate-700 p-3 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2"><strong>Plan {planId}</strong>{doc.url && safePlanUrl(doc.url) && <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-sm text-cyan-300 underline">Offisielt dokument <ExternalLink className="inline h-3.5 w-3.5" /></a>}</div>
+            {doc.error && <p className="text-rose-300">{doc.error}</p>}
+            {(doc.excerpts || []).map((ex, j) => <p key={`${planId}-${j}`} className="text-sm text-slate-300">{ex.text}{ex.line ? ` (linje ${ex.line})` : ""}</p>)}
+          </div>)}
+          {planError && <p role="alert" className="text-sm text-rose-300">{planError}</p>}
+          {planErrors.map((error, i) => <p key={i} className="text-sm text-amber-200">{error}</p>)}
+          {plans && <p className="text-xs text-slate-400">Planoppslag: {plans.checked_at || "Ukjent"}</p>}
+        </div>
+        <div className="space-y-1"><h5 className="font-semibold text-white">Arbeidskilde</h5><p className="text-sm">{source?.number || "Ingen tilgjengelig"} · {source?.status || "Ukjent status"}</p>
+          {(workData?.work?.notes || []).map((note, i) => <p key={i} className="text-xs text-slate-400">{note}</p>)}
+          {workError && <p role="alert" className="text-sm text-rose-300">{workError}</p>}
+        </div>
+      </div>
+    </div>
+
+    <div className="rounded-xl border border-slate-700 p-4 space-y-3">
+      <h4 className="font-bold text-white">2. Arbeid som skal vurderes</h4>
+      {scope.length ? <div className="space-y-3">{scope.map((item, i) => {
+        const result = advice(item);
+        const evaluated = decisionsByCode.get(item.code);
+        return <article key={`${item.code || "arbeid"}-${i}`} className="rounded-lg border border-slate-700 bg-slate-900/40 p-4 space-y-2">
+          <div className="flex flex-wrap items-start justify-between gap-2"><h5 className="font-semibold text-white">{result.title}</h5><span className="text-xs font-semibold text-amber-200">{result.level}</span></div>
+          <p className="text-xs text-cyan-200">{visibilityText[item.visibility || ""] || "Synlighet ikke fastslått"}</p>
+          <p className="text-sm leading-6 text-slate-200"><strong>Faglig betydning:</strong> {evaluated?.summary || result.reason}</p>
+          {evaluated?.conditions?.length ? evaluated.conditions.map((condition, j) => <p key={j} className="text-sm leading-6 text-slate-200"><strong>Forutsetning {j+1}:</strong> {condition}</p>) : <p className="text-sm leading-6 text-slate-200"><strong>Neste handling:</strong> {result.next}</p>}
+          {item.evidence?.[0]?.excerpt && <details className="text-xs text-slate-400"><summary className="cursor-pointer text-cyan-300">Vis grunnlag fra tilbudet</summary><p className="mt-2 whitespace-pre-wrap">{item.evidence[0].excerpt}</p></details>}
+        </article>;
+      })}</div> : <p className="text-sm text-slate-400">{workError ? `Kunne ikke hente arbeidene: ${workError}` : busy ? "Henter arbeidene …" : "Ingen klassifiserte tiltak tilgjengelige."}</p>}
+    </div>
+
+
+    <div className="rounded-xl border border-cyan-500/35 bg-slate-950/60 p-5 space-y-3">
+      <p className="text-xs font-bold uppercase tracking-wide text-cyan-300">3. Beslutningsgrunnlag for arbeidet</p>
+      <h4 className="text-lg font-bold text-white">{decision?.headline || (!source ? "Arbeidsgrunnlag ikke tilgjengelig" : higherProtection ? "Registrert vern krever særskilt avklaring" : verifiedListing ? "Skånsom utbedring kan være mulig – kontroller omfang og gjeldende krav" : "Verne- og plangrunnlag må vurderes nærmere")}</h4>
+      <p className="text-sm leading-6 text-slate-200">
+        {source ? <>Grunnlaget er {source.number || "Rapport 1"} ({source.status || "ukjent status"}). </> : null}
+        {verifiedListing ? "Eiendommen er kommunalt listeført. Det dokumenterer kulturhistorisk verdi, men er ikke i seg selv et fredningsvedtak. " : higherProtection ? `Registeret oppgir ${label.toLowerCase()}. ` : "Registerstatus alene gir ikke grunnlag for en sikker vernekonklusjon. "}
+        {scope.length ? `Tilbudet/rapporten identifiserer ${scope.length} arbeidstyper som vurderes enkeltvis nedenfor. ` : "Arbeidene er ikke tilstrekkelig identifisert. "}
+        {hasOldPlanWarning ? "Et funnet plandokument er helt eller delvis opphevet; de historiske utdragene kan ikke legges til grunn som bekreftede gjeldende krav." : "De innhentede kart- og plandataene fastslår ikke alene alle gjeldende krav."}
+      </p>
+      {isUnaccepted && <p className="text-sm font-semibold text-amber-200">Tilbudet er publisert, men ikke akseptert. Arbeidene er forslag, ikke bestilte tiltak.</p>}
+      {decision?.resolved && decision.resolved.length > 0 && <div className="rounded-lg border border-emerald-500/25 p-3 space-y-2">
+        <p className="text-xs font-bold text-emerald-300">Dette er avklart fra systemets kilder</p>
+        {decision.resolved.map((finding, index) => <p key={index} className="text-sm text-slate-200">• {finding}</p>)}
+      </div>}
+      {isDraft && <p className="text-sm font-semibold text-amber-200">Arbeidsgrunnlaget er et utkast. Tiltakene er foreløpige.</p>}
+      {!canAssess && !busy && <p className="text-sm text-amber-200">Vurderingen er ufullstendig fordi én eller flere nødvendige kilder eller arbeidsoppgaver mangler. Se kildeproblemer nedenfor.</p>}
+    </div>
+
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-2">
+      <h4 className="font-bold text-white">4. Hva må avklares før gjennomføring?</h4>
+      {decision ? <>
+        <p className="text-sm text-slate-300">Bare forhold som fortsatt ikke er dokumentert av kildene:</p>
+        {(decision.open_questions || []).length > 0 ? <div className="space-y-3">
+          {(decision.open_questions || []).map((question, index) => <article key={`${question.code || "spm"}-${index}`} className="rounded-xl border border-amber-500/20 bg-slate-950/50 p-4 space-y-3">
+            <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-amber-300">Spørsmål {index + 1}</p><h5 className="text-sm font-semibold leading-6 text-white">{question.question}</h5></div>
+            <div className="border-t border-slate-700/70 pt-3"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-cyan-300">Systemets svar</p><p className="text-sm leading-6 text-slate-200">{question.reason || "Kildene gir foreløpig ikke et dokumentert svar."}</p></div>
+          </article>)}
+        </div> : <p className="text-sm text-slate-200">Ingen åpne spørsmål er returnert fra beslutningsmotoren.</p>}
+      </> : <p className="text-sm text-amber-200">Backend-vurderingen er ikke tilgjengelig. Kildeinformasjonen vises, men det gis ingen automatisk klarering.</p>}
+      <p className="text-xs text-amber-100">Dette er faglig beslutningsstøtte, ikke et kommunalt vedtak eller en godkjenning av tiltaket.</p>
+    </div>
+
+  </section>;
+}

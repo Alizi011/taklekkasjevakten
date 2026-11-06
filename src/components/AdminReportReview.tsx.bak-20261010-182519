@@ -1,0 +1,3247 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Camera,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  FileText,
+  Image as ImageIcon,
+  Loader2,
+  Mic,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Send,
+  ShieldCheck,
+  X,
+} from "lucide-react";
+import { apiUrl, apiAssetUrl } from "../lib/api";
+
+export type ReportStatus =
+  | "utkast"
+  | "sendt_til_admin"
+  | "under_gjennomgang"
+  | "returnert_til_prosjektansvarlig"
+  | "godkjent"
+  | "publisert";
+
+export interface ReportData {
+  id: number;
+  inquiry_id: number;
+  ai_draft: string | null;
+  admin_final: string | null;
+  admin_sections_json?: string | null;
+  admin_notes?: string | null;
+  pdf_url?: string | null;
+  status: ReportStatus;
+  created_at?: string | null;
+  submitted_at?: string | null;
+  returned_at?: string | null;
+  approved_at?: string | null;
+  published_at?: string | null;
+  updated_at?: string | null;
+  revision_no?: number | null;
+  supersedes_report_id?: number | null;
+}
+
+interface CompletionReportData {
+  id: number;
+  inquiry_id: number;
+  source_report_id: number;
+  work_completion_id: number;
+  revision_no?: number | null;
+  supersedes_completion_report_id?: number | null;
+  ai_draft: string | null;
+  admin_final: string | null;
+  admin_sections_json?: string | null;
+  admin_notes?: string | null;
+  pdf_url?: string | null;
+  status: ReportStatus;
+  submitted_at?: string | null;
+  returned_at?: string | null;
+  approved_at?: string | null;
+  published_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+interface ChecklistRow {
+  id: number;
+  inquiry_id: number;
+  item_id?: string | null;
+  category?: string | null;
+  item_title: string;
+  status: string;
+  comment?: string | null;
+  photo_url?: string | null;
+  audio_url?: string | null;
+  created_at?: string | null;
+}
+
+interface PhotoData {
+  id: number;
+  inquiry_id: number;
+  checklist_item_id?: string | null;
+  photo_url?: string | null;
+  audio_url?: string | null;
+  audio_transcript?: string | null;
+  caption_text?: string | null;
+  include_in_report?: number | boolean | string | null;
+  report_sort_order?: number | null;
+  created_at?: string | null;
+}
+
+interface DocumentationEntry {
+  key: string;
+  source_type: "checklist" | "photo" | "caption" | "transcript";
+  source_id: number;
+  category: string;
+  label: string;
+  original_text: string;
+  source_hash: string;
+  photo_url?: string;
+  included: boolean;
+  review_status: "unreviewed" | "pending" | "approved" | "rejected" | "needs_clarification" | "source_changed";
+  approved_text?: string | null;
+  suggested_text?: string | null;
+  warning?: string | null;
+}
+
+interface ReportApprovalEntry {
+  approved: boolean;
+  approved_by_name?: string;
+  approved_by_title?: string;
+  company_name?: string;
+  approved_at?: string;
+}
+
+type ReportApprovals = Record<string, ReportApprovalEntry>;
+
+interface AdminItemSection {
+  included: boolean;
+  admin_text: string;
+  order: number;
+}
+
+interface AdminSectionsDocument {
+  version: 1;
+  summary: string;
+  scope: string;
+  items: Record<string, AdminItemSection>;
+  recommendations: string;
+  consequences: string;
+  limitations: string;
+}
+
+type ClosureType = "avsluttet" | "vedlikehold" | "garanti";
+
+interface AdminReportReviewProps {
+  inquiryId: number;
+  customerName?: string;
+  address?: string;
+  onBack?: () => void;
+  onChanged?: () => void;
+}
+
+function statusLabel(status?: ReportStatus) {
+  switch (status) {
+    case "utkast":
+      return "Utkast hos prosjektansvarlig";
+    case "sendt_til_admin":
+      return "Venter på admin";
+    case "under_gjennomgang":
+      return "Under gjennomgang";
+    case "returnert_til_prosjektansvarlig":
+      return "Returnert til prosjektansvarlig";
+    case "godkjent":
+      return "Godkjent";
+    case "publisert":
+      return "Publisert til kunde";
+    default:
+      return "Ingen rapport";
+  }
+}
+
+function statusClass(status?: ReportStatus) {
+  switch (status) {
+    case "sendt_til_admin":
+      return "bg-orange-500/10 text-orange-300 border-orange-500/30";
+    case "under_gjennomgang":
+      return "bg-blue-500/10 text-blue-300 border-blue-500/30";
+    case "returnert_til_prosjektansvarlig":
+      return "bg-red-500/10 text-red-300 border-red-500/30";
+    case "godkjent":
+      return "bg-emerald-500/10 text-emerald-300 border-emerald-500/30";
+    case "publisert":
+      return "bg-cyan-500/10 text-cyan-300 border-cyan-500/30";
+    default:
+      return "bg-slate-800 text-slate-300 border-slate-700";
+  }
+}
+
+function tgClass(status?: string) {
+  switch ((status || "").toLowerCase()) {
+    case "tg3":
+      return "bg-red-500/10 text-red-300 border-red-500/30";
+    case "tg2":
+      return "bg-orange-500/10 text-orange-300 border-orange-500/30";
+    case "tg1":
+      return "bg-amber-500/10 text-amber-300 border-amber-500/30";
+    case "tg0":
+      return "bg-emerald-500/10 text-emerald-300 border-emerald-500/30";
+    case "ikke_aktuell":
+      return "bg-slate-800 text-slate-400 border-slate-700";
+    default:
+      return "bg-blue-500/10 text-blue-300 border-blue-500/30";
+  }
+}
+
+function normalizeItemKey(row: ChecklistRow): string {
+  return String(row.item_id || row.category || row.id);
+}
+
+function boolValue(value: PhotoData["include_in_report"]): boolean {
+  return value === true || value === 1 || value === "1";
+}
+
+function extractNumberedSection(text: string, number: number): string {
+  if (!text.trim()) return "";
+
+  const normalized = text.replace(/\r\n/g, "\n");
+  const startPattern = new RegExp(
+    `(?:^|\\n)\\s*${number}\\.\\s+[^\\n]*\\n`,
+    "i"
+  );
+  const match = startPattern.exec(normalized);
+  if (!match) return "";
+
+  const start = (match.index || 0) + match[0].length;
+  const rest = normalized.slice(start);
+  const next = /\n\s*\d+\.\s+[A-ZÆØÅ0-9]/.exec(rest);
+  return (next ? rest.slice(0, next.index) : rest).trim();
+}
+
+type ReportAiDraft = {summary:string;scope:string;recommendations:string;consequences:string;limitations:string};
+function readPersistedAiDraft(raw: string | null | undefined): ReportAiDraft | null {
+  if (!raw) return null;
+  try {
+    const stored = JSON.parse(raw);
+    if (stored?.kind !== "tlv_report1_ai_v1" || !stored.draft) return null;
+    const fields = ["summary", "scope", "recommendations", "consequences", "limitations"] as const;
+    return fields.every((field) => typeof stored.draft[field] === "string")
+      ? stored.draft as ReportAiDraft : null;
+  } catch { return null; }
+}
+
+function legacyReportAiText(raw: string | null | undefined): string {
+  if (!raw) return "";
+  try {
+    return JSON.parse(raw)?.kind === "tlv_report1_ai_v1" ? "" : raw;
+  } catch { return raw; }
+}
+
+function createInitialSections(
+  report: ReportData | null,
+  rows: ChecklistRow[]
+): AdminSectionsDocument {
+  const source = report?.admin_final || legacyReportAiText(report?.ai_draft);
+  const items: Record<string, AdminItemSection> = {};
+
+  rows.forEach((row, index) => {
+    const key = normalizeItemKey(row);
+    items[key] = {
+      included: (row.status || "").toLowerCase() !== "ikke_aktuell",
+      admin_text: report ? (row.comment || "").trim() : "",
+      order: index,
+    };
+  });
+
+  const base: AdminSectionsDocument = {
+    version: 1,
+    summary: extractNumberedSection(source, 1),
+    scope: extractNumberedSection(source, 2),
+    items,
+    recommendations: extractNumberedSection(source, 5),
+    consequences: extractNumberedSection(source, 6),
+    limitations: extractNumberedSection(source, 7),
+  };
+
+  if (!report?.admin_sections_json) return base;
+
+  try {
+    const parsed = JSON.parse(report.admin_sections_json);
+
+    if (parsed && parsed.version === 1 && parsed.items) {
+      return {
+        ...base,
+        ...parsed,
+        version: 1,
+        items: {
+          ...base.items,
+          ...(parsed.items || {}),
+        },
+      };
+    }
+
+    // Bakoverkompatibilitet med en enkel objektstruktur per kontrollpunkt.
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const legacyItems: Record<string, AdminItemSection> = {};
+      Object.entries(parsed).forEach(([key, value], index) => {
+        if (!value || typeof value !== "object") return;
+        const item = value as Partial<AdminItemSection>;
+        legacyItems[key] = {
+          included: item.included !== false,
+          admin_text: String(item.admin_text || ""),
+          order: Number.isFinite(Number(item.order))
+            ? Number(item.order)
+            : index,
+        };
+      });
+
+      return {
+        ...base,
+        items: {
+          ...base.items,
+          ...legacyItems,
+        },
+      };
+    }
+  } catch {
+    // Hvis gammel/ugyldig JSON finnes, behold trygg lokal standard.
+  }
+
+  return base;
+}
+
+function buildAdminFinal(
+  sections: AdminSectionsDocument,
+  rows: ChecklistRow[]
+): string {
+  const includedRows = rows
+    .map((row, index) => ({
+      row,
+      index,
+      key: normalizeItemKey(row),
+      section: sections.items[normalizeItemKey(row)],
+    }))
+    .filter(({ section }) => section?.included)
+    .sort(
+      (a, b) =>
+        (a.section?.order ?? a.index) - (b.section?.order ?? b.index)
+    );
+
+  const registered =
+    includedRows.length > 0
+      ? includedRows
+          .map(({ row, section }) => {
+            const status = (row.status || "").toUpperCase();
+            const text = section?.admin_text?.trim();
+            return [
+              `- ${row.item_title}${status ? ` (${status})` : ""}`,
+              text ? `  ${text}` : "  Ingen tilleggskommentar fra admin.",
+            ].join("\n");
+          })
+          .join("\n\n")
+      : "Ingen kontrollpunkter er valgt for sluttversjonen.";
+
+  const parts = [
+    ["1. SAMMENDRAG OG HOVEDKONKLUSJON", sections.summary],
+    ["2. OPPDRAG OG OMFANG", sections.scope],
+    ["3. REGISTRERTE FORHOLD OG FAGLIG VURDERING", registered],
+    ["4. ANBEFALTE TILTAK", sections.recommendations],
+    ["5. KONSEKVENSER VED UTSATT UTBEDRING", sections.consequences],
+    ["6. FORBEHOLD OG BEGRENSNINGER", sections.limitations],
+  ];
+
+  return parts
+    .map(([heading, body]) => `${heading}\n${(body || "").trim()}`)
+    .join("\n\n")
+    .trim();
+}
+
+export default function AdminReportReview({
+  inquiryId,
+  customerName,
+  address,
+  onBack,
+  onChanged,
+}: AdminReportReviewProps) {
+  const [report, setReport] = useState<ReportData | null>(null);
+  const [completionReport, setCompletionReport] =
+    useState<CompletionReportData | null>(null);
+  const [completionDraft, setCompletionDraft] = useState("");
+  const [reportApprovals, setReportApprovals] = useState<ReportApprovals>({});
+  const [completionApprovals, setCompletionApprovals] = useState<ReportApprovals>({});
+  const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
+  const [completionReturnNote, setCompletionReturnNote] = useState("");
+  const [completionSaving, setCompletionSaving] = useState(false);
+  const [completionPdfBusy, setCompletionPdfBusy] = useState(false);
+  const [completionReturning, setCompletionReturning] = useState(false);
+  const [completionApproving, setCompletionApproving] = useState(false);
+  const [completionPublishing, setCompletionPublishing] = useState(false);
+  const [showClosureDialog, setShowClosureDialog] = useState(false);
+  const [closureType, setClosureType] = useState<ClosureType>("avsluttet");
+  const [maintenanceInterval, setMaintenanceInterval] = useState("kontroll_12m");
+  const [closureReason, setClosureReason] = useState("");
+  const [closureSaving, setClosureSaving] = useState(false);
+  const [closureError, setClosureError] = useState("");
+  const [closureResult, setClosureResult] = useState("");
+  const [checklistRows, setChecklistRows] = useState<ChecklistRow[]>([]);
+  const [photos, setPhotos] = useState<PhotoData[]>([]);
+  const [documentation, setDocumentation] = useState<DocumentationEntry[]>([]);
+  const [documentationError, setDocumentationError] = useState("");
+  const [documentationLoading, setDocumentationLoading] = useState(false);
+  const [documentationSaving, setDocumentationSaving] = useState<string | null>(null);
+  const [documentationEdits, setDocumentationEdits] = useState<Record<string, {suggested: string; approved: string}>>({});
+
+  const [adminSections, setAdminSections] =
+    useState<AdminSectionsDocument | null>(null);
+  const [lastSavedSections, setLastSavedSections] = useState("");
+  const [returnNote, setReturnNote] = useState("");
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [returning, setReturning] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [reopening, setReopening] = useState(false);
+  const [savingPhotoId, setSavingPhotoId] = useState<number | null>(null);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  // Kun visning: påvirker ikke lagrede rapporter eller kontrollpunktdata.
+  const [sourceSearch, setSourceSearch] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiSaving, setAiSaving] = useState(false);
+  const [aiDraft, setAiDraft] = useState<{summary:string;scope:string;recommendations:string;consequences:string;limitations:string}|null>(null);
+  const [aiSkippedImages, setAiSkippedImages] = useState(0);
+  const [aiEvidence, setAiEvidence] = useState<string[]>([]);
+  const [aiError, setAiError] = useState("");
+  const [previewFocused, setPreviewFocused] = useState(false);
+  const [mobilePanel, setMobilePanel] = useState<"sources" | "preview">("sources");
+
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [lightboxUrl, setLightboxUrl] = useState("");
+  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>(
+    {}
+  );
+  const [openTranscripts, setOpenTranscripts] = useState<
+    Record<number, boolean>
+  >({});
+
+  const editable = useMemo(
+    () =>
+      report?.status === "utkast" ||
+      report?.status === "sendt_til_admin" ||
+      report?.status === "under_gjennomgang" ||
+      report?.status === "godkjent",
+    [report?.status]
+  );
+
+  const isCorrection = Boolean(report?.supersedes_report_id);
+  const pdfSrc = report?.pdf_url ? apiAssetUrl(report.pdf_url) : "";
+
+  const adminText = useMemo(
+    () =>
+      adminSections
+        ? buildAdminFinal(adminSections, checklistRows)
+        : report?.admin_final || legacyReportAiText(report?.ai_draft),
+    [adminSections, checklistRows, report?.admin_final, report?.ai_draft]
+  );
+
+  const serializedSections = useMemo(
+    () => (adminSections ? JSON.stringify(adminSections) : ""),
+    [adminSections]
+  );
+
+  const hasUnsavedChanges =
+    Boolean(adminSections) && serializedSections !== lastSavedSections;
+
+  const selectedPhotoCount = useMemo(
+    () => photos.filter((photo) => Boolean(photo.photo_url) && boolValue(photo.include_in_report)).length,
+    [photos]
+  );
+
+  const visibleChecklistRows = useMemo(() => {
+    const term = sourceSearch.trim().toLocaleLowerCase("nb-NO");
+    if (!term) return checklistRows;
+    return checklistRows.filter((row) => {
+      const key = normalizeItemKey(row);
+      const linkedText = photos
+        .filter((photo) => photo.checklist_item_id === key)
+        .map((photo) => [photo.caption_text, photo.audio_transcript].filter(Boolean).join(" "))
+        .join(" ");
+      return [row.item_title, row.comment, row.status, linkedText]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase("nb-NO")
+        .includes(term);
+    });
+  }, [checklistRows, photos, sourceSearch]);
+
+  const photosByItem = useMemo(() => {
+    const map: Record<string, PhotoData[]> = {};
+    photos.forEach((photo) => {
+      const key = String(photo.checklist_item_id || "__other__");
+      if (!map[key]) map[key] = [];
+      map[key].push(photo);
+    });
+    return map;
+  }, [photos]);
+
+  // Eget Core-endepunkt: endrer aldri kildedata i TLV eller eksisterende AI-utkast.
+  const documentationUrl = "https://api.taklekkasjevakten.no/api/tlv_report_documentation.php";
+
+  const loadDocumentation = async (tlvReportId: number) => {
+    setDocumentationLoading(true);
+    setDocumentationError("");
+    try {
+      const response = await fetch(`${documentationUrl}?report_id=${tlvReportId}&inquiry_id=${inquiryId}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success || !Array.isArray(data.items)) {
+        throw new Error(data.message || "Kunne ikke hente dokumentasjonsvalgene.");
+      }
+      setDocumentation(data.items as DocumentationEntry[]);
+      setDocumentationEdits(Object.fromEntries((data.items as DocumentationEntry[]).map((item) => [
+        item.key,
+        { suggested: item.suggested_text || "", approved: item.approved_text || item.suggested_text || item.original_text || "" }
+      ])));
+    } catch (err) {
+      setDocumentationError(err instanceof Error ? err.message : "Kunne ikke hente dokumentasjonen.");
+    } finally {
+      setDocumentationLoading(false);
+    }
+  };
+
+  const saveDocumentationEntry = async (
+    item: DocumentationEntry,
+    patch: Partial<Pick<DocumentationEntry, "included" | "review_status" | "suggested_text" | "approved_text">>
+  ) => {
+    if (!report || documentationSaving) return;
+    setDocumentationSaving(item.key);
+    setDocumentationError("");
+    try {
+      const edits = documentationEdits[item.key];
+      const status = patch.review_status ?? item.review_status;
+      const payload = {
+        report_id: report.id,
+        inquiry_id: inquiryId,
+        key: item.key,
+        source_hash: item.source_hash,
+        included: patch.included ?? item.included,
+        review_status: status === "source_changed" ? "unreviewed" : status,
+        suggested_text: patch.suggested_text ?? edits?.suggested ?? item.suggested_text ?? "",
+        approved_text: patch.approved_text ?? (status === "approved" ? (edits?.approved ?? "") : ""),
+      };
+      const response = await fetch(documentationUrl, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "Kunne ikke lagre valget.");
+      await loadDocumentation(report.id);
+    } catch (err) {
+      setDocumentationError(err instanceof Error ? err.message : "Kunne ikke lagre dokumentasjonen.");
+    } finally {
+      setDocumentationSaving(null);
+    }
+  };
+
+  const loadReviewData = async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const [reportRes, completionRes, checklistRes, photoRes] = await Promise.all([
+        fetch(apiUrl(`/reports.php?inquiry_id=${inquiryId}`)),
+        fetch(apiUrl(`/completion_reports.php?inquiry_id=${inquiryId}`)),
+        fetch(apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)),
+        fetch(apiUrl(`/photos.php?inquiry_id=${inquiryId}`)),
+      ]);
+
+      const [reportData, completionData, checklistData, photoData] =
+        await Promise.all([
+          reportRes.json(),
+          completionRes.json(),
+          checklistRes.json(),
+          photoRes.json(),
+        ]);
+
+      if (!reportRes.ok || !reportData.success) {
+        throw new Error(reportData.message || "Kunne ikke hente rapporten.");
+      }
+
+      const nextReport: ReportData | null = reportData.report || null;
+      const nextCompletionReport: CompletionReportData | null =
+        completionRes.ok && completionData.success
+          ? completionData.report || null
+          : null;
+
+      setCompletionReport(nextCompletionReport);
+      setCompletionDraft(
+        nextCompletionReport?.admin_final ||
+          nextCompletionReport?.ai_draft ||
+          ""
+      );
+      setCompletionReturnNote(nextCompletionReport?.admin_notes || "");
+
+      const nextRows: ChecklistRow[] =
+        checklistRes.ok &&
+        checklistData.success &&
+        Array.isArray(checklistData.checklists)
+          ? checklistData.checklists
+          : [];
+      const nextPhotos: PhotoData[] =
+        photoRes.ok && photoData.success && Array.isArray(photoData.photos)
+          ? photoData.photos
+          : [];
+
+      setReport(nextReport);
+      if (nextReport?.id) void loadDocumentation(nextReport.id);
+      else { setDocumentation([]); setDocumentationEdits({}); }
+      setAiDraft(readPersistedAiDraft(nextReport?.ai_draft));
+      setChecklistRows(nextRows);
+      setPhotos(nextPhotos);
+      setReturnNote(nextReport?.admin_notes || "");
+
+      const nextSections = createInitialSections(nextReport, nextRows);
+      setAdminSections(nextSections);
+      setLastSavedSections(JSON.stringify(nextSections));
+
+      const initialExpanded: Record<string, boolean> = {};
+      nextRows.forEach((row, index) => {
+        const key = normalizeItemKey(row);
+        initialExpanded[key] =
+          index === 0 ||
+          ["tg2", "tg3"].includes((row.status || "").toLowerCase());
+      });
+      setExpandedItems(initialExpanded);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke hente rapportgrunnlaget."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (inquiryId > 0) void loadReviewData();
+  }, [inquiryId]);
+
+  const loadReportApprovals = async (
+    reportType: "rapport1" | "rapport2",
+    reportId: number
+  ) => {
+    if (!reportId) return {};
+
+    const res = await fetch(
+      apiUrl(
+        `/report_approvals.php?report_type=${encodeURIComponent(
+          reportType
+        )}&report_id=${reportId}&inquiry_id=${inquiryId}`
+      )
+    );
+    const data = await res.json();
+
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || "Kunne ikke hente faglige godkjenninger.");
+    }
+
+    return (data.approvals || {}) as ReportApprovals;
+  };
+
+  const setReportApproval = async (
+    reportType: "rapport1" | "rapport2",
+    reportId: number,
+    approvalKey: "field_execution" | "report_review" | "work_lead",
+    approved: boolean
+  ) => {
+    const busyKey = `${reportType}-${approvalKey}`;
+    setApprovalBusy(busyKey);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(apiUrl("/report_approvals.php"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          report_type: reportType,
+          report_id: reportId,
+          inquiry_id: inquiryId,
+          approval_key: approvalKey,
+          approved,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Kunne ikke oppdatere godkjenningen.");
+      }
+
+      const nextApprovals = (data.approvals || {}) as ReportApprovals;
+
+      if (reportType === "rapport1") {
+        setReportApprovals(nextApprovals);
+      } else {
+        setCompletionApprovals(nextApprovals);
+      }
+
+      setMessage(
+        approved
+          ? "Faglig godkjenning er registrert. Oppdater PDF for å få godkjenningen inn i rapporten."
+          : "Godkjenningen er trukket tilbake. Oppdater PDF før publisering."
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke oppdatere godkjenningen."
+      );
+    } finally {
+      setApprovalBusy(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!report?.id) {
+      setReportApprovals({});
+      return;
+    }
+
+    void loadReportApprovals("rapport1", report.id)
+      .then(setReportApprovals)
+      .catch((err) =>
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Kunne ikke hente godkjenninger for Rapport 1."
+        )
+      );
+  }, [report?.id, inquiryId]);
+
+  useEffect(() => {
+    if (!completionReport?.id) {
+      setCompletionApprovals({});
+      return;
+    }
+
+    void loadReportApprovals("rapport2", completionReport.id)
+      .then(setCompletionApprovals)
+      .catch((err) =>
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Kunne ikke hente godkjenninger for Rapport 2."
+        )
+      );
+  }, [completionReport?.id, inquiryId]);
+
+  const report1FieldApproved = Boolean(reportApprovals.field_execution?.approved);
+  const report1ReviewApproved = Boolean(reportApprovals.report_review?.approved);
+  const report1FullyApproved = report1FieldApproved && report1ReviewApproved;
+  const report2WorkLeadApproved = Boolean(completionApprovals.work_lead?.approved);
+
+  const completionReportIsAdminFlow =
+    completionReport &&
+    [
+      "sendt_til_admin",
+      "under_gjennomgang",
+      "godkjent",
+      "publisert",
+    ].includes(completionReport.status);
+
+  const updateCompletionReport = async (
+    payload: Record<string, unknown>,
+    successMessage = ""
+  ): Promise<CompletionReportData> => {
+    const res = await fetch(apiUrl("/completion_reports.php"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        inquiry_id: inquiryId,
+        ...payload,
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success || !data.report) {
+      throw new Error(
+        data.message || "Kunne ikke oppdatere utførelsesrapporten."
+      );
+    }
+
+    const nextReport = data.report as CompletionReportData;
+    setCompletionReport(nextReport);
+    setCompletionDraft(
+      nextReport.admin_final || legacyReportAiText(nextReport.ai_draft) || completionDraft
+    );
+    setCompletionReturnNote(nextReport.admin_notes || "");
+
+    if (successMessage) setMessage(successMessage);
+    onChanged?.();
+    return nextReport;
+  };
+
+  const handleCompletionSave = async () => {
+    if (!completionReport || !completionDraft.trim()) return;
+    setCompletionSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      await updateCompletionReport(
+        {
+          admin_final: completionDraft.trim(),
+          status:
+            completionReport.status === "sendt_til_admin"
+              ? "under_gjennomgang"
+              : completionReport.status,
+        },
+        "Admins sluttversjon av utførelsesrapporten er lagret."
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke lagre utførelsesrapporten."
+      );
+    } finally {
+      setCompletionSaving(false);
+    }
+  };
+
+  const handleCompletionPdf = async () => {
+    if (!completionReport || !completionDraft.trim()) return;
+    setCompletionPdfBusy(true);
+    setError("");
+    setMessage("");
+
+    try {
+      await updateCompletionReport({
+        admin_final: completionDraft.trim(),
+        status:
+          completionReport.status === "sendt_til_admin"
+            ? "under_gjennomgang"
+            : completionReport.status,
+      });
+
+      const res = await fetch(apiUrl("/generate_completion_report_pdf.php"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inquiry_id: inquiryId }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(
+          data.message || "Kunne ikke generere PDF for utførelsesrapporten."
+        );
+      }
+
+      if (data.report) {
+        setCompletionReport(data.report);
+      } else {
+        await loadReviewData();
+      }
+
+      setMessage("PDF-forhåndsvisningen for utførelsesrapporten er oppdatert.");
+      onChanged?.();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke generere Utførelsesrapport-PDF."
+      );
+    } finally {
+      setCompletionPdfBusy(false);
+    }
+  };
+
+  const handleCompletionReturn = async () => {
+    if (!completionReturnNote.trim()) {
+      setError("Skriv en kommentar før utførelsesrapporten returneres.");
+      return;
+    }
+
+    if (
+      !window.confirm(
+        "Returnere utførelsesrapporten til prosjektansvarlig for korrigering?"
+      )
+    ) {
+      return;
+    }
+
+    setCompletionReturning(true);
+    setError("");
+    setMessage("");
+
+    try {
+      await updateCompletionReport(
+        {
+          admin_final: completionDraft.trim(),
+          admin_notes: completionReturnNote.trim(),
+          status: "returnert_til_prosjektansvarlig",
+        },
+        "Utførelsesrapporten er returnert til prosjektansvarlig."
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke returnere utførelsesrapporten."
+      );
+    } finally {
+      setCompletionReturning(false);
+    }
+  };
+
+  const handleCompletionApprove = async () => {
+    if (!completionDraft.trim()) return;
+
+    setCompletionApproving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const next = await updateCompletionReport(
+        {
+          admin_final: completionDraft.trim(),
+          status: "godkjent",
+        },
+        "Utførelsesrapporten er godkjent."
+      );
+
+      if (!next.pdf_url) {
+        setMessage(
+          "Utførelsesrapporten er godkjent. Generer PDF før publisering."
+        );
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke godkjenne utførelsesrapporten."
+      );
+    } finally {
+      setCompletionApproving(false);
+    }
+  };
+
+  const handleCompletionPublish = async () => {
+    if (!completionReport || !completionDraft.trim()) return;
+
+    if (!completionReport.pdf_url) {
+      setError("Generer Utførelsesrapport-PDF før publisering.");
+      return;
+    }
+
+    if (!window.confirm("Publisere utførelsesrapporten til kunden nå?")) {
+      return;
+    }
+
+    setCompletionPublishing(true);
+    setError("");
+    setMessage("");
+
+    try {
+      await updateCompletionReport(
+        {
+          admin_final: completionDraft.trim(),
+          status: "publisert",
+        },
+        "Utførelsesrapporten er publisert til kunden."
+      );
+
+      setClosureType("avsluttet");
+      setMaintenanceInterval("kontroll_12m");
+      setClosureReason("");
+      setClosureError("");
+      setClosureResult("");
+      setShowClosureDialog(true);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke publisere utførelsesrapporten."
+      );
+    } finally {
+      setCompletionPublishing(false);
+    }
+  };
+
+  const handleCloseInquiry = async () => {
+    setClosureSaving(true);
+    setClosureError("");
+
+    try {
+      const payload: Record<string, unknown> = {
+        inquiry_id: inquiryId,
+        closure_type: closureType,
+        reason: closureReason.trim(),
+      };
+
+      if (closureType === "vedlikehold") {
+        payload.maintenance_interval = maintenanceInterval;
+      }
+
+      const res = await fetch(apiUrl("/close_inquiry.php"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Kunne ikke avslutte arbeidsoppdraget.");
+      }
+
+      const successText =
+        data.message ||
+        (closureType === "garanti"
+          ? "Arbeidsoppdraget er avsluttet og overført til garanti."
+          : closureType === "vedlikehold"
+          ? "Arbeidsoppdraget er avsluttet og overført til vedlikehold."
+          : "Arbeidsoppdraget er avsluttet.");
+
+      setClosureResult(successText);
+      setMessage(successText);
+      setShowClosureDialog(false);
+      onChanged?.();
+    } catch (err) {
+      setClosureError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke avslutte arbeidsoppdraget."
+      );
+    } finally {
+      setClosureSaving(false);
+    }
+  };
+
+  const createAdminDraft = async () => {
+    if (creatingDraft) return;
+    setCreatingDraft(true);
+    setError("");
+    try {
+      const initial = createInitialSections(null, checklistRows);
+      const finalText = buildAdminFinal(initial, checklistRows);
+      const response = await fetch(apiUrl('/reports.php'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inquiry_id: inquiryId,
+          status: 'utkast',
+          admin_final: finalText,
+          admin_sections_json: initial,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.report) {
+        throw new Error(data.message || 'Kunne ikke opprette rapportutkast.');
+      }
+      setReport(data.report);
+      setAdminSections(initial);
+      setLastSavedSections(JSON.stringify(initial));
+      setMessage('Rapportutkastet er opprettet. Feltregistreringene er uendret.');
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke opprette utkast.');
+    } finally {
+      setCreatingDraft(false);
+    }
+  };
+
+  const updateReport = async (
+    payload: Record<string, unknown>,
+    successMessage: string
+  ): Promise<ReportData> => {
+    const res = await fetch(apiUrl("/reports.php"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        inquiry_id: inquiryId,
+        ...payload,
+      }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || "Kunne ikke oppdatere rapporten.");
+    }
+
+    const nextReport: ReportData = data.report;
+    if (!nextReport || typeof nextReport !== "object") {
+      throw new Error("Serveren bekreftet ikke hvilken rapport som ble lagret.");
+    }
+
+    // Ikke overskriv redaktørens tekst med en gammel eller ufullstendig serverrespons.
+    // Kontroller at alle rapportfeltene faktisk er lagret før «Lagret» vises.
+    if ("admin_sections_json" in payload) {
+      const submitted = payload.admin_sections_json as AdminSectionsDocument;
+      let persisted: unknown;
+      try {
+        persisted = typeof nextReport.admin_sections_json === "string"
+          ? JSON.parse(nextReport.admin_sections_json)
+          : nextReport.admin_sections_json;
+      } catch {
+        throw new Error("Serveren returnerte ugyldige rapportfelt. Teksten er beholdt lokalt.");
+      }
+      const expected = ["summary", "scope", "recommendations", "consequences", "limitations"] as const;
+      const returned = persisted as Partial<AdminSectionsDocument> | null;
+      if (!returned || expected.some((field) => returned[field] !== submitted[field]) ||
+          JSON.stringify(returned.items) !== JSON.stringify(submitted.items)) {
+        throw new Error("Serveren bekreftet ikke den nye rapportteksten. Feltene er beholdt lokalt – ikke lukk rapporten før lagringen er kontrollert.");
+      }
+      setLastSavedSections(JSON.stringify(submitted));
+    } else if (nextReport.admin_sections_json) {
+      const nextSections = createInitialSections(nextReport, checklistRows);
+      setAdminSections(nextSections);
+      setLastSavedSections(JSON.stringify(nextSections));
+    }
+
+    setReport(nextReport);
+    setReturnNote(nextReport.admin_notes || "");
+    if (successMessage) setMessage(successMessage);
+    onChanged?.();
+    return nextReport;
+  };
+
+  const saveAdminVersion = async (silent = false) => {
+    if (!report || !adminSections || !adminText.trim()) {
+      throw new Error("Admins sluttversjon kan ikke være tom.");
+    }
+
+    return updateReport(
+      {
+        admin_final: adminText.trim(),
+        admin_sections_json: adminSections,
+        status:
+          report.status === "sendt_til_admin"
+            ? "under_gjennomgang"
+            : report.status,
+      },
+      silent ? "" : "Admins punktvise sluttversjon er lagret."
+    );
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await saveAdminVersion();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Kunne ikke lagre rapporten."
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleGeneratePdf = async () => {
+    if (!adminText.trim()) return;
+
+    setGeneratingPdf(true);
+    setError("");
+    setMessage("");
+
+    try {
+      await saveAdminVersion(true);
+
+      const res = await fetch(apiUrl("/generate_report_pdf.php"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inquiry_id: inquiryId,
+          admin_mode: true,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Kunne ikke generere admin-PDF.");
+      }
+
+      if (data.report) {
+        setReport(data.report);
+      } else {
+        const reportRes = await fetch(
+          apiUrl(`/reports.php?inquiry_id=${inquiryId}`)
+        );
+        const reportData = await reportRes.json();
+        if (reportRes.ok && reportData.success) {
+          setReport(reportData.report || null);
+        }
+      }
+
+      setMessage("PDF er oppdatert med admins tekst- og bildevalg.");
+      onChanged?.();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Kunne ikke generere PDF."
+      );
+    } finally {
+      setGeneratingPdf(false);
+    }
+  };
+
+  const handleReturn = async () => {
+    if (!returnNote.trim()) {
+      setError(
+        "Skriv en kommentar til prosjektansvarlig før rapporten returneres."
+      );
+      return;
+    }
+
+    if (
+      !window.confirm(
+        "Returnere rapporten til prosjektansvarlig for korrigering?"
+      )
+    ) {
+      return;
+    }
+
+    setReturning(true);
+    setError("");
+    setMessage("");
+
+    try {
+      await updateReport(
+        {
+          admin_final: adminText.trim(),
+          admin_sections_json: adminSections,
+          admin_notes: returnNote.trim(),
+          status: "returnert_til_prosjektansvarlig",
+        },
+        "Rapporten er returnert til prosjektansvarlig."
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke returnere rapporten."
+      );
+    } finally {
+      setReturning(false);
+    }
+  };
+
+  const handleApprove = async () => {
+    if (!adminText.trim()) return;
+
+    setApproving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const next = await updateReport(
+        {
+          admin_final: adminText.trim(),
+          admin_sections_json: adminSections,
+          status: "godkjent",
+        },
+        "Rapporten er godkjent. Generer/oppdater PDF før publisering."
+      );
+
+      if (!next.pdf_url) {
+        setMessage(
+          "Rapporten er godkjent. PDF må genereres før den kan publiseres."
+        );
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Kunne ikke godkjenne rapporten."
+      );
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const handlePublish = async () => {
+    if (!report || !adminText.trim()) return;
+
+    if (!report.pdf_url) {
+      setError("Generer PDF med admins sluttversjon før publisering.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      isCorrection
+        ? "Publisere den korrigerte rapporten til kunden nå?"
+        : "Publisere denne rapporten til kunden nå? Kunden får tilgang til den godkjente sluttversjonen."
+    );
+    if (!confirmed) return;
+
+    setPublishing(true);
+    setError("");
+    setMessage("");
+
+    try {
+      await updateReport(
+        { status: "publisert" },
+        isCorrection
+          ? "Den korrigerte rapporten er publisert til kunden."
+          : "Rapporten er publisert til kunden."
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Kunne ikke publisere rapporten."
+      );
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const handleReopenPublished = async () => {
+    if (!report || report.status !== "publisert") return;
+    if (
+      !window.confirm(
+        "Åpne publisert rapport for korrigering? Kunden beholder sist publiserte versjon frem til ny publisering."
+      )
+    ) {
+      return;
+    }
+
+    setReopening(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(apiUrl("/reports.php"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inquiry_id: inquiryId,
+          action: "start_correction",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(
+          data.message || "Kunne ikke åpne rapporten for korrigering."
+        );
+      }
+
+      await loadReviewData();
+      setMessage("Rapporten er åpnet for korrigering.");
+      onChanged?.();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke åpne rapporten for korrigering."
+      );
+    } finally {
+      setReopening(false);
+    }
+  };
+
+  const updateGlobalSection = (
+    field:
+      | "summary"
+      | "scope"
+      | "recommendations"
+      | "consequences"
+      | "limitations",
+    value: string
+  ) => {
+    setAdminSections((current) =>
+      current ? { ...current, [field]: value } : current
+    );
+  };
+
+  const updateItemSection = (
+    key: string,
+    patch: Partial<AdminItemSection>
+  ) => {
+    setAdminSections((current) => {
+      if (!current) return current;
+      const existing = current.items[key] || {
+        included: true,
+        admin_text: "",
+        order: Object.keys(current.items).length,
+      };
+      return {
+        ...current,
+        items: {
+          ...current.items,
+          [key]: {
+            ...existing,
+            ...patch,
+          },
+        },
+      };
+    });
+  };
+
+  // Eget AI-utkast. Endrer aldri administratorens rapportseksjoner.
+  const saveAiProposal = async (proposal: ReportAiDraft): Promise<void> => {
+    if (!report) throw new Error("Rapporten er ikke tilgjengelig.");
+    let history: unknown[] = [];
+    let legacy: string | undefined;
+    if (report.ai_draft) {
+      try {
+        const old = JSON.parse(report.ai_draft);
+        if (old?.kind === "tlv_report1_ai_v1") {
+          history = Array.isArray(old.history) ? old.history.slice(-4) : [];
+          if (old.draft) history.push(old.draft);
+          if (typeof old.legacy_ai_draft === "string") legacy = old.legacy_ai_draft;
+        } else {
+          legacy = report.ai_draft;
+        }
+      } catch { legacy = report.ai_draft; }
+    }
+    const stored = JSON.stringify({
+      kind: "tlv_report1_ai_v1", draft: proposal,
+      history: history.slice(-5), ...(legacy ? { legacy_ai_draft: legacy } : {}),
+    });
+    const response = await fetch(apiUrl("/reports.php"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inquiry_id: inquiryId, ai_draft: stored }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success || !data.report ||
+        data.report.ai_draft !== stored) {
+      throw new Error(data.message || "Serveren bekreftet ikke lagring av AI-utkastet.");
+    }
+    setReport(data.report);
+    setAiDraft(proposal);
+  };
+
+  const handleSaveAiDraft = async () => {
+    if (!aiDraft || aiSaving || aiBusy) return;
+    setAiSaving(true);
+    setAiError("");
+    try {
+      await saveAiProposal(aiDraft);
+      setMessage("AI-utkastet er lagret separat fra rapportteksten.");
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : "Kunne ikke lagre AI-utkastet.");
+    } finally { setAiSaving(false); }
+  };
+
+  // Hele saken analyseres på serveren. Tidligere utkast beholdes ved feil.
+  const analyzeWholeReport = async () => {
+    if (!report || aiBusy || aiSaving) return;
+    setAiBusy(true);
+    setAiError("");
+    try {
+      const response = await fetch("https://api.taklekkasjevakten.no/api/tlv_report_ai.php", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inquiry_id: inquiryId }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success || !result.draft ||
+          !["summary","scope","recommendations","consequences","limitations"].every(k => typeof result.draft[k] === "string")) {
+        throw new Error(result.message || "AI-analysen kunne ikke fullføres.");
+      }
+      await saveAiProposal(result.draft as ReportAiDraft);
+      setAiEvidence(Array.isArray(result.sources) ? result.sources : []);
+      setAiSkippedImages(Number(result.images_not_analyzed || 0));
+      setMessage("Nytt AI-utkast er lagret. Rapportkapitlene er ikke endret.");
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : "AI-analysen kunne ikke lagres. Forrige utkast er beholdt.");
+    } finally { setAiBusy(false); }
+  };
+
+  const insertAiSection = (field: "summary" | "scope" | "recommendations" | "consequences" | "limitations") => {
+    const proposal = aiDraft?.[field]?.trim();
+    if (!proposal || !adminSections || !editable) return;
+    const existing = adminSections[field]?.trim() || "";
+    if (existing && !window.confirm("Feltet har allerede tekst. Vil du legge AI-forslaget til etter den eksisterende teksten?")) return;
+    updateGlobalSection(field, [existing, proposal].filter(Boolean).join("\n\n"));
+    setMessage("AI-forslaget er satt inn som ulagret rapporttekst. Kontroller og trykk Lagre.");
+  };
+
+  const invalidatePdfAfterDocumentationChange = async () => {
+    try {
+      const res = await fetch(apiUrl("/reports.php"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inquiry_id: inquiryId,
+          pdf_url: "",
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.report) {
+        setReport(data.report);
+      } else {
+        setReport((current) =>
+          current ? { ...current, pdf_url: null } : current
+        );
+      }
+    } catch {
+      setReport((current) =>
+        current ? { ...current, pdf_url: null } : current
+      );
+    }
+  };
+
+  const togglePhotoForReport = async (
+    photo: PhotoData,
+    include: boolean
+  ) => {
+    setSavingPhotoId(photo.id);
+    setError("");
+    setMessage("");
+
+    try {
+      const formData = new FormData();
+      formData.append("photo_id", String(photo.id));
+      formData.append("inquiry_id", String(inquiryId));
+      formData.append("include_in_report", include ? "1" : "0");
+      if (
+        photo.report_sort_order !== null &&
+        photo.report_sort_order !== undefined
+      ) {
+        formData.append(
+          "report_sort_order",
+          String(photo.report_sort_order)
+        );
+      } else {
+        formData.append("report_sort_order", "");
+      }
+
+      const res = await fetch(apiUrl("/photos.php"), {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(
+          data.message || "Kunne ikke oppdatere bildevalget."
+        );
+      }
+
+      const updated: PhotoData = data.photo || {
+        ...photo,
+        include_in_report: include ? 1 : 0,
+      };
+
+      setPhotos((current) =>
+        current.map((item) => (item.id === photo.id ? updated : item))
+      );
+
+      await invalidatePdfAfterDocumentationChange();
+      setMessage(
+        include
+          ? "Bildet er valgt inn i rapporten. Oppdater PDF når du er klar."
+          : "Bildet er tatt ut av rapporten. Oppdater PDF når du er klar."
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke oppdatere bildevalget."
+      );
+    } finally {
+      setSavingPhotoId(null);
+    }
+  };
+
+  const toggleExpanded = (key: string) => {
+    setExpandedItems((current) => ({
+      ...current,
+      [key]: !current[key],
+    }));
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#070a11] text-white p-8">
+        <div className="max-w-[1600px] mx-auto bg-[#0b0f17] border border-slate-800 rounded-3xl p-8 flex items-center justify-center gap-2 text-sm text-slate-400">
+          <Loader2 className="w-5 h-5 animate-spin text-[#F5B800]" />
+          Henter rapport, kontrollpunkter og dokumentasjon...
+        </div>
+      </div>
+    );
+  }
+
+  if (completionReportIsAdminFlow && completionReport) {
+    const completionPdfSrc = completionReport.pdf_url
+      ? apiAssetUrl(completionReport.pdf_url)
+      : "";
+    const completionEditable =
+      completionReport.status === "sendt_til_admin" ||
+      completionReport.status === "under_gjennomgang" ||
+      completionReport.status === "godkjent";
+
+    return (
+      <div className="min-h-screen bg-[#070a11] text-white">
+        <header className="sticky top-0 z-40 border-b border-cyan-500/20 bg-slate-950 px-6 py-4">
+          <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-wider text-cyan-400">
+                Admin kvalitetssikring · Utførelsesrapport
+              </p>
+              <h1 className="mt-1 text-lg font-extrabold">
+                Utførelsesrapport #{completionReport.id} · Oppdrag #{inquiryId}
+              </h1>
+              <p className="mt-1 text-xs text-slate-400">
+                {[customerName, address].filter(Boolean).join(" · ")}
+              </p>
+            </div>
+
+            {onBack && (
+              <button
+                type="button"
+                onClick={() => onBack()}
+                className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-bold text-slate-300 hover:text-white"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Tilbake til rapporter
+              </button>
+            )}
+          </div>
+        </header>
+
+        <main className="mx-auto max-w-[1600px] space-y-5 px-4 py-6 md:px-8">
+          <section className="rounded-2xl border border-cyan-500/25 bg-[#0b0f17] px-5 py-4">
+            <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="flex items-center gap-2 text-base font-extrabold">
+                    <FileText className="h-5 w-5 text-cyan-400" />
+                    Utførelsesrapport
+                  </h2>
+                  <span
+                    className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase ${statusClass(
+                      completionReport.status
+                    )}`}
+                  >
+                    {statusLabel(completionReport.status)}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-slate-400">
+                  Den tekniske rapporten beholdes som historikk. Her kvalitetssikres ny tilstand,
+                  utført arbeid og nye TG-verdier etter service.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2 text-[10px]">
+                <span className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-slate-400">
+                  Kilde teknisk rapport: #{completionReport.source_report_id}
+                </span>
+                <span className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-slate-400">
+                  Arbeid: #{completionReport.work_completion_id}
+                </span>
+                <span className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-slate-400">
+                  Revisjon {completionReport.revision_no || 1}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          {error && (
+            <div className="flex gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-4 text-xs text-red-300">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {error}
+            </div>
+          )}
+
+          {message && (
+            <div className="flex gap-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-5 py-3 text-xs text-emerald-300">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              {message}
+            </div>
+          )}
+
+          <section className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(460px,0.95fr)]">
+            <div className="space-y-4">
+              <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0b0f17]">
+                <div className="border-b border-slate-800 px-5 py-4">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-cyan-400">
+                    Admins sluttversjon
+                  </p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Kontroller at utført arbeid og ny TG stemmer med feltregistreringen.
+                    Teknisk rapport skal ikke overskrives.
+                  </p>
+                </div>
+
+                <div className="p-5">
+                  <textarea
+                    value={completionDraft}
+                    onChange={(event) =>
+                      setCompletionDraft(event.target.value)
+                    }
+                    readOnly={
+                      !completionEditable ||
+                      completionReport.status === "publisert"
+                    }
+                    rows={34}
+                    className="w-full resize-y rounded-2xl border border-slate-800 bg-slate-950 p-4 text-xs leading-6 text-slate-200 outline-none focus:border-cyan-500/50 read-only:opacity-75"
+                  />
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-slate-800 bg-[#0b0f17] p-5">
+                <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                  Kommentar ved retur
+                </p>
+                <textarea
+                  value={completionReturnNote}
+                  onChange={(event) =>
+                    setCompletionReturnNote(event.target.value)
+                  }
+                  disabled={completionReport.status === "publisert"}
+                  rows={4}
+                  placeholder="Beskriv hva prosjektansvarlig må korrigere i Utførelsesrapport..."
+                  className="mt-3 w-full rounded-2xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-200 outline-none focus:border-red-500/40 disabled:opacity-50"
+                />
+              </section>
+            </div>
+
+            <aside className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0b0f17] xl:sticky xl:top-[96px]">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-wider text-cyan-400">
+                    Utførelsesrapport · PDF
+                  </p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Samme godkjenningskrav som Teknisk rapport.
+                  </p>
+                </div>
+
+                {completionReport.status !== "publisert" && (
+                  <button
+                    type="button"
+                    onClick={handleCompletionPdf}
+                    disabled={
+                      completionPdfBusy || !completionDraft.trim() || !report2WorkLeadApproved
+                    }
+                    className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3.5 py-2 text-xs font-extrabold disabled:opacity-50"
+                  >
+                    {completionPdfBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                    {completionReport.pdf_url ? "Oppdater PDF" : "Generer PDF"}
+                  </button>
+                )}
+              </div>
+
+              {completionPdfSrc ? (
+                <iframe
+                  key={completionReport.pdf_url || "completion-report-pdf"}
+                  title="Utførelsesrapport PDF"
+                  src={completionPdfSrc}
+                  className="h-[calc(100vh-250px)] min-h-[720px] w-full bg-white"
+                />
+              ) : (
+                <div className="flex h-[calc(100vh-250px)] min-h-[720px] flex-col items-center justify-center px-8 text-center">
+                  <FileText className="mb-3 h-10 w-10 text-slate-700" />
+                  <p className="text-sm font-extrabold text-slate-300">
+                    PDF må genereres
+                  </p>
+                  <p className="mt-2 max-w-sm text-xs text-slate-500">
+                    Kontroller utførelsesrapporten, lagre sluttversjonen og generer PDF før publisering.
+                  </p>
+                </div>
+              )}
+            </aside>
+          </section>
+
+          <section className="rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.04] p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.12em] text-cyan-300">
+                  Faglig ansvar · Rapport 2
+                </p>
+                <p className="mt-1 text-xs font-extrabold text-white">
+                  Arbeidsledelse og utførelse
+                </p>
+                <p className="mt-1 text-[10px] leading-5 text-slate-500">
+                  Når Miroslav godkjenner, vises teksten i PDF-en: «Arbeidet har blitt ledet av bygningsingeniør Miroslav Subanovic og utført av Perun AS.»
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setReportApproval(
+                    "rapport2",
+                    completionReport.id,
+                    "work_lead",
+                    !report2WorkLeadApproved
+                  )
+                }
+                disabled={approvalBusy === "rapport2-work_lead" || completionReport.status === "publisert"}
+                className={`flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-extrabold disabled:opacity-50 ${
+                  report2WorkLeadApproved
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                    : "border-slate-700 bg-slate-900 text-slate-300"
+                }`}
+              >
+                {approvalBusy === "rapport2-work_lead" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : report2WorkLeadApproved ? (
+                  <CheckCircle2 className="h-4 w-4" />
+                ) : (
+                  <ShieldCheck className="h-4 w-4" />
+                )}
+                {report2WorkLeadApproved ? "Godkjent av Miroslav" : "Miroslav godkjenner"}
+              </button>
+            </div>
+          </section>
+
+          {completionReport.status !== "publisert" ? (
+            <section className="sticky bottom-3 z-30 rounded-2xl border border-slate-700 bg-slate-950/95 p-4 shadow-2xl backdrop-blur">
+              <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
+                <div>
+                  <p className="text-xs font-bold text-slate-300">
+                    Utførelsesrapporten følger samme kontrollflyt som Teknisk rapport.
+                  </p>
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    Returner ved feil, eller godkjenn og publiser etter at PDF er kontrollert.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCompletionSave}
+                    disabled={
+                      completionSaving ||
+                      !completionDraft.trim() ||
+                      !completionEditable
+                    }
+                    className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-extrabold disabled:opacity-50"
+                  >
+                    {completionSaving ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    Lagre
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCompletionReturn}
+                    disabled={
+                      completionReturning ||
+                      !completionReturnNote.trim()
+                    }
+                    className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-xs font-extrabold text-red-300 disabled:opacity-50"
+                  >
+                    {completionReturning ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-4 w-4" />
+                    )}
+                    Returner
+                  </button>
+
+                  {completionReport.status === "godkjent" ? (
+                    <button
+                      type="button"
+                      onClick={handleCompletionPublish}
+                      disabled={
+                        completionPublishing ||
+                        !completionDraft.trim() ||
+                        !completionReport.pdf_url ||
+                        !report2WorkLeadApproved
+                      }
+                      className="flex items-center gap-2 rounded-xl bg-[#F5B800] px-5 py-2.5 text-xs font-black text-slate-950 disabled:opacity-50"
+                    >
+                      {completionPublishing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                      Publiser utførelsesrapport
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleCompletionApprove}
+                      disabled={
+                        completionApproving ||
+                        !completionDraft.trim()
+                      }
+                      className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs font-extrabold text-emerald-300 disabled:opacity-50"
+                    >
+                      {completionApproving ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ShieldCheck className="h-4 w-4" />
+                      )}
+                      Godkjenn utførelsesrapport
+                    </button>
+                  )}
+                </div>
+              </div>
+            </section>
+          ) : (
+            <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-xs font-extrabold text-cyan-300">
+                    Utførelsesrapporten er publisert til kunden.
+                  </p>
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Arbeidet er dokumentert ferdig. Velg avslutning dersom saken ikke allerede er overført til vedlikehold eller garanti.
+                  </p>
+                  {closureResult && (
+                    <p className="mt-2 text-[11px] font-bold text-emerald-300">
+                      {closureResult}
+                    </p>
+                  )}
+                </div>
+                {!closureResult && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClosureError("");
+                      setShowClosureDialog(true);
+                    }}
+                    className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2.5 text-xs font-extrabold text-cyan-200"
+                  >
+                    Avslutt arbeidsoppdrag
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </main>
+
+        {showClosureDialog && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-slate-700 bg-[#0b0f17] shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-6 py-5">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-400">
+                    Ferdigstilling
+                  </p>
+                  <h2 className="mt-1 text-xl font-black text-white">
+                    Hvordan skal saken følges opp videre?
+                  </h2>
+                  <p className="mt-2 text-xs leading-5 text-slate-400">
+                    Utførelsesrapporten er publisert. Arbeidsoppdraget skal nå avsluttes og eventuelt overføres til vedlikehold eller garanti.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => !closureSaving && setShowClosureDialog(false)}
+                  className="rounded-xl border border-slate-700 bg-slate-900 p-2 text-slate-400 hover:text-white"
+                  aria-label="Lukk"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="space-y-5 p-6">
+                {closureError && (
+                  <div className="flex gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-300">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    {closureError}
+                  </div>
+                )}
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  {[
+                    {
+                      value: "avsluttet" as ClosureType,
+                      title: "Avslutt",
+                      text: "Ingen videre oppfølging er nødvendig.",
+                    },
+                    {
+                      value: "vedlikehold" as ClosureType,
+                      title: "Vedlikehold",
+                      text: "Opprett ny kontroll eller vedlikeholdsoppfølging.",
+                    },
+                    {
+                      value: "garanti" as ClosureType,
+                      title: "Garanti",
+                      text: "Avslutt arbeidet og aktiver 5 års garanti med årlig kontroll.",
+                    },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setClosureType(option.value)}
+                      className={`rounded-2xl border p-4 text-left transition ${
+                        closureType === option.value
+                          ? "border-cyan-400/60 bg-cyan-500/10"
+                          : "border-slate-800 bg-slate-950 hover:border-slate-700"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-black text-white">
+                          {option.title}
+                        </span>
+                        <span
+                          className={`flex h-5 w-5 items-center justify-center rounded-full border ${
+                            closureType === option.value
+                              ? "border-cyan-400 bg-cyan-400 text-slate-950"
+                              : "border-slate-600"
+                          }`}
+                        >
+                          {closureType === option.value && (
+                            <Check className="h-3.5 w-3.5" />
+                          )}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-[11px] leading-5 text-slate-500">
+                        {option.text}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+
+                {closureType === "vedlikehold" && (
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
+                    <label className="block">
+                      <span className="text-[11px] font-extrabold text-slate-300">
+                        Første vedlikeholdskontroll
+                      </span>
+                      <select
+                        value={maintenanceInterval}
+                        onChange={(event) =>
+                          setMaintenanceInterval(event.target.value)
+                        }
+                        className="mt-2 w-full rounded-xl border border-slate-700 bg-[#0b0f17] px-4 py-3 text-sm text-white outline-none focus:border-cyan-500/50"
+                      >
+                        <option value="kontroll_3m">Om 3 måneder</option>
+                        <option value="kontroll_6m">Om 6 måneder</option>
+                        <option value="kontroll_9m">Om 9 måneder</option>
+                        <option value="kontroll_12m">Om 12 måneder</option>
+                      </select>
+                    </label>
+                  </div>
+                )}
+
+                {closureType === "garanti" && (
+                  <div className="flex gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
+                    <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" />
+                    <div>
+                      <p className="text-xs font-black text-emerald-200">
+                        5 års garanti · årlig kontroll
+                      </p>
+                      <p className="mt-1 text-[11px] leading-5 text-emerald-100/60">
+                        Saken flyttes til garanti og første årlige kontroll opprettes 12 måneder etter publisering.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <label className="block">
+                  <span className="text-[11px] font-extrabold text-slate-300">
+                    Intern merknad <span className="font-normal text-slate-600">(valgfritt)</span>
+                  </span>
+                  <textarea
+                    value={closureReason}
+                    onChange={(event) => setClosureReason(event.target.value)}
+                    rows={3}
+                    placeholder="Eksempel: årlig kontroll av beslag og gjennomføringer."
+                    className="mt-2 w-full resize-none rounded-2xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-200 outline-none focus:border-cyan-500/50"
+                  />
+                </label>
+              </div>
+
+              <div className="flex flex-col-reverse gap-2 border-t border-slate-800 px-6 py-4 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowClosureDialog(false)}
+                  disabled={closureSaving}
+                  className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-bold text-slate-300 disabled:opacity-50"
+                >
+                  Gjør dette senere
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCloseInquiry}
+                  disabled={closureSaving}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-5 py-2.5 text-xs font-black text-slate-950 disabled:opacity-50"
+                >
+                  {closureSaving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" />
+                  )}
+                  Bekreft avslutning
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[#070a11] text-white">
+      <header className="sticky top-0 z-40 bg-slate-950 border-b border-slate-800 px-6 py-4">
+        <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-4">
+          <div>
+            <p className="text-[10px] uppercase tracking-wider font-black text-orange-400">
+              Admin kvalitetssikring
+            </p>
+            <h1 className="text-lg font-extrabold">
+              Rapport #{report?.id ?? "–"} · Oppdrag #{inquiryId}
+            </h1>
+            <p className="text-xs text-slate-400 mt-1">
+              {[customerName, address].filter(Boolean).join(" · ")}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onBack?.()}
+            className="px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-xs font-bold text-slate-300 hover:text-white flex items-center gap-2"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Tilbake til rapporter
+          </button>
+        </div>
+      </header>
+
+      <main className="max-w-[1600px] mx-auto px-4 md:px-8 py-6 space-y-5">
+        {!report ? (
+          <section className="bg-[#0b0f17] border border-slate-800 rounded-3xl p-8">
+            <p className="text-sm font-bold">Ingen Rapport 1 er opprettet.</p>
+            <p className="mt-2 text-xs text-slate-400">Opprett et utkast fra sjekklisten. Materialet blir tilgjengelig til venstre og den eksisterende PDF-malen brukes til forhåndsvisning.</p>
+            {error && <p className="mt-3 text-xs text-red-300">{error}</p>}
+            <button type="button" onClick={() => void createAdminDraft()} disabled={creatingDraft}
+              className="mt-4 rounded-xl bg-amber-400 px-4 py-3 text-xs font-black text-slate-950 disabled:opacity-50">
+              {creatingDraft ? 'Oppretter…' : 'Opprett Rapport 1-utkast'}
+            </button>
+          </section>
+        ) : (
+          <>
+            <section className="bg-[#0b0f17] border border-slate-800 rounded-2xl px-5 py-4">
+              <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="font-extrabold text-base flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-orange-400" />
+                      Punktvis rapportkontroll
+                    </h2>
+                    <span
+                      className={`px-3 py-1 rounded-full border text-[10px] uppercase font-black ${statusClass(
+                        report.status
+                      )}`}
+                    >
+                      {statusLabel(report.status)}
+                    </span>
+                    <span
+                      className={`px-2.5 py-1 rounded-full border text-[10px] font-black ${
+                        hasUnsavedChanges
+                          ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                          : "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
+                      }`}
+                    >
+                      {hasUnsavedChanges ? "Ulagrede endringer" : "Lagret"}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Kontroller hvert feltpunkt, velg dokumentasjonsbilder og
+                    rediger sluttteksten. Lyd og transkripsjon er kun
+                    kontrollgrunnlag.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <div className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-400">
+                    <strong className="text-white">{checklistRows.length}</strong>{" "}
+                    punkter
+                  </div>
+                  <div className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-400">
+                    <strong className="text-white">{selectedPhotoCount}</strong>{" "}
+                    bilder valgt
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowOriginal(true)}
+                    className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-bold text-slate-300 hover:text-white flex items-center gap-2"
+                  >
+                    <Eye className="w-4 h-4" />
+                    Originalutkast
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            {error && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-2xl px-5 py-4 text-xs text-red-300 flex gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                {error}
+              </div>
+            )}
+
+            {message && (
+              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl px-5 py-3 text-xs text-emerald-300 flex gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                {message}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-700 bg-[#0b0f17] px-4 py-3">
+              <div>
+                <p className="text-sm font-extrabold text-white">Rapportbygger</p>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Kildemateriale til venstre · eksisterende Taklekkasjevakten-PDF til høyre
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <div className="flex rounded-xl border border-slate-700 p-1 xl:hidden" aria-label="Velg arbeidsområde">
+                  <button type="button" onClick={() => setMobilePanel("sources")}
+                    className={`rounded-lg px-3 py-2 text-xs font-bold ${mobilePanel === "sources" ? "bg-amber-400 text-slate-950" : "text-slate-300"}`}>
+                    Kildemateriale
+                  </button>
+                  <button type="button" onClick={() => setMobilePanel("preview")}
+                    className={`rounded-lg px-3 py-2 text-xs font-bold ${mobilePanel === "preview" ? "bg-amber-400 text-slate-950" : "text-slate-300"}`}>
+                    Rapportvisning
+                  </button>
+                </div>
+                <button type="button" onClick={() => setPreviewFocused((previous) => !previous)}
+                  className="hidden xl:inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-bold text-slate-200 hover:border-cyan-500/40">
+                  <Eye className="h-4 w-4" />
+                  {previewFocused ? "Vis begge paneler" : "Utvid rapportvisning"}
+                </button>
+              </div>
+            </div>
+
+            <section className={`grid grid-cols-1 gap-5 items-start ${previewFocused ? "xl:grid-cols-1" : "xl:grid-cols-[minmax(0,1.1fr)_minmax(480px,0.9fr)]"}`}>
+              <div className={`${previewFocused ? "xl:hidden" : ""} ${mobilePanel === "preview" ? "hidden xl:block" : ""} space-y-4 min-w-0`}>
+                <section className="rounded-2xl border border-slate-700 bg-[#0b0f17] p-4 space-y-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-extrabold text-white">Kildemateriale fra lekkasjesøket</h3>
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        Originalregistreringer beholdes. Velg materiale og rediger rapportteksten separat.
+                      </p>
+                    </div>
+                    <span className="text-[11px] text-slate-400">{visibleChecklistRows.length} / {checklistRows.length} punkter</span>
+                  </div>
+                  <input type="search" value={sourceSearch}
+                    onChange={(event) => setSourceSearch(event.target.value)}
+                    placeholder="Søk i kontrollpunkter, kommentarer og transkripsjoner"
+                    aria-label="Søk i kildematerialet"
+                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-xs text-white outline-none focus:border-amber-400" />
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => setExpandedItems(Object.fromEntries(checklistRows.map((row) => [normalizeItemKey(row), true])))}
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-[11px] font-semibold text-slate-300 hover:text-white">Åpne alle punkter</button>
+                    <button type="button" onClick={() => setExpandedItems(Object.fromEntries(checklistRows.map((row) => [normalizeItemKey(row), false])))}
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-[11px] font-semibold text-slate-300 hover:text-white">Lukk alle punkter</button>
+                    {sourceSearch && <button type="button" onClick={() => setSourceSearch("")}
+                      className="rounded-lg px-3 py-2 text-[11px] font-semibold text-cyan-300">Nullstill søk</button>}
+                  </div>
+                </section>
+                {report && (
+                  <section className="rounded-2xl border border-cyan-500/30 bg-[#0b121b] p-4 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-sm font-extrabold text-cyan-100">Dokumentasjon og språkgodkjenning</h3>
+                        <p className="mt-1 text-xs text-slate-400">Alle registreringer er valgt som utgangspunkt. Originalkommentarene endres aldri. Valg lagres separat i Perun Core.</p>
+                      </div>
+                      <button type="button" disabled={documentationLoading} onClick={() => void loadDocumentation(report.id)} className="rounded-lg border border-slate-600 px-3 py-2 text-xs text-slate-200 disabled:opacity-50">{documentationLoading ? "Henter…" : "Oppdater dokumentasjon"}</button>
+                    </div>
+                    {documentationError && <p role="alert" className="text-xs text-rose-300">{documentationError}</p>}
+                    {!documentationLoading && documentation.length === 0 && !documentationError && <p className="text-xs text-slate-400">Ingen dokumentasjonsoppføringer funnet.</p>}
+                    <p className="text-[11px] text-amber-200">Språkforslag kan foreløpig skrives eller redigeres manuelt her. Automatisk AI-språkkontroll og PDF-integrasjon kommer i neste trinn.</p>
+                    <div className="max-h-[620px] space-y-3 overflow-y-auto pr-1">
+                      {documentation.map((item) => {
+                        const edits = documentationEdits[item.key] || { suggested: "", approved: item.original_text || "" };
+                        const isPhoto = item.source_type === "photo";
+                        const busy = Boolean(documentationSaving);
+                        return <div key={item.key} className="rounded-xl border border-slate-700 bg-slate-950/60 p-3 space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div><p className="text-xs font-bold text-slate-100">{item.label}</p><p className="text-[10px] text-slate-400">{item.category} · {item.source_type} · {item.review_status}</p></div>
+                            <label className="flex items-center gap-2 text-xs text-slate-200"><input type="checkbox" checked={item.included} disabled={busy || !editable} onChange={(event) => void saveDocumentationEntry(item, { included: event.target.checked })} /> I rapport</label>
+                          </div>
+                          {isPhoto && item.photo_url && <a href={apiAssetUrl(item.photo_url)} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 underline">Åpne originalbilde</a>}
+                          {!isPhoto && <>
+                            <div><p className="text-[10px] font-semibold text-slate-400">Originaltekst (skrivebeskyttet)</p><p className="whitespace-pre-wrap text-xs text-slate-200">{item.original_text}</p></div>
+                            {item.warning && <p className="text-xs text-amber-300">{item.warning}</p>}
+                            <label className="block text-[10px] font-semibold text-slate-400" htmlFor={`doc-suggest-${item.key}`}>Forslag til språkrettelse</label>
+                            <textarea id={`doc-suggest-${item.key}`} value={edits.suggested} onChange={(event) => setDocumentationEdits(old => ({ ...old, [item.key]: { ...edits, suggested: event.target.value } }))} rows={2} disabled={!editable} className="w-full rounded-lg border border-slate-700 bg-slate-900 p-2 text-xs text-white" />
+                            <label className="block text-[10px] font-semibold text-slate-400" htmlFor={`doc-approved-${item.key}`}>Tekst som skal godkjennes</label>
+                            <textarea id={`doc-approved-${item.key}`} value={edits.approved} onChange={(event) => setDocumentationEdits(old => ({ ...old, [item.key]: { ...edits, approved: event.target.value } }))} rows={2} disabled={!editable} className="w-full rounded-lg border border-slate-700 bg-slate-900 p-2 text-xs text-white" />
+                            <div className="flex flex-wrap gap-2">
+                              <button type="button" disabled={busy || !editable || !edits.approved.trim()} onClick={() => void saveDocumentationEntry(item, { review_status: "approved", suggested_text: edits.suggested, approved_text: edits.approved })} className="rounded-lg border border-emerald-600 px-3 py-1.5 text-xs text-emerald-200 disabled:opacity-40">Godkjenn tekst</button>
+                              <button type="button" disabled={busy || !editable} onClick={() => void saveDocumentationEntry(item, { review_status: "rejected", suggested_text: edits.suggested, approved_text: "" })} className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs text-slate-200 disabled:opacity-40">Avvis forslag</button>
+                              <button type="button" disabled={busy || !editable} onClick={() => void saveDocumentationEntry(item, { review_status: "needs_clarification", suggested_text: edits.suggested, approved_text: "" })} className="rounded-lg border border-amber-600 px-3 py-1.5 text-xs text-amber-200 disabled:opacity-40">Faglig avklaring</button>
+                            </div>
+                          </>}
+                        </div>;
+                      })}
+                    </div>
+                  </section>
+                )}
+                {report && <section className="rounded-2xl border border-violet-500/30 bg-[#101225] p-4 space-y-3">
+                  <div className="flex items-center gap-2 text-violet-200 font-extrabold text-sm">AI-analyse av hele lekkasjesøket</div>
+                  <p className="text-xs text-slate-400">AI sammenholder kundens henvendelse, forhåndsopplysninger, kontrollpunkter, kommentarer og tilknyttede bilder. Forslagene lagres separat og må kvalitetssikres før de settes inn i rapporten.</p>
+                  <button type="button" onClick={() => void analyzeWholeReport()} disabled={aiBusy} className="rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold text-white disabled:opacity-40">{aiBusy ? "Analyserer hele lekkasjesøket…" : "Analyser hele lekkasjesøket"}</button>
+                  {aiDraft && <button type="button" onClick={() => void handleSaveAiDraft()} disabled={aiSaving || aiBusy} className="ml-2 rounded-lg border border-violet-400 px-3 py-2 text-xs font-bold text-violet-100 disabled:opacity-40">{aiSaving ? "Lagrer AI-utkast…" : "Lagre redigert AI-utkast"}</button>}
+                  {aiError && <p className="text-xs text-red-300" role="alert">{aiError}</p>}
+                  {aiDraft && <div className="space-y-3">
+                    <p className="text-xs font-semibold text-slate-200">AI-utkast lagres separat. Redigerte forslag lagres med «Lagre redigert AI-utkast». Bruk «Sett inn i kapittelet» for å overføre til rapporten.</p>
+                    {([['summary','1. Sammendrag og hovedkonklusjon'],['scope','2. Oppdrag og omfang'],['recommendations','4. Anbefalte tiltak'],['consequences','5. Konsekvenser ved utsatt utbedring'],['limitations','6. Forbehold og begrensninger']] as const).map(([field,label]) => <div key={field} className="space-y-2 rounded-xl border border-slate-700 p-3">
+                      <label className="block text-xs font-semibold text-slate-200" htmlFor={`ai-${field}`}>{label}</label>
+                      <textarea id={`ai-${field}`} value={aiDraft[field]} onChange={e => setAiDraft(old => old ? {...old,[field]:e.target.value} : old)} rows={5} className="w-full rounded-lg border border-slate-700 bg-slate-950 p-3 text-xs leading-6 text-slate-100" />
+                      <button type="button" onClick={() => insertAiSection(field)} disabled={!editable || !aiDraft[field].trim()} className="rounded-lg border border-violet-400 px-3 py-2 text-xs font-bold text-violet-100 disabled:opacity-40">Sett inn i kapittelet</button>
+                    </div>)}
+                    {aiSkippedImages > 0 && <p className="text-xs text-amber-300">{aiSkippedImages} bilde(r) ble ikke analysert (filbegrensning, antallsgrense eller utilgjengelig fil). Kontroller grunnlaget før bruk.</p>}
+                    {aiEvidence.length > 0 && <p className="text-[11px] text-slate-400">Grunnlag: {aiEvidence.join(", ")}</p>}
+                  </div>}
+                </section>}
+                {adminSections && (
+                  <>
+                    <section className="bg-[#0b0f17] border border-slate-800 rounded-2xl overflow-hidden">
+                      <div className="px-5 py-4 border-b border-slate-800">
+                        <p className="text-[10px] uppercase tracking-wider font-black text-orange-400">
+                          Rapportens hoveddel
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          Disse feltene bygger rammen rundt kontrollpunktene.
+                        </p>
+                      </div>
+
+                      <div className="p-5 grid grid-cols-1 gap-4">
+                        <label className="block">
+                          <span className="text-[11px] font-extrabold text-slate-300">
+                            1. Sammendrag og hovedkonklusjon
+                          </span>
+                          <textarea
+                            value={adminSections.summary}
+                            onChange={(e) =>
+                              updateGlobalSection("summary", e.target.value)
+                            }
+                            readOnly={!editable || report.status === "publisert"}
+                            rows={5}
+                            className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-orange-500/50 read-only:opacity-70"
+                          />
+                        </label>
+
+                        <label className="block">
+                          <span className="text-[11px] font-extrabold text-slate-300">
+                            2. Oppdrag og omfang
+                          </span>
+                          <textarea
+                            value={adminSections.scope}
+                            onChange={(e) =>
+                              updateGlobalSection("scope", e.target.value)
+                            }
+                            readOnly={!editable || report.status === "publisert"}
+                            rows={4}
+                            className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-orange-500/50 read-only:opacity-70"
+                          />
+                        </label>
+                      </div>
+                    </section>
+
+                    <div className="flex items-center justify-between px-1 pt-2">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider font-black text-cyan-400">
+                          3. Kontrollpunkter og feltgrunnlag
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          Prosjektansvarliges feltdata vises urørt. Admin redigerer
+                          bare sluttteksten og bildevalget.
+                        </p>
+                      </div>
+                    </div>
+
+                    {visibleChecklistRows.length === 0 ? (
+                      <div className="bg-[#0b0f17] border border-slate-800 rounded-2xl p-6 text-xs text-slate-500">
+                        {sourceSearch ? "Ingen kontrollpunkter samsvarer med søket." : "Ingen kontrollpunkter ble returnert fra sjekklisten."}
+                      </div>
+                    ) : (
+                      visibleChecklistRows.map((row) => {
+                        const rowIndex = checklistRows.findIndex((entry) => normalizeItemKey(entry) === normalizeItemKey(row));
+                        const key = normalizeItemKey(row);
+                        const section = adminSections.items[key] || {
+                          included: true,
+                          admin_text: "",
+                          order: rowIndex,
+                        };
+                        const itemPhotos = photosByItem[key] || [];
+                        const isOpen = expandedItems[key] !== false;
+                        const audioCount =
+                          itemPhotos.filter((photo) => photo.audio_url).length +
+                          (row.audio_url ? 1 : 0);
+                        const selectedCount = itemPhotos.filter((photo) =>
+                          Boolean(photo.photo_url) && boolValue(photo.include_in_report)
+                        ).length;
+
+                        return (
+                          <article
+                            key={key}
+                            className={`bg-[#0b0f17] border rounded-2xl overflow-hidden ${
+                              section.included
+                                ? "border-slate-700"
+                                : "border-slate-800 opacity-75"
+                            }`}
+                          >
+                            <div className="px-5 py-4 flex items-center justify-between gap-4">
+                              <button
+                                type="button"
+                                onClick={() => toggleExpanded(key)}
+                                className="min-w-0 flex-1 text-left flex items-center gap-3"
+                              >
+                                <div
+                                  className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 ${tgClass(
+                                    row.status
+                                  )}`}
+                                >
+                                  <span className="text-[10px] font-black">
+                                    {(row.status || "–").toUpperCase()}
+                                  </span>
+                                </div>
+
+                                <div className="min-w-0">
+                                  <p className="font-extrabold text-sm text-white truncate">
+                                    {row.item_title}
+                                  </p>
+                                  <div className="flex flex-wrap gap-3 mt-1 text-[10px] text-slate-500">
+                                    <span className="flex items-center gap-1">
+                                      <Camera className="w-3 h-3" />
+                                      {itemPhotos.filter((photo) => Boolean(photo.photo_url)).length} bilder · {selectedCount} valgt
+                                    </span>
+                                    {audioCount > 0 && (
+                                      <span className="flex items-center gap-1">
+                                        <Mic className="w-3 h-3" />
+                                        {audioCount} lydnotat
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </button>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  type="button"
+                                  disabled={
+                                    !editable || report.status === "publisert"
+                                  }
+                                  onClick={() =>
+                                    updateItemSection(key, {
+                                      included: !section.included,
+                                    })
+                                  }
+                                  className={`px-3 py-2 rounded-xl border text-[10px] font-black flex items-center gap-1.5 disabled:opacity-50 ${
+                                    section.included
+                                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                                      : "bg-slate-900 border-slate-700 text-slate-500"
+                                  }`}
+                                >
+                                  {section.included && (
+                                    <Check className="w-3.5 h-3.5" />
+                                  )}
+                                  {section.included
+                                    ? "Med i rapport"
+                                    : "Utelatt"}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => toggleExpanded(key)}
+                                  className="w-9 h-9 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center text-slate-400"
+                                >
+                                  {isOpen ? (
+                                    <ChevronUp className="w-4 h-4" />
+                                  ) : (
+                                    <ChevronDown className="w-4 h-4" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+
+                            {isOpen && (
+                              <div className="border-t border-slate-800 p-5 space-y-5">
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                  <div className="rounded-2xl bg-slate-950 border border-slate-800 p-4">
+                                    <p className="text-[9px] uppercase tracking-wider font-black text-slate-500">
+                                      Prosjektansvarlig · feltregistrering
+                                    </p>
+                                    {row.comment?.trim() && editable && section.included && (
+                                      <button type="button" onClick={() => updateItemSection(key, {
+                                        admin_text: [(section.admin_text ?? "").trim(), row.comment!.trim()].filter(Boolean).join('\n\n'),
+                                      })} className="mt-2 rounded-lg border border-cyan-600/40 px-2 py-1 text-[10px] font-bold text-cyan-300">
+                                        Kopier hovedkommentar til rapporttekst
+                                      </button>
+                                    )}
+                                    <p className="text-xs leading-6 text-slate-300 mt-2 whitespace-pre-wrap">
+                                      {row.comment?.trim() ||
+                                        "Ingen skriftlig kommentar registrert på dette punktet."}
+                                    </p>
+                                  </div>
+
+                                  <div className="rounded-2xl bg-slate-950 border border-slate-800 p-4">
+                                    <p className="text-[9px] uppercase tracking-wider font-black text-slate-500">
+                                      Kontrollgrunnlag
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
+                                      <span className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400">
+                                        {itemPhotos.filter((photo) => Boolean(photo.photo_url)).length} dokumentasjonsbilder
+                                      </span>
+                                      <span className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400">
+                                        {audioCount} lydnotat
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {itemPhotos.filter((photo) => !photo.photo_url && !photo.audio_url && Boolean(photo.caption_text?.trim())).length > 0 && (
+                                  <div className="space-y-2">
+                                    <p className="text-[10px] uppercase tracking-wider font-black text-cyan-400">Tilleggskommentarer fra felt</p>
+                                    {itemPhotos.filter((photo) => !photo.photo_url && !photo.audio_url && Boolean(photo.caption_text?.trim())).map((comment) => (
+                                      <div key={`comment-${comment.id}`} className="rounded-xl border border-slate-800 bg-slate-950 p-3">
+                                        <p className="whitespace-pre-wrap text-xs text-slate-300">{comment.caption_text}</p>
+                                        {editable && section.included && (
+                                          <button type="button" onClick={() => updateItemSection(key, {
+                                            admin_text: [(section.admin_text ?? "").trim(), comment.caption_text?.trim()].filter(Boolean).join('\n\n'),
+                                          })} className="mt-2 rounded-lg border border-cyan-600/40 px-2 py-1 text-[10px] font-bold text-cyan-300">
+                                            Legg til i rapportteksten
+                                          </button>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {(row.audio_url ||
+                                  itemPhotos.some((photo) => photo.audio_url)) && (
+                                  <div>
+                                    <p className="text-[10px] uppercase tracking-wider font-black text-violet-400 mb-2">
+                                      Lyd og transkripsjon
+                                    </p>
+
+                                    <div className="space-y-2">
+                                      {row.audio_url && (
+                                        <div className="rounded-xl bg-violet-500/5 border border-violet-500/20 p-3">
+                                          <p className="text-[10px] font-bold text-violet-300 mb-2">
+                                            Lyd fra kontrollpunkt
+                                          </p>
+                                          <audio
+                                            controls
+                                            src={apiAssetUrl(row.audio_url)}
+                                            className="w-full h-9"
+                                          />
+                                        </div>
+                                      )}
+
+                                      {itemPhotos
+                                        .filter((photo) => photo.audio_url)
+                                        .map((photo) => (
+                                          <div
+                                            key={`audio-${photo.id}`}
+                                            className="rounded-xl bg-violet-500/5 border border-violet-500/20 p-3"
+                                          >
+                                            <div className="flex items-center justify-between gap-3">
+                                              <p className="text-[10px] font-bold text-violet-300">
+                                                Lydnotat til dokumentasjon #{photo.id}
+                                              </p>
+                                              {photo.audio_transcript && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    setOpenTranscripts(
+                                                      (current) => ({
+                                                        ...current,
+                                                        [photo.id]:
+                                                          !current[photo.id],
+                                                      })
+                                                    )
+                                                  }
+                                                  className="text-[10px] font-bold text-cyan-300"
+                                                >
+                                                  {openTranscripts[photo.id]
+                                                    ? "Skjul tekst"
+                                                    : "Vis transkripsjon"}
+                                                </button>
+                                              )}
+                                            </div>
+
+                                            <audio
+                                              controls
+                                              src={apiAssetUrl(photo.audio_url || "")}
+                                              className="w-full h-9 mt-2"
+                                            />
+
+                                            {openTranscripts[photo.id] &&
+                                              photo.audio_transcript && (
+                                                <div className="mt-3 rounded-xl bg-slate-950 border border-slate-800 p-3">
+                                                  <p className="text-[9px] uppercase tracking-wider font-black text-slate-500 mb-1">
+                                                    Automatisk transkripsjon
+                                                  </p>
+                                                  <p className="text-xs leading-6 text-slate-300 whitespace-pre-wrap">
+                                                    {photo.audio_transcript}
+                                                  </p>
+                                                </div>
+                                              )}
+                                          </div>
+                                        ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                <div>
+                                  <div className="flex items-center justify-between gap-3 mb-2">
+                                    <div>
+                                      <p className="text-[10px] uppercase tracking-wider font-black text-cyan-400">
+                                        Bilder
+                                      </p>
+                                      <p className="text-[10px] text-slate-500 mt-0.5">
+                                        Klikk på bildet for stor visning. Admin kan
+                                        velge hvert bilde inn eller ut av PDF-en.
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  {itemPhotos.length === 0 ? (
+                                    <div className="rounded-xl border border-dashed border-slate-800 p-5 text-center text-[11px] text-slate-600">
+                                      Ingen bilder er knyttet til dette punktet.
+                                    </div>
+                                  ) : (
+                                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+                                      {itemPhotos.filter((photo) => Boolean(photo.photo_url)).map((photo) => {
+                                        const selected = boolValue(
+                                          photo.include_in_report
+                                        );
+                                        const imageUrl = photo.photo_url
+                                          ? apiAssetUrl(photo.photo_url)
+                                          : "";
+
+                                        return (
+                                          <div
+                                            key={photo.id}
+                                            className={`rounded-2xl overflow-hidden border ${
+                                              selected
+                                                ? "border-emerald-500/50 bg-emerald-500/5"
+                                                : "border-slate-800 bg-slate-950"
+                                            }`}
+                                          >
+                                            {imageUrl ? (
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setLightboxUrl(imageUrl)
+                                                }
+                                                className="block w-full aspect-[4/3] bg-slate-900 overflow-hidden"
+                                              >
+                                                <img
+                                                  src={imageUrl}
+                                                  alt={
+                                                    photo.caption_text ||
+                                                    "Dokumentasjonsbilde"
+                                                  }
+                                                  className="w-full h-full object-cover hover:scale-[1.02] transition-transform"
+                                                />
+                                              </button>
+                                            ) : (
+                                              <div className="aspect-[4/3] bg-slate-900 flex items-center justify-center">
+                                                <ImageIcon className="w-7 h-7 text-slate-700" />
+                                              </div>
+                                            )}
+
+                                            <div className="p-3">
+                                              <p className="text-[10px] text-slate-400 line-clamp-2 min-h-[28px]">
+                                                {photo.caption_text ||
+                                                  `Dokumentasjon #${photo.id}`}
+                                              </p>
+
+                                              <button
+                                                type="button"
+                                                disabled={
+                                                  savingPhotoId === photo.id ||
+                                                  !editable ||
+                                                  report.status === "publisert"
+                                                }
+                                                onClick={() =>
+                                                  void togglePhotoForReport(
+                                                    photo,
+                                                    !selected
+                                                  )
+                                                }
+                                                className={`mt-2 w-full px-2 py-2 rounded-xl border text-[10px] font-black flex items-center justify-center gap-1.5 disabled:opacity-50 ${
+                                                  selected
+                                                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                                                    : "bg-slate-900 border-slate-700 text-slate-400"
+                                                }`}
+                                              >
+                                                {savingPhotoId === photo.id ? (
+                                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                ) : selected ? (
+                                                  <Check className="w-3.5 h-3.5" />
+                                                ) : (
+                                                  <Camera className="w-3.5 h-3.5" />
+                                                )}
+                                                {selected
+                                                  ? "Med i PDF"
+                                                  : "Velg inn"}
+                                              </button>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+
+                                <label className="block">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <span className="text-[10px] uppercase tracking-wider font-black text-orange-400">
+                                      Admins slutttekst for punktet
+                                    </span>
+                                    <span className="text-[10px] text-slate-600">
+                                      {(section.admin_text ?? "").length} tegn
+                                    </span>
+                                  </div>
+                                  <textarea
+                                    value={section.admin_text ?? ""}
+                                    onChange={(e) =>
+                                      updateItemSection(key, {
+                                        admin_text: e.target.value,
+                                      })
+                                    }
+                                    readOnly={
+                                      !editable ||
+                                      report.status === "publisert" ||
+                                      !section.included
+                                    }
+                                    rows={5}
+                                    placeholder="Skriv admins kvalitetssikrede vurdering av dette kontrollpunktet..."
+                                    className="mt-2 w-full bg-slate-950 border border-orange-500/20 rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-orange-500/50 read-only:opacity-60"
+                                  />
+                                </label>
+                              </div>
+                            )}
+                          </article>
+                        );
+                      })
+                    )}
+
+                    {(photosByItem.__other__ || []).some((photo) => Boolean(photo.photo_url)) && (
+                      <section className="bg-[#0b0f17] border border-slate-800 rounded-2xl p-5">
+                        <p className="text-[10px] uppercase tracking-wider font-black text-cyan-400">
+                          Øvrig dokumentasjon
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          Bilder eller lyd som ikke er koblet til et bestemt
+                          kontrollpunkt.
+                        </p>
+
+                        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 mt-4">
+                          {photosByItem.__other__.filter((photo) => Boolean(photo.photo_url)).map((photo) => {
+                            const selected = boolValue(
+                              photo.include_in_report
+                            );
+                            const imageUrl = photo.photo_url
+                              ? apiAssetUrl(photo.photo_url)
+                              : "";
+
+                            return (
+                              <div
+                                key={photo.id}
+                                className={`rounded-2xl overflow-hidden border ${
+                                  selected
+                                    ? "border-emerald-500/50"
+                                    : "border-slate-800"
+                                }`}
+                              >
+                                {imageUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setLightboxUrl(imageUrl)}
+                                    className="block w-full aspect-[4/3] bg-slate-900"
+                                  >
+                                    <img
+                                      src={imageUrl}
+                                      alt="Øvrig dokumentasjon"
+                                      className="w-full h-full object-cover"
+                                    />
+                                  </button>
+                                )}
+                                <div className="p-3">
+                                  {photo.audio_url && (
+                                    <audio
+                                      controls
+                                      src={apiAssetUrl(photo.audio_url)}
+                                      className="w-full h-8 mb-2"
+                                    />
+                                  )}
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      savingPhotoId === photo.id ||
+                                      !editable ||
+                                      report.status === "publisert"
+                                    }
+                                    onClick={() =>
+                                      void togglePhotoForReport(
+                                        photo,
+                                        !selected
+                                      )
+                                    }
+                                    className={`w-full px-2 py-2 rounded-xl border text-[10px] font-black disabled:opacity-50 ${
+                                      selected
+                                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                                        : "bg-slate-900 border-slate-700 text-slate-400"
+                                    }`}
+                                  >
+                                    {selected ? "Med i PDF" : "Velg inn"}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    )}
+
+                    <section className="bg-[#0b0f17] border border-slate-800 rounded-2xl overflow-hidden">
+                      <div className="px-5 py-4 border-b border-slate-800">
+                        <p className="text-[10px] uppercase tracking-wider font-black text-orange-400">
+                          Rapportens avsluttende vurderinger
+                        </p>
+                      </div>
+
+                      <div className="p-5 space-y-4">
+                        <label className="block">
+                          <span className="text-[11px] font-extrabold text-slate-300">
+                            4. Anbefalte tiltak
+                          </span>
+                          <textarea
+                            value={adminSections.recommendations}
+                            onChange={(e) =>
+                              updateGlobalSection(
+                                "recommendations",
+                                e.target.value
+                              )
+                            }
+                            readOnly={!editable || report.status === "publisert"}
+                            rows={6}
+                            className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-orange-500/50 read-only:opacity-70"
+                          />
+                        </label>
+
+                        <label className="block">
+                          <span className="text-[11px] font-extrabold text-slate-300">
+                            5. Konsekvenser ved utsatt utbedring
+                          </span>
+                          <textarea
+                            value={adminSections.consequences}
+                            onChange={(e) =>
+                              updateGlobalSection(
+                                "consequences",
+                                e.target.value
+                              )
+                            }
+                            readOnly={!editable || report.status === "publisert"}
+                            rows={4}
+                            className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-orange-500/50 read-only:opacity-70"
+                          />
+                        </label>
+
+                        <label className="block">
+                          <span className="text-[11px] font-extrabold text-slate-300">
+                            6. Forbehold og begrensninger
+                          </span>
+                          <textarea
+                            value={adminSections.limitations}
+                            onChange={(e) =>
+                              updateGlobalSection(
+                                "limitations",
+                                e.target.value
+                              )
+                            }
+                            readOnly={!editable || report.status === "publisert"}
+                            rows={5}
+                            className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs leading-6 text-slate-200 outline-none focus:border-orange-500/50 read-only:opacity-70"
+                          />
+                        </label>
+                      </div>
+                    </section>
+                  </>
+                )}
+
+                <section className="bg-[#0b0f17] border border-slate-800 rounded-2xl p-5">
+                  <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider font-black text-slate-500">
+                        Kommentar ved retur
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-1 leading-5">
+                        Bare nødvendig dersom rapporten returneres til
+                        prosjektansvarlig.
+                      </p>
+                    </div>
+                    <textarea
+                      value={returnNote}
+                      onChange={(e) => setReturnNote(e.target.value)}
+                      disabled={report.status === "publisert"}
+                      rows={3}
+                      placeholder="Eksempel: Kontroller konklusjonen og legg ved nærbilder av oppkant mot gesims."
+                      className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs text-slate-200 outline-none focus:border-red-500/40 disabled:opacity-50"
+                    />
+                  </div>
+                </section>
+              </div>
+
+              <aside className={`${mobilePanel === "sources" ? "hidden xl:block" : ""} min-w-0 bg-[#0b0f17] border border-slate-800 rounded-3xl overflow-hidden xl:sticky xl:top-[96px]`}>
+                <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider font-black text-cyan-400">
+                      PDF-forhåndsvisning
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Viser den eksisterende Taklekkasjevakten-malen. Oppdater etter lagring av tekst eller bildevalg.
+                    </p>
+                    {pdfSrc && <a href={pdfSrc} target="_blank" rel="noopener noreferrer"
+                      className="mt-2 inline-block text-[11px] font-semibold text-cyan-300 hover:underline">Åpne PDF i ny fane</a>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleGeneratePdf}
+                    disabled={
+                      generatingPdf ||
+                      report.status === "publisert" ||
+                      !adminText.trim()
+                    }
+                    className="px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {generatingPdf ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4" />
+                    )}
+                    Oppdater PDF
+                  </button>
+                </div>
+
+                {pdfSrc ? (
+                  <iframe
+                    key={report.pdf_url || "report-pdf"}
+                    title="Rapport PDF"
+                    src={pdfSrc}
+                    className="w-full h-[calc(100vh-250px)] min-h-[720px] bg-white"
+                  />
+                ) : (
+                  <div className="h-[calc(100vh-250px)] min-h-[720px] flex flex-col items-center justify-center px-8 text-center">
+                    <FileText className="w-10 h-10 text-slate-700 mb-3" />
+                    <p className="text-sm font-extrabold text-slate-300">
+                      PDF må oppdateres
+                    </p>
+                    <p className="text-xs text-slate-500 mt-2 max-w-sm">
+                      Lagre kvalitetssikringen og klikk «Oppdater PDF». Valgte
+                      bilder blir hentet fra feltgrunnlaget.
+                    </p>
+                  </div>
+                )}
+              </aside>
+            </section>
+
+            {showOriginal && (
+              <div
+                className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm"
+                onClick={() => setShowOriginal(false)}
+              >
+                <aside
+                  className="absolute left-0 top-0 h-full w-full max-w-2xl bg-[#0b0f17] border-r border-slate-700 shadow-2xl flex flex-col"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider font-black text-slate-500">
+                        Referanse
+                      </p>
+                      <h3 className="text-base font-extrabold mt-1">
+                        Feltteamets originalutkast
+                      </h3>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Skrivebeskyttet original. Punktdata, bilder og lyd ligger
+                        i hovededitoren.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowOriginal(false)}
+                      className="w-10 h-10 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-white"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto whitespace-pre-wrap p-6 text-[13px] leading-7 text-slate-300">
+                    {legacyReportAiText(report.ai_draft) || "Ingen rapporttekst."}
+                  </div>
+                </aside>
+              </div>
+            )}
+
+            {lightboxUrl && (
+              <div
+                className="fixed inset-0 z-[90] bg-black/90 p-4 md:p-8 flex items-center justify-center"
+                onClick={() => setLightboxUrl("")}
+              >
+                <button
+                  type="button"
+                  onClick={() => setLightboxUrl("")}
+                  className="absolute top-5 right-5 w-11 h-11 rounded-xl bg-slate-950/80 border border-slate-700 flex items-center justify-center text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+                <img
+                  src={lightboxUrl}
+                  alt="Dokumentasjonsbilde i stor visning"
+                  className="max-w-full max-h-full object-contain rounded-xl"
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </div>
+            )}
+
+            <section className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] p-4">
+              <div className="mb-4">
+                <p className="text-[10px] font-black uppercase tracking-[0.12em] text-amber-300">
+                  Faglig ansvar · Rapport 1
+                </p>
+                <p className="mt-1 text-xs font-extrabold text-white">
+                  Godkjenning før endelig PDF
+                </p>
+                <p className="mt-1 text-[10px] leading-5 text-slate-500">
+                  Hver godkjenning vises først i rapporten etter at den er aktivert. Begge må være registrert før endelig PDF kan genereres og publiseres.
+                </p>
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-2">
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500">
+                        Feltkontroll
+                      </p>
+                      <p className="mt-1 text-xs font-black text-white">
+                        Miroslav Subanovic
+                      </p>
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        Bygningsingeniør · Perun AS
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setReportApproval(
+                          "rapport1",
+                          report.id,
+                          "field_execution",
+                          !report1FieldApproved
+                        )
+                      }
+                      disabled={approvalBusy === "rapport1-field_execution" || report.status === "publisert"}
+                      className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-extrabold disabled:opacity-50 ${
+                        report1FieldApproved
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                          : "border-slate-700 bg-slate-900 text-slate-300"
+                      }`}
+                    >
+                      {approvalBusy === "rapport1-field_execution" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : report1FieldApproved ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : (
+                        <ShieldCheck className="h-4 w-4" />
+                      )}
+                      {report1FieldApproved ? "Godkjent" : "Godkjenn"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500">
+                        Rapportkontroll
+                      </p>
+                      <p className="mt-1 text-xs font-black text-white">
+                        Marina Alizi
+                      </p>
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        Bygningsingeniør · Perun AS
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setReportApproval(
+                          "rapport1",
+                          report.id,
+                          "report_review",
+                          !report1ReviewApproved
+                        )
+                      }
+                      disabled={approvalBusy === "rapport1-report_review" || report.status === "publisert"}
+                      className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-extrabold disabled:opacity-50 ${
+                        report1ReviewApproved
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                          : "border-slate-700 bg-slate-900 text-slate-300"
+                      }`}
+                    >
+                      {approvalBusy === "rapport1-report_review" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : report1ReviewApproved ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : (
+                        <ShieldCheck className="h-4 w-4" />
+                      )}
+                      {report1ReviewApproved ? "Godkjent" : "Godkjenn"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {report.status !== "publisert" ? (
+              <section className="sticky bottom-3 z-30 bg-slate-950/95 backdrop-blur border border-slate-700 rounded-2xl p-4 shadow-2xl">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-slate-300 font-bold">
+                      {hasUnsavedChanges
+                        ? "Det finnes ulagrede endringer i punktredigeringen."
+                        : "Punktredigeringen er lagret."}
+                    </p>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Lyd/transkripsjoner publiseres ikke. Kun valgte bilder og
+                      admins slutttekst brukes i rapporten.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 justify-end">
+                    <button
+                      type="button"
+                      onClick={handleSave}
+                      disabled={saving || !adminText.trim()}
+                      className="px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {saving ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Save className="w-4 h-4" />
+                      )}
+                      Lagre
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleReturn}
+                      disabled={returning || !returnNote.trim()}
+                      className="px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {returning ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <RotateCcw className="w-4 h-4" />
+                      )}
+                      Returner
+                    </button>
+
+                    {report.status === "godkjent" ? (
+                      <button
+                        type="button"
+                        onClick={handleGeneratePdf}
+                        disabled={generatingPdf || !adminText.trim() || !report1FullyApproved}
+                        className="px-4 py-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-300 text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
+                      >
+                        {generatingPdf ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-4 h-4" />
+                        )}
+                        {report.pdf_url ? "Oppdater PDF" : "Generer PDF"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleApprove}
+                        disabled={approving || !adminText.trim()}
+                        className="px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
+                      >
+                        {approving ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <ShieldCheck className="w-4 h-4" />
+                        )}
+                        Godkjenn
+                      </button>
+                    )}
+
+                    {report.status === "godkjent" && (
+                      <button
+                        type="button"
+                        onClick={handlePublish}
+                        disabled={
+                          publishing || !adminText.trim() || !report.pdf_url || !report1FullyApproved
+                        }
+                        className="px-5 py-2.5 rounded-xl bg-[#F5B800] hover:bg-amber-400 text-slate-950 text-xs font-black flex items-center gap-2 disabled:opacity-50"
+                      >
+                        {publishing ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Send className="w-4 h-4" />
+                        )}
+                        {isCorrection
+                          ? "Publiser korrigert rapport"
+                          : "Publiser til kunde"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </section>
+            ) : (
+              <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-extrabold text-cyan-300">
+                    Rapporten er publisert til kunden.
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Publisert versjon er låst. Admin kan åpne en intern
+                    korrigering ved behov.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleReopenPublished}
+                  disabled={reopening}
+                  className="px-4 py-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-cyan-300 text-xs font-extrabold flex items-center gap-2 disabled:opacity-50"
+                >
+                  {reopening ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4" />
+                  )}
+                  Korriger publisert rapport
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </main>
+    </div>
+  );
+}

@@ -1,0 +1,125 @@
+import { useEffect, useState } from "react";
+import { ExternalLink, Loader2, ShieldCheck } from "lucide-react";
+
+const API = "https://api.perun.no/api/core/tlv_heritage_review.php";
+const LOOKUP = "https://api.perun.no/api/core/tlv_heritage_lookup.php";
+type Candidate = { layer: string; feature_id: string; attributes: Record<string,string> };
+type Review = {
+  protection_status: string; material_assessment: string; source_url: string;
+  checked_at: string; review_notes: string; material_notes: string; approval_notes: string;
+};
+const EMPTY: Review = { protection_status: "not_checked", material_assessment: "not_assessed", source_url: "", checked_at: "", review_notes: "", material_notes: "", approval_notes: "" };
+const STATUS = [
+  ["not_checked", "Ikke kontrollert"], ["protected", "Rød – fredet"],
+  ["regulated", "Oransje – regulert til bevaring"], ["listed", "Gul – listeført"],
+  ["no_record_found", "Ingen registrering funnet (ikke bekreftelse på fravær av vern)"],
+  ["uncertain", "Uavklart – krever nærmere kontroll"],
+];
+const MATERIALS = [
+  ["not_assessed", "Ikke vurdert"], ["traditional_first", "Historiske materialer vurderes først"],
+  ["modern_possible_review", "Moderne materialer kan vurderes – ikke godkjent"],
+  ["authority_required", "Avklar med vernemyndighet før materialvalg"],
+];
+export default function HeritageMaterialReview({ inquiryId, address }: { inquiryId: number; address: string }) {
+  const [form, setForm] = useState<Review>(EMPTY);
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [lookupMessage, setLookupMessage] = useState("");
+  const [lookupDate, setLookupDate] = useState("");
+  const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [coordinateSource, setCoordinateSource] = useState("");
+  const [latitude, setLatitude] = useState("");
+  const [longitude, setLongitude] = useState("");
+  async function lookup() {
+    if (lookupBusy) return;
+    setLookupBusy(true); setLookupMessage(""); setCandidates(null); setWarnings([]);
+    try {
+      const url = new URL(LOOKUP);
+      url.searchParams.set("inquiry_id", String(inquiryId));
+      if (latitude.trim() && longitude.trim()) {
+        url.searchParams.set("lat", latitude.replace(",", "."));
+        url.searchParams.set("lon", longitude.replace(",", "."));
+      }
+      const response = await fetch(url.toString(), { credentials: "include", cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || `HTTP ${response.status}`);
+      setCandidates(Array.isArray(data.candidates) ? data.candidates : []);
+      setWarnings(Array.isArray(data.warnings) ? data.warnings : []);
+      setCoordinateSource(data.coordinates?.source || "");
+      setLookupDate(data.checked_at || "");
+      if (data.coordinates?.source === "core_project" || data.coordinates?.source === "supplied_unverified") {
+        setLatitude(String(data.coordinates.lat)); setLongitude(String(data.coordinates.lon));
+      }
+      setLookupMessage(data.disclaimer || "Mulige treff funnet. Kontroller riktig bygning.");
+    } catch (e) {
+      setLookupMessage(`${e instanceof Error ? e.message : "Oppslag mislyktes."} Kontroller eventuell Core-innlogging og nettleserens Network-fane. Ingen vernestatus er fastslått.`);
+    } finally { setLookupBusy(false); }
+  }
+  const edit = (key: keyof Review, value: string) => { setForm(p => ({ ...p, [key]: value })); setSaved(false); setMessage(""); };
+  useEffect(() => {
+    let active = true; setLoading(true); setError(""); setForm(EMPTY);
+    void fetch(`${API}?inquiry_id=${encodeURIComponent(inquiryId)}`, { credentials: "include", cache: "no-store" })
+      .then(async response => { const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.message || `HTTP ${response.status}`); return data; })
+      .then(data => { if (active) { setForm({ ...EMPTY, ...Object.fromEntries(Object.entries(data.review || {}).map(([k,v]) => [k,v ?? ""])) }); setSaved(Boolean(data.review)); } })
+      .catch(e => { if (active) setError(e instanceof Error ? e.message : "Kunne ikke lese vernestatus."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [inquiryId]);
+  async function save() {
+    if (busy) return;
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const response = await fetch(API, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ inquiry_id: inquiryId, ...form }) });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || `HTTP ${response.status}`);
+      setSaved(true); setMessage("Kontrollen er lagret på riktig Core-prosjekt.");
+    } catch (e) { setError(e instanceof Error ? e.message : "Lagring feilet"); }
+    finally { setBusy(false); }
+  }
+  const input = "w-full rounded-lg border border-slate-700 bg-[#170d1b] px-3 py-2 text-sm text-white";
+  return <section className="mt-5 rounded-2xl border border-amber-500/30 bg-[#1b101d] p-5 space-y-4">
+    <div className="flex items-start gap-3"><ShieldCheck className="h-6 w-6 text-amber-300" /><div>
+      <h3 className="font-bold text-white">Vernestatus og materialkrav</h3>
+      <p className="text-xs text-slate-300">{address} · Kontroll mot offentlige kilder og faglig vurdering. Ingen automatisk godkjenning.</p>
+    </div></div>
+    <div className="flex flex-wrap gap-3 text-sm">
+      <a className="inline-flex gap-1 text-cyan-300 underline" href="https://www.oslo.kommune.no/plan-bygg-og-eiendom/kulturminner-og-kulturmiljo/gul-liste/" target="_blank" rel="noopener noreferrer">Oslo – Gul liste <ExternalLink size={14}/></a>
+      <a className="inline-flex gap-1 text-cyan-300 underline" href="https://www.kulturminnesok.no/" target="_blank" rel="noopener noreferrer">Riksantikvaren – Kulturminnesøk <ExternalLink size={14}/></a>
+    </div>
+    <div className="rounded-xl border border-cyan-600/40 bg-slate-950/40 p-4 space-y-3">
+      <h4 className="text-sm font-bold text-cyan-200">Automatisk registerkontroll – kandidater</h4>
+      <p className="text-xs text-slate-300">Søker i Riksantikvarens offentlige WFS-data innen ca. 30 meter. Treffer kan gjelde nabobygg eller områder. Oslo Gul liste og reguleringsplan må kontrolleres særskilt før materialvalg.</p>
+      <div className="grid gap-3 md:grid-cols-2">
+        <label className="text-xs text-slate-300">Breddegrad (hvis Core mangler koordinater)<input type="text" inputMode="decimal" className="mt-1 w-full rounded-lg border border-slate-700 bg-[#170d1b] px-3 py-2 text-white" value={latitude} onChange={e=>setLatitude(e.target.value)} placeholder="59.92" /></label>
+        <label className="text-xs text-slate-300">Lengdegrad<input type="text" inputMode="decimal" className="mt-1 w-full rounded-lg border border-slate-700 bg-[#170d1b] px-3 py-2 text-white" value={longitude} onChange={e=>setLongitude(e.target.value)} placeholder="10.75" /></label>
+      </div>
+      <button type="button" disabled={lookupBusy} onClick={()=>void lookup()} className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{lookupBusy ? "Søker i register…" : "Kjør automatisk vernekontroll"}</button>
+      {lookupDate && <p className="text-xs text-slate-400">Oppslag: {lookupDate} · Koordinatkilde: {coordinateSource === "core_project" ? "Perun Core" : "Manuelt oppgitt – ikke verifisert"}</p>}
+      {lookupMessage && <p role="status" className="text-xs text-amber-200">{lookupMessage}</p>}
+      {candidates !== null && <div className="space-y-2"><p className="text-sm font-bold text-white">{candidates.length} mulige registertreff {candidates.length===0 ? "– betyr ikke at bygget mangler vern" : "– verifiser hvert treff"}</p>
+        {candidates.slice(0,35).map((candidate,i)=><div key={`${candidate.layer}-${candidate.feature_id}-${i}`} className="rounded-lg border border-slate-700 p-3 text-xs text-slate-200"><div className="font-semibold text-cyan-200">{candidate.layer} · {candidate.feature_id}</div>{Object.entries(candidate.attributes).map(([key,value])=><div key={key}><strong>{key}:</strong> {value}</div>)}</div>)}
+      </div>}
+      {warnings.map((warning,i)=><p key={i} className="text-xs text-amber-300">{warning}</p>)}
+      <div className="flex gap-4 text-xs"><a href="https://od2.pbe.oslo.kommune.no/kart/?mode=gulliste" target="_blank" rel="noreferrer" className="text-cyan-300 underline">Oslo Gul liste-kart</a><a href="https://od2.pbe.oslo.kommune.no/kart/?mode=kommuneplan" target="_blank" rel="noreferrer" className="text-cyan-300 underline">Planinnsyn</a></div>
+      <p className="text-xs text-slate-400">Oppslaget fyller ikke automatisk inn en juridisk vernestatus og gir ingen materialgodkjenning. Bekreft og dokumenter vurderingen i feltene nedenfor.</p>
+    </div>
+    <p className="text-xs text-amber-200">Kontroller at registreringen gjelder riktig bygning og ikke bare en tilgrensende eiendom. Planbestemmelser/fredningsvedtak går foran denne faglige oppsummeringen.</p>
+    {loading ? <p className="text-slate-300">Laster kontroll…</p> : <>
+      <div className="grid gap-3 md:grid-cols-2">
+        <label className="space-y-1 text-xs text-slate-300">Vernestatus<select className={input} value={form.protection_status} onChange={e=>edit("protection_status",e.target.value)}>{STATUS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>
+        <label className="space-y-1 text-xs text-slate-300">Materialvurdering<select className={input} value={form.material_assessment} onChange={e=>edit("material_assessment",e.target.value)}>{MATERIALS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>
+        <label className="space-y-1 text-xs text-slate-300">Kilde (HTTPS-lenke)<input className={input} value={form.source_url} onChange={e=>edit("source_url",e.target.value)} placeholder="https://..." /></label>
+        <label className="space-y-1 text-xs text-slate-300">Dato kontrollert<input className={input} type="date" value={form.checked_at} onChange={e=>edit("checked_at",e.target.value)} /></label>
+      </div>
+      {([ ["review_notes","Registrering, grunnlag og vernebestemmelser"], ["material_notes","Materialer og metoder (eksisterende og anbefalte)"], ["approval_notes","Avklaring / tillatelser / forbehold"] ] as const).map(([key,label])=><label key={key} className="block space-y-1 text-xs text-slate-300">{label}<textarea className={input} rows={3} value={form[key]} onChange={e=>edit(key,e.target.value)} /></label>)}
+      {error && <p role="alert" className="text-sm text-rose-300">{error === "Failed to fetch" ? "Tilkobling til Perun Core mislyktes. Kontroller innlogging/Network (CORS, cookie eller nettverk). Ingen opplysninger er lagret." : error}</p>}
+      {message && <p role="status" className="text-sm text-emerald-300">{message}</p>}
+      <div className="flex items-center gap-3"><button type="button" disabled={busy} onClick={()=>void save()} className="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin"/> : "Lagre i Perun Core"}</button><span className="text-xs text-slate-400">{saved ? "Tidligere registrert – kontroller om vurderingen fortsatt gjelder" : "Ikke lagret"}</span></div>
+    </>}
+  </section>;
+}

@@ -1,0 +1,162 @@
+import { useEffect, useState } from "react";
+import { AlertTriangle, ExternalLink, FileText, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { apiUrl } from "../lib/api";
+
+type HeritageItem = { layer?: string; feature_id?: string; attributes?: Record<string, unknown> };
+type HeritageResponse = {
+  success?: boolean; message?: string; checked_at?: string;
+  direct_matches?: HeritageItem[]; warnings?: string[];
+  cache?: { checked_at?: string; source?: string; refresh_failed?: boolean };
+};
+type PlanDocument = { url?: string; error?: string; supersession_notice_detected?: boolean; excerpts?: { line?: number; text?: string }[] };
+type PlanResponse = {
+  success?: boolean; message?: string; checked_at?: string; address?: string;
+  plan_data?: { plan_ids?: (string | number)[]; documents?: Record<string, PlanDocument>;
+    layers?: Record<string, { checked?: boolean; features?: unknown[] }>; errors?: string[] };
+};
+type ScopeItem = { code?: string; label?: string; visibility?: string; evidence?: { excerpt?: string }[] };
+type WorkResponse = {
+  success?: boolean;
+  message?: string;
+  work?: {
+    source?: { kind?: string; number?: string | null; status?: string; reliability?: string } | null;
+    scope_items?: ScopeItem[];
+    notes?: string[];
+    assessment?: { state?: string; explanation?: string };
+  };
+  assessment_status?: string;
+  decision_note?: string;
+};
+const visibilityText: Record<string, string> = {
+  primarily_concealed: "Hovedsakelig skjult arbeid",
+  potentially_visible: "Kan påvirke synlig utforming",
+  visible: "Synlig utvendig arbeid",
+};
+const labels: Record<string, string> = {
+  KOM: "Kommunalt listeført", AUT: "Automatisk fredet", VED: "Vedtaksfredet",
+  FOR: "Forskriftsfredet", PBL: "Vern etter plan- og bygningsloven"
+};
+const asText = (value: unknown): string => typeof value === "string" || typeof value === "number" ? String(value) : "";
+const safeOfficialUrl = (value: string): boolean => /^https:\/\/(?:www\.)?(?:kulturminnesok\.no|askeladden\.ra\.no)\//i.test(value);
+const safePlanUrl = (value: string): boolean => /^https:\/\/innsyn\.pbe\.oslo\.kommune\.no\/saksinnsyn\/showregbest\.asp\?planid=\d+$/i.test(value);
+
+export default function CombinedHeritageAssessment({ inquiryId, address }: { inquiryId: number; address: string }) {
+  const [heritage, setHeritage] = useState<HeritageResponse | null>(null);
+  const [plans, setPlans] = useState<PlanResponse | null>(null);
+  const [workData, setWorkData] = useState<WorkResponse | null>(null);
+  const [workError, setWorkError] = useState("");
+  const [heritageError, setHeritageError] = useState("");
+  const [planError, setPlanError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [forceRefresh, setForceRefresh] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    const abort = new AbortController();
+    setBusy(true); setHeritageError(""); setPlanError(""); setWorkError(""); setHeritage(null); setPlans(null); setWorkData(null);
+    const load = async () => {
+      const heritageUrl = new URL(apiUrl("/tlv_heritage_lookup_bridge.php"), window.location.href);
+      heritageUrl.searchParams.set("inquiry_id", String(inquiryId));
+      if (forceRefresh) heritageUrl.searchParams.set("refresh", "1");
+      const planUrl = new URL(apiUrl("/tlv_plan_protection_bridge.php"), window.location.href);
+      planUrl.searchParams.set("inquiry_id", String(inquiryId));
+      const workUrl = new URL(apiUrl("/tlv_work_protection_bridge.php"), window.location.href);
+      workUrl.searchParams.set("inquiry_id", String(inquiryId));
+      const get = async <T,>(url: URL): Promise<T> => {
+        const response = await fetch(url.toString(), { credentials: "include", cache: "no-store", signal: abort.signal });
+        const json = await response.json() as T & { success?: boolean; message?: string };
+        if (!response.ok || !json.success) throw new Error(json.message || `HTTP ${response.status}`);
+        return json;
+      };
+      await Promise.all([
+        get<HeritageResponse>(heritageUrl).then(v => { if (!abort.signal.aborted) setHeritage(v); }).catch(e => { if (!abort.signal.aborted) setHeritageError(e instanceof Error ? e.message : "Registerkontroll feilet."); }),
+        get<PlanResponse>(planUrl).then(v => { if (!abort.signal.aborted) setPlans(v); }).catch(e => { if (!abort.signal.aborted) setPlanError(e instanceof Error ? e.message : "Plankontroll feilet."); }),
+        get<WorkResponse>(workUrl).then(v => { if (!abort.signal.aborted) setWorkData(v); }).catch(e => { if (!abort.signal.aborted) setWorkError(e instanceof Error ? e.message : "Arbeidsvurderingen kunne ikke hentes."); })
+      ]);
+      if (!abort.signal.aborted) setBusy(false);
+    };
+    void load();
+    return () => abort.abort();
+  }, [inquiryId, refreshKey, forceRefresh]);
+
+  const matches = Array.isArray(heritage?.direct_matches) ? heritage.direct_matches : [];
+  const primary = matches.find(m => m.layer === "app:Enkeltminne") || matches[0];
+  const code = asText(primary?.attributes?.vernetype).toUpperCase();
+  const label = primary ? (labels[code] || `Registrert vernetype ${code || "ukjent"}`)
+    : heritage ? (heritage.warnings?.length ? "Registerkontroll med merknader" : "Ingen direkte registertreff") : "Registerstatus ikke tilgjengelig";
+  const heritageId = asText(primary?.attributes?.kulturminneId || primary?.feature_id);
+  const officialUrl = asText(primary?.attributes?.linkKulturminnesøk || primary?.attributes?.linkAskeladden);
+  const ids = plans?.plan_data?.plan_ids || [];
+  const documents = Object.entries(plans?.plan_data?.documents || {});
+  const hasOldPlanWarning = documents.some(([,doc]) => doc.supersession_notice_detected ||
+    (doc.excerpts || []).some(ex => /helt eller delvis opphevet|opphevet som følge av/i.test(ex.text || "")));
+  const planErrors = plans?.plan_data?.errors || [];
+  const protectionLayers = ["RBBEVARINGOMRAADE", "RPANGITTHENSYNSONE_2", "RPBESTEMMELSEOMRAADE_2", "RPBAANDLEGGINGSONE_2"];
+  const areaHits = protectionLayers.flatMap(name => {
+    const layer = plans?.plan_data?.layers?.[name];
+    return layer?.checked && Array.isArray(layer.features) && layer.features.length > 0 ? [{ name, count: layer.features.length }] : [];
+  });
+
+  return <section className="mt-4 space-y-4 text-slate-100" aria-label="Samlet vernestatus og planopplysninger">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-amber-300" />
+        <div><h3 className="font-bold text-white">Vernestatus og planbestemmelser</h3><p className="text-xs text-slate-400">{address || `Sak ${inquiryId}`}</p></div>
+      </div>
+      <button type="button" disabled={busy} onClick={() => { setForceRefresh(true); setRefreshKey(n => n + 1); }} className="inline-flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-2 text-xs font-semibold disabled:opacity-50"><RefreshCw className="h-4 w-4" />Oppdater kontroll</button>
+    </div>
+    {busy && <p className="flex items-center gap-2 text-xs text-slate-300"><Loader2 className="h-4 w-4 animate-spin" />Henter offentlige kilder …</p>}
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+      <p className="text-[11px] font-bold uppercase tracking-wide text-amber-300">Registrert vernestatus</p>
+      <p className="mt-1 text-lg font-bold text-white">{label}</p>
+      {primary && <p className="mt-1 text-xs text-slate-300">Kode: {code || "ukjent"}{heritageId ? ` · Kulturminne-ID: ${heritageId}` : ""}</p>}
+      {heritage && <p className="mt-2 text-xs text-slate-400">Registerkontroll: {heritage.cache?.checked_at || heritage.checked_at || "Dato ikke oppgitt"}</p>}
+      {officialUrl && safeOfficialUrl(officialUrl) && <a className="mt-2 inline-flex items-center gap-1 text-sm text-cyan-300 underline" href={officialUrl} target="_blank" rel="noopener noreferrer">Offisiell registrering <ExternalLink className="h-3.5 w-3.5" /></a>}
+      {code === "KOM" && <p className="mt-3 text-sm text-slate-200">Kommunal listeføring dokumenterer kulturhistorisk verneverdi. Listeføring er ikke i seg selv fredning.</p>}
+      {!primary && heritage && <p className="mt-2 text-sm text-slate-300">Manglende treff her dokumenterer ikke at eiendommen er uten andre vernebegrensninger.</p>}
+      {heritageError && <p role="alert" className="mt-2 text-sm text-rose-300">Kulturminnedata: {heritageError}</p>}
+    </div>
+    <div className="rounded-xl border border-slate-700 p-4 space-y-3">
+      <div className="flex items-center gap-2"><FileText className="h-4 w-4 text-cyan-300" /><h4 className="font-bold">Planer og bestemmelser</h4></div>
+      {plans && <p className="text-sm">{ids.length ? `Plan-ID: ${ids.join(", ")}` : "Ingen planobjekter returnert fra den undersøkte tjenesten."}</p>}
+      {hasOldPlanWarning && <div className="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-100"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><p>Minst ett plandokument er merket helt eller delvis opphevet. Dokumentutdragene nedenfor er historiske kildefunn, ikke bekreftede gjeldende krav.</p></div>}
+      {areaHits.length > 0 && <p className="text-sm text-amber-200">Mulige hensyns-/bevaringsområder i kartdata: {areaHits.map(x => `${x.name} (${x.count})`).join(", ")}. Karttreff alene fastsetter ikke rettsvirkning.</p>}
+      {documents.map(([planId, doc]) => <div key={planId} className="rounded-lg border border-slate-700 bg-slate-900/40 p-3 space-y-2">
+        <div className="flex flex-wrap justify-between gap-2"><strong className="text-sm">Plan {planId}</strong>{doc.url && safePlanUrl(doc.url) && <a href={doc.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-cyan-300 underline">Offisielt dokument <ExternalLink className="h-3 w-3" /></a>}</div>
+        {doc.error && <p className="text-sm text-rose-300">Dokumentfeil: {doc.error}</p>}
+        {(doc.excerpts || []).map((ex, i) => <p key={`${planId}-${i}`} className="text-sm leading-6 text-slate-200">{ex.text}</p>)}
+      </div>)}
+      {planError && <p role="alert" className="text-sm text-rose-300">Planopplysninger: {planError}</p>}
+      {planErrors.length > 0 && <p className="text-sm text-amber-200">Kildeproblemer: {planErrors.join(" · ")}</p>}
+      {plans && <p className="text-xs text-slate-400">Planoppslag: {plans.checked_at || "Tidspunkt ikke oppgitt"}</p>}
+    </div>
+    <div className="rounded-xl border border-cyan-500/25 bg-slate-950/50 p-4 space-y-3">
+      <div className="flex items-center gap-2"><FileText className="h-4 w-4 text-cyan-300" /><h4 className="font-bold">Arbeid som skal vurderes</h4></div>
+      {workData?.work?.source ? <>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-semibold text-white">{workData.work.source.number || "Arbeidsgrunnlag fra rapport"}</span>
+          <span className="rounded-md border border-slate-600 px-2 py-1 text-xs text-slate-300">{workData.work.source.status || "Status ukjent"}</span>
+        </div>
+        {workData.work.source.reliability === "published_proposal_not_accepted" && <p className="text-sm text-amber-200">Tilbudet er publisert, men ikke akseptert. Dette er foreslått arbeid, ikke en bestilling.</p>}
+        {workData.work.source.reliability === "draft_preliminary" && <p className="text-sm text-amber-200">Arbeidsgrunnlaget kommer fra et rapportutkast og er foreløpig.</p>}
+        {Array.isArray(workData.work.scope_items) && workData.work.scope_items.length > 0
+          ? <div className="grid gap-2 sm:grid-cols-2">{workData.work.scope_items.map((item, i) => <div key={`${item.code || "arbeid"}-${i}`} className="rounded-lg border border-slate-700 bg-slate-900/40 p-3 space-y-1">
+              <p className="text-sm font-semibold text-white">{item.label || item.code || "Arbeidsoppgave"}</p>
+              <p className="text-xs text-cyan-200">{visibilityText[item.visibility || ""] || "Synlighet ikke klassifisert"}</p>
+              {item.evidence?.[0]?.excerpt && <p className="text-xs leading-5 text-slate-400 line-clamp-3" title={item.evidence[0].excerpt}>{item.evidence[0].excerpt}</p>}
+            </div>)}</div>
+          : <p className="text-sm text-slate-400">Ingen konkrete arbeidsoppgaver er klassifisert fra dette grunnlaget.</p>}
+        {(workData.work.notes || []).map((note, i) => <p key={i} className="text-xs text-amber-200">{note}</p>)}
+      </> : !busy && !workError ? <p className="text-sm text-slate-400">Arbeidsgrunnlag er ikke tilgjengelig for saken.</p> : null}
+      {workError && <p role="alert" className="text-sm text-amber-200">Arbeidsgrunnlag kunne ikke hentes: {workError}. Kulturminne- og plandata kan fortsatt vises.</p>}
+      {workData?.decision_note && <p className="text-xs text-slate-400">{workData.decision_note}</p>}
+    </div>
+    <div className="rounded-xl border border-cyan-500/20 bg-slate-950/50 p-4 space-y-2">
+      <h4 className="font-bold">Beslutningsgrunnlag for arbeidet</h4>
+      <p className="text-sm leading-6 text-slate-200">{code === "KOM" ? "KOM-registreringen alene er ikke et generelt forbud mot ordinært vedlikehold." : "Registerstatus og planfunn må vurderes etter sin faktiske rettsvirkning."} {hasOldPlanWarning ? "De identifiserte eldre planbestemmelsene kan ikke alene brukes som gjeldende krav." : "Kart- og dokumentfunn alene bekrefter ikke hvilke bestemmelser som gjelder for det konkrete tiltaket."}</p>
+      <p className="text-xs text-slate-400">Denne visningen angir dokumenterte kildefunn. Den avgjør ikke søknadsplikt eller tiltaksrett uten kontroll av gjeldende bestemmelser og arbeidsbeskrivelsen.</p>
+    </div>
+    {(heritage || plans) && <button type="button" className="text-xs text-cyan-300 underline" onClick={() => setExpanded(v => !v)}>{expanded ? "Skjul kildeinformasjon" : "Vis kildeinformasjon"}</button>}
+    {expanded && <div className="rounded-lg border border-slate-700 p-3 text-xs text-slate-400 space-y-1"><p>Kulturminner: {heritage?.cache?.source || "Offentlig register"}</p><p>Planer: Oslo kommune / Planinnsyn</p><p>Plan-ID-er: {ids.join(", ") || "Ikke tilgjengelig"}</p><p>Sist hentet: {plans?.checked_at || heritage?.checked_at || "Ukjent"}</p></div>}
+  </section>;
+}

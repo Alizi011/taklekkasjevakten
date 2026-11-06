@@ -1,0 +1,140 @@
+import { useEffect, useState } from "react";
+import { apiUrl } from "../lib/api";
+
+type Proposal = {
+  id: number;
+  version_no: number;
+  status: string;
+  proposed_start_date: string;
+  estimated_duration: string;
+};
+
+type Props = {
+  inquiryId: number;
+  sessionToken: string;
+  offerAccepted: boolean;
+  previewMode?: boolean;
+  onOpenAgreement: () => void;
+};
+
+const stages = [
+  "Oppfølgingstilbud",
+  "Bekreft oppstart",
+  "Arbeidsavtale",
+  "Signering",
+  "Utførelse",
+  "Rapport 2",
+];
+
+export default function CustomerFollowupTimeline({
+  inquiryId,
+  sessionToken,
+  offerAccepted,
+  previewMode = false,
+  onOpenAgreement,
+}: Props) {
+  const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!offerAccepted || previewMode || !sessionToken || !inquiryId) return;
+    const controller = new AbortController();
+    const load = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch(apiUrl("/customer_agreement_schedule.php"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          signal: controller.signal,
+          body: JSON.stringify({ action: "list", inquiry_id: inquiryId, session_token: sessionToken }),
+        });
+        const data = await response.json();
+        if (!response.ok || data?.success !== true) throw new Error(data?.message || "Kunne ikke hente datoforslaget.");
+        if (!controller.signal.aborted) {
+          const rows = (Array.isArray(data.proposals) ? data.proposals : []) as Proposal[];
+          setProposal([...rows].sort((a, b) => Number(b.version_no) - Number(a.version_no) || Number(b.id) - Number(a.id))[0] ?? null);
+          setError("");
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "Kunne ikke hente datoforslaget.");
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    };
+    void load();
+    return () => controller.abort();
+  }, [offerAccepted, previewMode, sessionToken, inquiryId]);
+
+  if (!offerAccepted) return null;
+  if (previewMode) return (
+    <section className="mt-6 rounded-2xl border border-cyan-500/25 bg-[#101c2d] p-5 text-white" aria-label="Videre tiltak og arbeidsavtale">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-cyan-300">Ny fase · videre tiltak</p>
+      <h3 className="mt-2 text-lg font-black">Arbeidsavtale og utbedring</h3>
+      <p className="mt-2 text-xs leading-5 text-slate-300">Tilbudet er akseptert. Oppstartsgodkjenning, avtale og signering håndteres i kundens sikre portal. Forhåndsvisningen har ikke tilgang til personlige kundehandlinger.</p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {stages.map((label, index) => <span key={label} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300">{index+1}. {label}</span>)}
+      </div>
+    </section>
+  );
+
+  const approved = proposal?.status === "approved";
+  const current = approved ? 2 : 1;
+  const summary = proposal
+    ? `${proposal.proposed_start_date} · ${proposal.estimated_duration}`
+    : "Oppstart og varighet er ikke registrert ennå";
+  const statusText = loading
+    ? "Henter oppstartsinformasjon …"
+    : error
+      ? "Kunne ikke oppdatere avtalestatus"
+      : approved
+        ? "Dato godkjent – arbeidsavtale behandles"
+        : proposal?.status === "pending_customer"
+          ? "Avventer kundens bekreftelse"
+          : proposal?.status === "change_requested"
+            ? "Endring av dato er etterspurt"
+            : "Oppstart må avklares";
+
+  return (
+    <section className="mt-6 rounded-2xl border border-cyan-500/25 bg-[#101c2d] p-5 text-white" aria-label="Videre tiltak og arbeidsavtale">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-cyan-300">Ny fase · videre tiltak</p>
+      <h3 className="mt-1 text-lg font-black">Arbeidsavtale og utbedring</h3>
+      <p className="mt-2 text-xs leading-5 text-slate-300">Det opprinnelige lekkasjesøket og Rapport 1 er en egen, tidligere fase. Her følger du videre utbedringsarbeid.</p>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {stages.map((label, index) => {
+          const done = index === 0 || (index === 1 && approved);
+          const active = index === current;
+          return (
+            <div key={label} className={`rounded-xl border p-3 ${active ? "border-amber-500/40 bg-amber-500/10" : "border-slate-700 bg-slate-950/40"}`}>
+              <div className="flex items-center gap-2">
+                <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${done ? "bg-emerald-500/20 text-emerald-300" : active ? "bg-amber-500/20 text-amber-200" : "bg-slate-800 text-slate-400"}`}>
+                  {done ? "✓" : index + 1}
+                </span>
+                <span className="text-xs font-bold">{label}</span>
+              </div>
+              <p className="mt-2 text-[11px] leading-5 text-slate-300">
+                {index === 0 ? "Akseptert av kunden" :
+                  index === 1 ? statusText :
+                  index === 2 ? "Avventer bekreftet oppstart og avtaledokument" :
+                  index === 3 ? "Signaturer skal verifiseres" :
+                  index === 4 ? "Utførelse dokumenteres separat" :
+                  "Publiseres etter utførelse og godkjenning"}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-700 pt-4">
+        <div>
+          <p className="text-xs font-bold">{statusText}</p>
+          {proposal && <p className="mt-1 text-xs text-slate-300">Registrert oppstart: {summary}</p>}
+          {error && <p role="alert" className="mt-1 text-xs text-amber-300">{error}</p>}
+        </div>
+        <button type="button" onClick={onOpenAgreement} className="rounded-xl bg-amber-400 px-4 py-2.5 text-xs font-bold text-slate-950 hover:bg-amber-300">
+          {approved ? "Se arbeidsavtalen" : "Bekreft oppstart og fortsett"}
+        </button>
+      </div>
+    </section>
+  );
+}

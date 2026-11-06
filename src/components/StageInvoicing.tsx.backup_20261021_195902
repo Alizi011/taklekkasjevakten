@@ -1,0 +1,116 @@
+import { useEffect, useState } from "react";
+
+const CORE_API = "https://api.perun.no/api";
+const STAGES = [
+  { key: "lekkasjesok", label: "Lekkasjesøk" },
+  { key: "varig_utbedring", label: "Varig utbedring" },
+  { key: "service", label: "Service / midlertidig utbedring" },
+  { key: "takkontroll", label: "Takkontroll" },
+] as const;
+type StageKey = typeof STAGES[number]["key"];
+type InvoiceDoc = { document_id: number; original_name: string; created_at: string };
+type StageData = { invoiced: boolean; documents: InvoiceDoc[] };
+type ApiPayload = {
+  success: boolean; message?: string; project_id?: number;
+  document_id?: number; document?: { id: number };
+  stages?: Partial<Record<StageKey, StageData>>;
+};
+
+async function readJson(response: Response): Promise<ApiPayload> {
+  const raw = await response.text();
+  let data: ApiPayload;
+  try { data = JSON.parse(raw) as ApiPayload; }
+  catch { throw new Error(`Ugyldig serversvar (HTTP ${response.status}).`); }
+  if (!response.ok || !data.success) {
+    if ([401, 403].includes(response.status)) {
+      throw new Error("Du må være innlogget i Perun Core som admin/prosjektleder for å administrere fakturakopier.");
+    }
+    throw new Error(data.message || `HTTP ${response.status}`);
+  }
+  return data;
+}
+
+export default function StageInvoicing({ inquiryId }: { inquiryId: number }) {
+  const [projectId, setProjectId] = useState<number | null>(null);
+  const [stages, setStages] = useState<Partial<Record<StageKey, StageData>>>({});
+  const [selected, setSelected] = useState<StageKey>("lekkasjesok");
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function load() {
+    const result = await readJson(await fetch(
+      `${CORE_API}/core/tlv_stage_invoice_links.php?inquiry_id=${encodeURIComponent(inquiryId)}`,
+      { credentials: "include", cache: "no-store" }
+    ));
+    setProjectId(Number(result.project_id));
+    setStages(result.stages ?? {});
+  }
+  useEffect(() => {
+    let active = true;
+    setError(""); setProjectId(null); setStages({});
+    void (async () => {
+      try {
+        const result = await readJson(await fetch(
+          `${CORE_API}/core/tlv_stage_invoice_links.php?inquiry_id=${encodeURIComponent(inquiryId)}`,
+          { credentials: "include", cache: "no-store" }
+        ));
+        if (active) { setProjectId(Number(result.project_id)); setStages(result.stages ?? {}); }
+      } catch (e) { if (active) setError(e instanceof Error ? e.message : "Kunne ikke hente fakturaer"); }
+    })();
+    return () => { active = false; };
+  }, [inquiryId]);
+
+  async function upload() {
+    if (!file || !projectId || busy) return;
+    if (file.type !== "application/pdf") { setError("Velg en fakturakopi i PDF-format."); return; }
+    setBusy(true); setError(""); setMessage("");
+    try {
+      // Gjenbruker eksisterende Perun Core-prosjektopplasting. Ingen ny lagringsrutine.
+      const body = new FormData();
+      body.append("project_id", String(projectId));
+      body.append("kind", "invoice");
+      body.append("description", `TLV sak ${inquiryId} – ${STAGES.find(s => s.key === selected)?.label} – fakturakopi`);
+      body.append("file", file);
+      const uploaded = await readJson(await fetch(`${CORE_API}/core/project_history_upload.php`, {
+        method: "POST", credentials: "include", body
+      }));
+      const documentId = Number(uploaded.document?.id ?? uploaded.document_id ?? 0);
+      if (!documentId) throw new Error("Filen ble mottatt, men dokument-ID mangler. Kontroller dokumentet i Core før nytt forsøk.");
+      await readJson(await fetch(`${CORE_API}/core/tlv_stage_invoice_links.php`, {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inquiry_id: inquiryId, stage_key: selected, document_id: documentId })
+      }));
+      await load();
+      setFile(null);
+      setMessage("Fakturakopien er lagret på riktig prosjekt og arbeidsetappe.");
+    } catch (e) { setError(e instanceof Error ? e.message : "Kunne ikke lagre fakturakopien"); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <section className="rounded-2xl border border-slate-700 bg-slate-950/50 p-5 space-y-4">
+      <h3 className="font-bold text-white">Fakturering per arbeidsetappe</h3>
+      <p className="text-xs text-slate-300">Fakturert = Ja først når en fakturakopi er registrert. Fakturakopier lagres i Perun Core, ikke i et separat TLV-arkiv.</p>
+      {projectId && <p className="text-xs text-slate-400">Perun Core-prosjekt #{projectId} · TLV-sak #{inquiryId}</p>}
+      <div className="grid gap-2 sm:grid-cols-2">
+        {STAGES.map(s => <div key={s.key} className="rounded-lg border border-slate-700 px-3 py-2 text-xs">
+          <div className="flex justify-between gap-2"><span className="font-bold text-white">{s.label}</span><span>{stages[s.key]?.invoiced ? "Fakturert: Ja" : "Fakturert: Nei"}</span></div>
+          {(stages[s.key]?.documents ?? []).map(d => <div key={d.document_id} className="mt-2 break-all text-slate-300">PDF: {d.original_name} (Core-dokument #{d.document_id})</div>)}
+        </div>)}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <select aria-label="Velg arbeidsetappe" value={selected} onChange={e => setSelected(e.target.value as StageKey)} className="rounded-lg bg-slate-900 p-2 text-xs text-white">
+          {STAGES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+        </select>
+        <input aria-label="Velg fakturakopi" type="file" accept="application/pdf,.pdf" onChange={e => setFile(e.target.files?.[0] ?? null)} className="max-w-full text-xs text-white" />
+        <button type="button" disabled={!file || !projectId || busy} onClick={() => void upload()} className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50">
+          {busy ? "Lagrer…" : "Last opp fakturakopi"}
+        </button>
+      </div>
+      {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
+      {message && <p role="status" className="text-xs text-green-300">{message}</p>}
+    </section>
+  );
+}

@@ -1,0 +1,820 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ClipboardCheck, Loader2, PlusCircle } from "lucide-react";
+import ChecklistItem from "./ChecklistItem";
+import type {
+  ChecklistItemData,
+  ChecklistStatus,
+} from "./ChecklistItem";
+import ChecklistProgress from "./ChecklistProgress";
+import ChecklistSummary from "./ChecklistSummary";
+import { apiUrl } from "../../lib/api";
+interface ChecklistDetail {
+  title: string;
+  info: string;
+}
+
+interface SavedChecklistRow {
+  item_id: string;
+  item_title: string;
+  status: ChecklistStatus;
+  comment?: string | null;
+  photo_url?: string | null;
+  audio_url?: string | null;
+  audio_transcript?: string | null;
+}
+
+interface ChecklistManagerProps {
+  inquiryId?: number;
+  initialRoofType?: string;
+  onChange?: () => void;
+  onComplete?: () => void;
+}
+
+const CHECKLIST_TEMPLATES: Record<string, ChecklistDetail[]> = {
+  flatt: [
+    {
+      title: "1. Yttertekking / Membran (PVC, Bitumen/Papp, Asfalt)",
+      info: "Sjekk sveisesømmer med testnål. Ingen brennemerker eller ufullstendig oppheting.",
+    },
+    {
+      title: "2. Overflate / Slitelag (Mekanisk beskyttelse, hellesystem, grus)",
+      info: "Krever drenerende og trykkfordelende sikt under heller/grus.",
+    },
+    {
+      title: "3. Fall og avrenning (Min. 1:40 på flate / 1:60 i renner)",
+      info: "Byggforsk 525.207 krever min. 1:40 fall på ferdig flate.",
+    },
+    {
+      title: "4. Oppkanter og gesims (Vanntett oppbrett min. 150 mm)",
+      info: "Membran skal føres min. 150 mm vertikalt opp på tilstøtende vegg/parapet.",
+    },
+    {
+      title: "5. Sluk, klemring og nødoverløp (Sikkerhet mot oversvømmelse)",
+      info: "Sluk må ligge forsenket i lavpunkt. Nødoverløp er obligatorisk ved innvendig sluk.",
+    },
+    {
+      title: "6. Gjennomføringer (Lufterør, piper, kabelgjennomføringer)",
+      info: "Skal ha ferdigsveist mansjett eller godkjent klemringsløsning.",
+    },
+    {
+      title: "7. Parapet og beslag (Fall inn mot tak, skjult festing)",
+      info: "Beslag på topp parapet må ha fall inn mot takflaten.",
+    },
+    {
+      title: "8. Vindforankring og mekanisk festing (Rand- og hjørnesoner)",
+      info: "Sjekk mekanisk festing i rand- og hjørnesoner ihht. Byggforsk 544.206.",
+    },
+    {
+      title: "9. Isolasjon og trykkfasthet (Tråkkfasthet og lunker)",
+      info: "Isolasjonen må ha tilstrekkelig trykkfasthet ved gangveier.",
+    },
+    {
+      title: "10. Dampsperre og luftsperre (Kondensrisiko)",
+      info: "Dampsperren må være kontinuerlig og klemles tett.",
+    },
+    {
+      title: "11. Bærekonstruksjon / Dekke (Betong, stålplater, tre)",
+      info: "Visuell sjekk underifra. Se etter nedbøyninger eller riss.",
+    },
+  ],
+  skratak: [
+    {
+      title: "1. Primærtekking (Takstein, tegl, plater, shingel)",
+      info: "Sjekk for sprukne steiner og manglende stormklemmer.",
+    },
+    {
+      title: "2. Sløyfer og lekter (Råte, dimensjonering og ventilasjon)",
+      info: "Sløyfer min. 23x48 mm for god lufting under stein.",
+    },
+    {
+      title: "3. Undertak / Sutak (Kombiundertak eller forenklet)",
+      info: "Sjekk for fuktskjolder, sagging og kapillæropptrekk.",
+    },
+    {
+      title: "4. Raft og sløyfeavslutning (Fuglenett, musebånd, dryppblikk)",
+      info: "Fritt avløp fra undertak til takrenne via dryppblikk.",
+    },
+    {
+      title: "5. Møne og gavl (Mønestein, tetteliste, vindski)",
+      info: "Sjekk at mønepanne er festet og at tetteliste slipper ut luft.",
+    },
+    {
+      title: "6. Gradrenner og skvettbeslag (Mose, korrosjon, avrenning)",
+      info: "Gradrennebeslag må ha god overlapping (min. 150 mm).",
+    },
+    {
+      title: "7. Pipe, takvinduer og gjennomføringer (Beslag og svellebånd)",
+      info: "Bakkantbeslag skal ha oppbrett/sadel for avrenning.",
+    },
+    {
+      title: "8. Takrennesystem og nedløp (Kapasitet, fall og frost)",
+      info: "Sjekk at rennekroker har jevnt fall mot nedløp.",
+    },
+    {
+      title: "9. Taksikring og snøfangere (Godkjent innfesting)",
+      info: "Snøfangere må være festet direkte i bærende lekt eller sperre.",
+    },
+    {
+      title: "10. Lufting av undertak (Fri spalte fra raft til møne)",
+      info: "Min. 50 mm kontinuerlig luftespalte mellom isolasjon og undertak.",
+    },
+    {
+      title: "11. Dampsperre og isolasjon (Innvendig tetting)",
+      info: "Innvendig dampsperre (0,20 mm plast) må være klemt tett.",
+    },
+  ],
+  balkong: [
+    {
+      title: "1. Overflate og slitelag (Fliser, tregolv, gummidekke)",
+      info: "Slitelaget må være avtagbart eller drenert.",
+    },
+    {
+      title: "2. Membran og tekking (Smøremembran / Bitumen / PVC)",
+      info: "Sjekk at membranen er hel uten mekaniske skader.",
+    },
+    {
+      title: "3. Oppkant mot terrassedør og fasade (Min. 150 mm oppbrett)",
+      info: "Membran må trekkes min. 150 mm opp under dørterskel.",
+    },
+    {
+      title: "4. Sluk, drenssikt og spalteavrenning",
+      info: "Sluk må ha fri passasje under tralle/heller.",
+    },
+    {
+      title: "5. Rekkverksinnfesting (Membranbrudd)",
+      info: "Topp- eller sidefester til rekkverk må være vanntett forseglet.",
+    },
+    {
+      title: "6. Frontbeslag og dryppnese (Fasadebeskyttelse)",
+      info: "Frontbeslag skal kaste vannet godt ut fra fasaden.",
+    },
+    {
+      title: "7. Dilatasjonsfuger og riss i betongelementer",
+      info: "Se etter riss og sprekker i dekke/oppforede kanter.",
+    },
+  ],
+};
+
+const getTemplateKey = (value: string) => {
+  const normalized = value.toLowerCase();
+
+  if (normalized.includes("flatt") || normalized.includes("papp")) {
+    return "flatt";
+  }
+
+  if (
+    normalized.includes("balkong") ||
+    normalized.includes("terrasse") ||
+    normalized.includes("altan")
+  ) {
+    return "balkong";
+  }
+
+  return "skratak";
+};
+
+const buildItems = (key: string): ChecklistItemData[] => {
+  const list = CHECKLIST_TEMPLATES[key] || CHECKLIST_TEMPLATES.skratak;
+
+  const baseItems = list.map((item, index) => ({
+    id: `${key}-${index}`,
+    title: item.title,
+    info: item.info,
+    status: "tg0" as ChecklistStatus,
+    note: "",
+  }));
+
+  baseItems.push({
+    id: `${key}-extra-1`,
+    title: `${baseItems.length + 1}. Andre observasjoner (Tilkomst, fasade, naboforhold, spesiell skade)`,
+    info: "Bruk dette feltet til å dokumentere spesielle forhold på stedet som ikke dekkes av standardpunktene over.",
+    status: "tg1",
+    note: "",
+  });
+
+  return baseItems;
+};
+
+const compressImage = (file: File): Promise<Blob> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = (event) => {
+      const image = new Image();
+      image.src = event.target?.result as string;
+
+      image.onload = () => {
+        const canvas = document.createElement("canvas");
+        const maxWidth = 1600;
+        const maxHeight = 1600;
+
+        let width = image.width;
+        let height = image.height;
+
+        if (width > height && width > maxWidth) {
+          height *= maxWidth / width;
+          width = maxWidth;
+        } else if (height > maxHeight) {
+          width *= maxHeight / height;
+          height = maxHeight;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const context = canvas.getContext("2d");
+        context?.drawImage(image, 0, 0, width, height);
+
+        canvas.toBlob(
+          (blob) =>
+            blob
+              ? resolve(blob)
+              : reject(new Error("Kunne ikke komprimere bilde.")),
+          "image/jpeg",
+          0.8
+        );
+      };
+
+      image.onerror = () =>
+        reject(new Error("Kunne ikke lese bildet."));
+    };
+
+    reader.onerror = () =>
+      reject(new Error("Kunne ikke lese bildefilen."));
+
+    reader.readAsDataURL(file);
+  });
+
+export default function ChecklistManager({
+  inquiryId,
+  initialRoofType,
+  onChange,
+  onComplete,
+}: ChecklistManagerProps) {
+  const initialTemplate = getTemplateKey(initialRoofType || "Flatt tak");
+
+  const [activeTemplate, setActiveTemplate] = useState(initialTemplate);
+  const [items, setItems] = useState<ChecklistItemData[]>(
+    buildItems(initialTemplate)
+  );
+  const [savedRows, setSavedRows] = useState<SavedChecklistRow[]>([]);
+  const [openItemId, setOpenItemId] = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(Boolean(inquiryId));
+  const [error, setError] = useState("");
+
+  const [recordingId, setRecordingId] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  const applySavedRows = (
+    templateKey: string,
+    rows: SavedChecklistRow[]
+  ) => {
+    const baseItems = buildItems(templateKey);
+
+    const merged = baseItems.map((item) => {
+      const saved = rows.find((row) => row.item_id === item.id);
+
+      if (!saved) return item;
+
+      return {
+        ...item,
+        status: saved.status,
+        note: saved.comment || "",
+        photoUrl: saved.photo_url || undefined,
+        audioUrl: saved.audio_url || undefined,
+      };
+    });
+
+    const knownIds = new Set(merged.map((item) => item.id));
+
+    const customRows = rows
+      .filter(
+        (row) =>
+          row.item_id.startsWith(`${templateKey}-custom-`) &&
+          !knownIds.has(row.item_id)
+      )
+      .map((row) => ({
+        id: row.item_id,
+        title: row.item_title,
+        info: "Fritekstpunkt for spesielle funn på dette taket.",
+        status: row.status,
+        note: row.comment || "",
+        photoUrl: row.photo_url || undefined,
+        audioUrl: row.audio_url || undefined,
+      }));
+
+    setItems([...merged, ...customRows]);
+  };
+
+  const fetchSavedChecklist = async () => {
+    if (!inquiryId) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch(
+        apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)
+      );
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.message || "Kunne ikke hente lagret sjekkliste."
+        );
+      }
+
+      const rows: SavedChecklistRow[] = Array.isArray(data.checklists)
+        ? data.checklists
+        : [];
+
+      setSavedRows(rows);
+      applySavedRows(activeTemplate, rows);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke hente lagret sjekkliste."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSavedChecklist();
+  }, [inquiryId]);
+
+  useEffect(() => {
+    const nextTemplate = getTemplateKey(initialRoofType || "Flatt tak");
+    setActiveTemplate(nextTemplate);
+    setOpenItemId(null);
+
+    if (savedRows.length > 0) {
+      applySavedRows(nextTemplate, savedRows);
+    } else {
+      setItems(buildItems(nextTemplate));
+    }
+  }, [initialRoofType]);
+
+  const savedIds = useMemo(
+    () => new Set(savedRows.map((row) => row.item_id)),
+    [savedRows]
+  );
+
+  const summary = useMemo(() => {
+    const persistedItems = items.filter((item) => savedIds.has(item.id));
+
+    return {
+      completed: persistedItems.length,
+      tg0: persistedItems.filter((item) => item.status === "tg0").length,
+      tg1: persistedItems.filter((item) => item.status === "tg1").length,
+      tg2: persistedItems.filter((item) => item.status === "tg2").length,
+      tg3: persistedItems.filter((item) => item.status === "tg3").length,
+      notApplicable: persistedItems.filter(
+        (item) => item.status === "ikke_aktuell"
+      ).length,
+    };
+  }, [items, savedIds]);
+
+  const remaining = Math.max(items.length - summary.completed, 0);
+  const deviations = summary.tg1 + summary.tg2 + summary.tg3;
+  const checklistComplete = items.length > 0 && remaining === 0;
+
+  const handleTemplateChange = (newKey: string) => {
+    setActiveTemplate(newKey);
+    setOpenItemId(null);
+    applySavedRows(newKey, savedRows);
+  };
+
+  const updateStatus = (id: string, status: ChecklistStatus) => {
+    setItems((current) =>
+      current.map((item) =>
+        item.id === id ? { ...item, status } : item
+      )
+    );
+  };
+
+  const updateNote = (id: string, note: string) => {
+    setItems((current) =>
+      current.map((item) =>
+        item.id === id ? { ...item, note } : item
+      )
+    );
+  };
+
+  const refreshSavedRow = async (itemId: string) => {
+    if (!inquiryId) return;
+
+    const response = await fetch(
+      apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)
+    );
+    const data = await response.json();
+
+    if (!response.ok || !data.success) return;
+
+    const rows: SavedChecklistRow[] = Array.isArray(data.checklists)
+      ? data.checklists
+      : [];
+
+    setSavedRows(rows);
+
+    const updated = rows.find((row) => row.item_id === itemId);
+
+    if (updated) {
+      setItems((current) =>
+        current.map((item) =>
+          item.id === itemId
+            ? {
+                ...item,
+                status: updated.status,
+                note: updated.comment || "",
+                photoUrl: updated.photo_url || undefined,
+                audioUrl: updated.audio_url || undefined,
+              }
+            : item
+        )
+      );
+    }
+
+    onChange?.();
+  };
+
+  const saveChecklistItem = async (item: ChecklistItemData) => {
+    if (!inquiryId) return;
+    if (!item.status) {
+      setError("Velg tilstandsgrad før kontrollpunktet lagres.");
+      return;
+    }
+
+    setSavingId(item.id);
+    setError("");
+
+    const formData = new FormData();
+    formData.append("inquiry_id", inquiryId.toString());
+    formData.append("item_id", item.id);
+    formData.append("item_title", item.title);
+    formData.append("status", item.status);
+    formData.append("comment", item.note);
+
+    try {
+      const response = await fetch(apiUrl("/checklists.php"), {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Kunne ikke lagre kontrollpunktet.");
+      }
+
+      await refreshSavedRow(item.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Kunne ikke lagre kontrollpunktet.");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleStatusChange = async (
+    item: ChecklistItemData,
+    status: ChecklistStatus
+  ) => {
+    const updated = { ...item, status };
+    updateStatus(item.id, status);
+    await saveChecklistItem(updated);
+  };
+
+  const handlePhotoSelect = async (
+    item: ChecklistItemData,
+    file: File
+  ) => {
+    if (!inquiryId) return;
+
+    try {
+      await saveChecklistItem(item);
+      setSavingId(item.id);
+      setError("");
+
+      let uploadFile = file;
+      try {
+        const compressedBlob = await compressImage(file);
+        uploadFile = new File([compressedBlob], file.name || "photo.jpg", {
+          type: "image/jpeg",
+        });
+      } catch {
+        // Bruk originalfilen dersom komprimering feiler.
+      }
+
+      const formData = new FormData();
+      formData.append("inquiry_id", inquiryId.toString());
+      formData.append("checklist_item_id", item.id);
+      formData.append("caption_text", item.note || item.title);
+      formData.append("photo", uploadFile);
+
+      const response = await fetch(apiUrl("/photos.php"), {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Kunne ikke lagre bildet.");
+      }
+
+      if (data.photo?.photo_url) {
+        setItems((current) =>
+          current.map((entry) =>
+            entry.id === item.id
+              ? { ...entry, photoUrl: data.photo.photo_url }
+              : entry
+          )
+        );
+      }
+
+      onChange?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Kunne ikke lagre bildet.");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
+    const formData = new FormData();
+    formData.append("audio", audioBlob, "recording.webm");
+
+    const response = await fetch(apiUrl("/transcribe_audio.php"), {
+      method: "POST",
+      body: formData,
+    });
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+      throw new Error(data.message || "Transkribering av lydnotat feilet.");
+    }
+
+    return typeof data.text === "string" ? data.text.trim() : "";
+  };
+
+  const saveAudioNote = async (
+    item: ChecklistItemData,
+    audioBlob: Blob
+  ) => {
+    if (!inquiryId) return;
+
+    try {
+      await saveChecklistItem(item);
+      setSavingId(item.id);
+      setError("");
+
+      const transcript = await transcribeAudio(audioBlob);
+
+      const formData = new FormData();
+      formData.append("inquiry_id", inquiryId.toString());
+      formData.append("checklist_item_id", item.id);
+      formData.append("caption_text", item.note || item.title);
+      formData.append("audio_transcript", transcript);
+      formData.append("audio", audioBlob, `audio_${item.id}.webm`);
+
+      const response = await fetch(apiUrl("/photos.php"), {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Kunne ikke lagre lydnotatet.");
+      }
+
+      if (data.photo?.audio_url) {
+        setItems((current) =>
+          current.map((entry) =>
+            entry.id === item.id
+              ? { ...entry, audioUrl: data.photo.audio_url }
+              : entry
+          )
+        );
+      }
+
+      onChange?.();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Kunne ikke behandle lydnotatet."
+      );
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const startRecording = async (itemId: string) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+      const mediaRecorder = new MediaRecorder(stream);
+
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(audioChunksRef.current, {
+          type: "audio/webm",
+        });
+        const item = items.find((entry) => entry.id === itemId);
+
+        if (item) {
+          await saveAudioNote(item, blob);
+        }
+      };
+
+      mediaRecorder.start();
+      setRecordingId(itemId);
+    } catch {
+      setError(
+        "Kunne ikke starte mikrofon. Kontroller nettleserens mikrofontillatelse."
+      );
+    }
+  };
+
+  const stopRecording = () => {
+    if (!mediaRecorderRef.current) return;
+
+    mediaRecorderRef.current.stop();
+    mediaRecorderRef.current.stream
+      .getTracks()
+      .forEach((track) => track.stop());
+
+    setRecordingId(null);
+  };
+
+  const addExtraObservation = () => {
+    const itemNumber = items.length + 1;
+    const newItem: ChecklistItemData = {
+      id: `${activeTemplate}-custom-${Date.now()}`,
+      title: `${itemNumber}. Ekstra observasjon / Tilleggspunkt`,
+      info: "Fritekstpunkt for spesielle funn på dette taket.",
+      status: "tg1",
+      note: "",
+    };
+
+    setItems((current) => [...current, newItem]);
+    setOpenItemId(newItem.id);
+  };
+
+  if (loading) {
+    return (
+      <div className="rounded-3xl border border-slate-200 bg-white py-12 text-center text-xs text-slate-500">
+        <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-[#F5B800]" />
+        Henter teknisk sjekkliste...
+      </div>
+    );
+  }
+
+  return (
+    <section className="rounded-3xl border border-slate-200 bg-white p-5 md:p-6 text-slate-950 shadow-sm">
+      <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[9px] font-black uppercase tracking-wider text-[#F5B800]">
+            Arbeidssteg 2
+          </p>
+          <h3 className="mt-1 text-base font-black">
+            Teknisk sjekkliste
+          </h3>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Ett kontrollpunkt åpnes om gangen. Status lagres automatisk,
+            mens kommentar lagres med «Lagre punkt».
+          </p>
+        </div>
+
+        <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1">
+          {(["flatt", "skratak", "balkong"] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => handleTemplateChange(key)}
+              className={`rounded-lg px-3 py-2 text-[10px] font-black transition-colors ${
+                activeTemplate === key
+                  ? "bg-[#F5B800] text-slate-950"
+                  : "text-slate-500 hover:bg-white hover:text-slate-950"
+              }`}
+            >
+              {key === "flatt"
+                ? "Flatt tak"
+                : key === "skratak"
+                ? "Skråtak"
+                : "Balkong"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {error && (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+          {error}
+        </div>
+      )}
+
+      <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-[1.35fr_1fr]">
+        <ChecklistProgress
+          completed={summary.completed}
+          total={items.length}
+        />
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <p className="mb-3 text-[10px] font-black uppercase tracking-wider text-slate-500">
+            Registrerte tilstandsgrader
+          </p>
+          <ChecklistSummary
+            tg0={summary.tg0}
+            tg1={summary.tg1}
+            tg2={summary.tg2}
+            tg3={summary.tg3}
+            notApplicable={summary.notApplicable}
+          />
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-2">
+        {items.map((item, index) => (
+          <ChecklistItem
+            key={item.id}
+            item={item}
+            index={index}
+            isOpen={openItemId === item.id}
+            isSaved={savedIds.has(item.id)}
+            isSaving={savingId === item.id}
+            isRecording={recordingId === item.id}
+            onToggle={() =>
+              setOpenItemId((current) =>
+                current === item.id ? null : item.id
+              )
+            }
+            onStatusChange={(status) =>
+              handleStatusChange(item, status)
+            }
+            onNoteChange={(note) => updateNote(item.id, note)}
+            onSave={() => saveChecklistItem(item)}
+            onPhotoSelect={(file) => handlePhotoSelect(item, file)}
+            onStartRecording={() => startRecording(item.id)}
+            onStopRecording={stopRecording}
+          />
+        ))}
+      </div>
+
+      <div className="mt-4 border-t border-slate-200 pt-4">
+        <button
+          type="button"
+          onClick={addExtraObservation}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-amber-400 bg-amber-50 py-3 text-xs font-black text-amber-700 hover:border-amber-500 hover:bg-amber-100"
+        >
+          <PlusCircle className="h-4 w-4" />
+          Legg til ekstra observasjonspunkt
+        </button>
+      </div>
+
+      <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-[9px] font-black uppercase tracking-wider text-slate-500">
+              Kontrollstatus
+            </p>
+            <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <p className="text-base font-black text-slate-950">
+                {summary.completed} / {items.length} kontrollert
+              </p>
+              <span className="text-xs font-bold text-amber-700">
+                {deviations} avvik
+              </span>
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">
+              {checklistComplete
+                ? "Alle kontrollpunkter er vurdert. Kontroller oppsummeringen før innsending."
+                : `${remaining} kontrollpunkt${remaining === 1 ? "" : "er"} gjenstår før kontrollen kan avsluttes.`}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onComplete}
+            disabled={!checklistComplete || !onComplete}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-5 py-3 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ClipboardCheck className="h-4 w-4" />
+            Gå til oppsummering
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}

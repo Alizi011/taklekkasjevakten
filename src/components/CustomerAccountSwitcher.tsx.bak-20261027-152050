@@ -1,0 +1,185 @@
+import { useEffect, useState } from "react";
+import { Building2, ChevronDown, Loader2, UserRound } from "lucide-react";
+
+type Organisation = {
+  customer_id: number;
+  customer_name: string;
+  access_role: string;
+};
+
+type AccountsResponse = {
+  success?: boolean;
+  organisations?: Organisation[];
+  selected_account?: {
+    customer_id: number;
+    customer_name: string;
+    access_role: string;
+  };
+  message?: string;
+};
+
+type Props = {
+  inquiryId: number;
+  endpoint: string;
+};
+
+export default function CustomerAccountSwitcher({
+  inquiryId,
+  endpoint,
+}: Props) {
+  const [organisations, setOrganisations] = useState<Organisation[]>([]);
+  const [expanded, setExpanded] = useState(false);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAccounts() {
+      if (!inquiryId) return;
+
+      const token = window.localStorage.getItem(
+        "taklekkasjevakten_customer_session"
+      );
+
+      if (!token) return;
+
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "list",
+            inquiry_id: inquiryId,
+            session_token: token,
+          }),
+        });
+
+        if (!response.ok) return;
+
+        const data: AccountsResponse = await response.json();
+
+        if (!cancelled && data.success) {
+          setOrganisations(data.organisations ?? []);
+        }
+      } catch {
+        // Eksisterende kundeportal fungerer fortsatt uavhengig
+        // av den nye kontofunksjonen.
+      }
+    }
+
+    void loadAccounts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [inquiryId, endpoint]);
+
+  async function selectOrganisation(customerId: number) {
+    const token = window.localStorage.getItem(
+      "taklekkasjevakten_customer_session"
+    );
+
+    if (!token) return;
+
+    setLoading(true);
+    setMessage("");
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select",
+          inquiry_id: inquiryId,
+          customer_id: customerId,
+          session_token: token,
+        }),
+      });
+
+      const data: AccountsResponse = await response.json();
+
+      if (!response.ok || !data.success || !data.selected_account) {
+        setMessage(data.message || "Kontovalg ble avvist.");
+        return;
+      }
+
+      setSelectedId(data.selected_account.customer_id);
+      setMessage(
+        "Virksomheten er kontrollert. Bytte av sak og visning " +
+        "aktiveres når den felles kontoinnloggingen er ferdig."
+      );
+    } catch {
+      setMessage("Kunne ikke kontrollere virksomhetstilgangen.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Ingen tilgangsmedlemskap: ikke vis en ubrukelig meny.
+  // Eksisterende kundeportal fortsetter som før.
+  if (organisations.length === 0) return null;
+
+  const selected = organisations.find(
+    (organisation) => organisation.customer_id === selectedId
+  );
+
+  return (
+    <div className="mb-4 rounded-xl border border-slate-700 bg-slate-900/70 p-3">
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+        <UserRound size={15} />
+        Mine kontoer
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-3 text-left text-sm font-medium text-white hover:bg-slate-700"
+      >
+        <span className="min-w-0 truncate">
+          {selected?.customer_name || "Velg virksomhet"}
+        </span>
+        <ChevronDown
+          size={17}
+          className={expanded ? "shrink-0 rotate-180" : "shrink-0"}
+        />
+      </button>
+
+      {expanded && (
+        <div className="mt-2 space-y-1">
+          <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-400">
+            <UserRound size={16} />
+            Min privatkonto
+            <span className="ml-auto text-[10px]">Kommer</span>
+          </div>
+
+          {organisations.map((organisation) => (
+            <button
+              key={organisation.customer_id}
+              type="button"
+              disabled={loading}
+              onClick={() => void selectOrganisation(organisation.customer_id)}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+            >
+              <Building2 size={16} className="shrink-0 text-amber-400" />
+              <span className="min-w-0 flex-1 truncate">
+                {organisation.customer_name}
+              </span>
+              {loading && selectedId === organisation.customer_id && (
+                <Loader2 size={14} className="animate-spin" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {message && (
+        <p role="status" className="mt-2 text-xs leading-5 text-slate-400">
+          {message}
+        </p>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,46 @@
+import { useState, type FormEvent } from "react";
+
+// Drop-in component for Taklekkasjevakten. No AI or external dependencies.
+const API = "https://api.taklekkasjevakten.no/api/customer_chat.php";
+type Message = { id: number; from: "visitor" | "bot"; text: string; links?: { label: string; href: string }[] };
+const initial: Message = { id: 0, from: "bot", text: "Hei! Hva lurer du på om taklekkasjer, takkontroll eller reparasjon? Jeg gir automatiske svar basert på informasjon fra Taklekkasjevakten." };
+const prompts = ["Jeg har taklekkasje", "Hva koster lekkasjesøk?", "Hvordan fungerer takkontroll?", "Jeg trenger reparasjon"];
+export default function TlvCustomerChat() {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([initial]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [turns, setTurns] = useState(0);
+  async function ask(question: string) {
+    const q = question.trim().slice(0, 300);
+    if (!q || busy || turns >= 15) return;
+    setTurns(t => t + 1);
+    setInput(""); setError("");
+    setMessages(m => [...m, { id: Date.now(), from: "visitor", text: q }]);
+    setBusy(true);
+    try {
+      const resp = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q }) });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) throw new Error(data.message || "Kunne ikke hente svar akkurat nå.");
+      const links = Array.isArray(data.links) ? data.links.filter((x: any) => typeof x?.href === "string" && x.href.startsWith("/") && typeof x?.label === "string") : [];
+      setMessages(m => [...m, { id: Date.now() + 1, from: "bot", text: String(data.answer || ""), links }]);
+    } catch {
+      setError("Kunne ikke hente svar. Prøv igjen eller bruk kontaktskjemaet.");
+    } finally { setBusy(false); }
+  }
+  function submit(e: FormEvent) { e.preventDefault(); void ask(input); }
+  return <div style={{ position: "fixed", right: 18, bottom: 18, zIndex: 9999, fontFamily: "inherit", color: "#142c39" }}>
+    {!open ? <button type="button" onClick={() => setOpen(true)} aria-label="Åpne kundehjelp" style={{ background: "#e9ac20", color: "#182b35", padding: "13px 18px", borderRadius: 30, fontWeight: 800, boxShadow: "0 5px 25px #0004" }}>💬 Spør oss</button> :
+    <section role="dialog" aria-label="Taklekkasjevakten kundehjelp" style={{ width: "min(365px, calc(100vw - 30px))", height: "min(530px, calc(100dvh - 36px))", display: "flex", flexDirection: "column", borderRadius: 16, background: "white", boxShadow: "0 8px 38px #0005", overflow: "hidden" }}>
+      <header style={{ background: "#162d39", color: "white", padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div><strong>Taklekkasjevakten · Spør oss</strong><div style={{ fontSize: 11, opacity: .8 }}>Automatiske svar – ingen AI</div></div><button type="button" onClick={() => setOpen(false)} aria-label="Lukk chat" style={{ color: "white", background: "transparent", fontSize: 21 }}>×</button></header>
+      <div aria-live="polite" style={{ flex: 1, overflowY: "auto", padding: 12, background: "#f5f7f8" }}>
+        {messages.map(m => <div key={m.id} style={{ background: m.from === "bot" ? "white" : "#fff0cc", marginBottom: 10, marginLeft: m.from === "bot" ? 0 : 32, marginRight: m.from === "bot" ? 32 : 0, padding: 11, borderRadius: 12, fontSize: 13, whiteSpace: "pre-wrap" }}>{m.text}{m.links?.map(l => <div key={l.href} style={{ marginTop: 8 }}><a style={{ textDecoration: "underline", color: "#095886" }} href={l.href}>{l.label}</a></div>)}</div>)}
+        {messages.length === 1 && <div style={{ display: "grid", gap: 7 }}>{prompts.map(p => <button type="button" key={p} onClick={() => void ask(p)} style={{ border: "1px solid #c8d1d7", background: "white", borderRadius: 9, padding: 9, textAlign: "left", fontSize: 12 }}>{p}</button>)}</div>}
+        {busy && <small>Henter svar …</small>}{error && <p role="alert" style={{ fontSize: 12, color: "#ac2730" }}>{error}</p>}
+      </div>
+      <div style={{ fontSize: 10, padding: "7px 12px", background: "#f0f2f4" }}>Spørsmål lagres for å forbedre informasjonen på nettsiden. Ikke oppgi sensitive personopplysninger. <a href="/faq" style={{ textDecoration: "underline" }}>Personvern</a></div>
+      <form onSubmit={submit} style={{ padding: 10, display: "flex", gap: 7, borderTop: "1px solid #e2e5e8" }}><input aria-label="Skriv spørsmål" maxLength={300} disabled={busy || turns >= 15} placeholder={turns >= 15 ? "Maks antall spørsmål nådd" : "Skriv spørsmålet ditt …"} value={input} onChange={e => setInput(e.target.value)} style={{ flex: 1, minWidth: 0, border: "1px solid #c6cbd0", borderRadius: 8, padding: 9, color: "#142c39", background: "white" }}/><button type="submit" disabled={busy || !input.trim() || turns >= 15} style={{ background: "#e9ac20", borderRadius: 8, padding: "8px 12px", fontWeight: 800 }}>Send</button></form>
+    </section>}
+  </div>;
+}

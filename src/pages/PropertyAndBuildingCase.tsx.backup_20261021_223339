@@ -1,0 +1,858 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Building2,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  FileText,
+  Loader2,
+  MapPin,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+} from "lucide-react";
+import { apiUrl } from "../lib/api";
+
+interface PropertyAndBuildingCaseProps {
+  inquiryId: number;
+  customerName?: string;
+  onBack: () => void;
+}
+
+interface InquirySourceData {
+  id: number;
+  customer_address?: string | null;
+  customer_postal_code?: string | null;
+  customer_city?: string | null;
+  customer_building_type?: string | null;
+  customer_roof_type?: string | null;
+}
+
+interface VerifiedProperty {
+  id?: number;
+  inquiry_id?: number;
+  official_address?: string | null;
+  postal_code?: string | null;
+  city?: string | null;
+  municipality?: string | null;
+  municipality_number?: string | null;
+  gnr?: number | null;
+  bnr?: number | null;
+  fnr?: number | null;
+  snr?: number | null;
+  building_number?: string | null;
+  building_type?: string | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  source?: string | null;
+  source_reference?: string | null;
+  verified_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+interface PropertyResponse {
+  success: boolean;
+  inquiry?: InquirySourceData;
+  property?: VerifiedProperty | null;
+  verified?: boolean;
+  message?: string;
+}
+
+interface MunicipalEntry {
+  case_number?: string | number | null;
+  last_document_date?: string | null;
+  last_activity?: string | null;
+  identifier: string;
+  parent_identifier?: string;
+  title: string;
+  type: string;
+  status?: string | null;
+  visibility?: string | number | null;
+  properties?: Record<string, unknown>;
+  match?: {
+    address?: boolean;
+    property_number?: boolean;
+    confidence?: "confirmed" | "possible" | string;
+  };
+}
+
+interface MunicipalData {
+  provider?: string;
+  source?: string;
+  query?: {
+    address?: string | null;
+    gnr?: number | null;
+    bnr?: number | null;
+  };
+  statistics?: {
+    raw_hits?: number;
+    confirmed_hits?: number;
+    possible_hits?: number;
+    pages_fetched?: number;
+  };
+  cases?: MunicipalEntry[];
+  documents?: MunicipalEntry[];
+  possible_matches?: MunicipalEntry[];
+}
+
+interface MunicipalityResponse {
+  success: boolean;
+  inquiry_id?: number;
+  property?: {
+    official_address?: string | null;
+    municipality?: string | null;
+    municipality_number?: string | null;
+    gnr?: number | null;
+    bnr?: number | null;
+  };
+  municipal_data?: MunicipalData;
+  fetched_at?: string;
+  message?: string;
+  detail?: string;
+}
+
+function formatDateTime(value?: string | null): string {
+  if (!value) return "Ikke verifisert ennå";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat("nb-NO", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function propertyNumber(property?: VerifiedProperty | null): string {
+  if (!property?.gnr || !property?.bnr) return "Ikke tilgjengelig";
+
+  const base = `${property.gnr} / ${property.bnr}`;
+  const extras = [
+    property.fnr ? `fnr. ${property.fnr}` : "",
+    property.snr ? `snr. ${property.snr}` : "",
+  ].filter(Boolean);
+
+  return extras.length ? `${base} · ${extras.join(" · ")}` : base;
+}
+
+function valueOrDash(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
+}
+
+function municipalMeta(entry: MunicipalEntry): string[] {
+  const props: Record<string, unknown> = {
+    ...(entry.properties || {}),
+    case_number: entry.case_number ?? entry.properties?.case_number,
+    last_document_date: entry.last_document_date ?? entry.properties?.last_document_date,
+    last_activity: entry.last_activity ?? entry.properties?.last_activity,
+  };
+
+  return [
+    props.saksnummer || props.case_number ? `Saksnr. ${String(props.saksnummer || props.case_number)}` : "",
+    props.dokumentID ? `Dokument ${String(props.dokumentID)}` : "",
+    props.last_document_date ? `Siste dokument: ${String(props.last_document_date)}` : "",
+    props.last_activity && !props.last_document_date ? String(props.last_activity) : "",
+    (() => {
+      const fields = props as Record<string, unknown>;
+      const dateFields = [
+        ["Vedtaksdato", fields.vedtaksdato],
+        ["Saksdato", fields.saksdato],
+        ["Dokumentdato", fields.dokumentdato],
+        ["Dato", fields.dato],
+        ["Registrert", fields.registrertDato],
+      ] as const;
+
+      const found = dateFields.find(([, value]) =>
+        value !== null && value !== undefined && String(value).trim() !== ""
+      );
+
+      if (!found) return "";
+
+      const [label, value] = found;
+      const raw = String(value).trim();
+      const date = /^\d{4}-\d{2}-\d{2}/.test(raw)
+        ? `${raw.slice(8, 10)}.${raw.slice(5, 7)}.${raw.slice(0, 4)}`
+        : raw;
+
+      return `${label}: ${date}`;
+    })(),
+    props.avsender ? `Fra ${String(props.avsender)}` : "",
+    props.mottaker ? `Til ${String(props.mottaker)}` : "",
+  ].filter(Boolean);
+}
+
+export default function PropertyAndBuildingCase({
+  inquiryId,
+  customerName,
+  onBack,
+}: PropertyAndBuildingCaseProps) {
+  const [propertyData, setPropertyData] = useState<PropertyResponse | null>(
+    null
+  );
+  const [municipalityData, setMunicipalityData] =
+    useState<MunicipalityResponse | null>(null);
+
+  const [loadingProperty, setLoadingProperty] = useState(true);
+  const [loadingMunicipality, setLoadingMunicipality] = useState(true);
+  const [refreshingProperty, setRefreshingProperty] = useState(false);
+  const [refreshingMunicipality, setRefreshingMunicipality] = useState(false);
+
+  const [propertyError, setPropertyError] = useState("");
+  const [municipalityError, setMunicipalityError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const [showPossibleMatches, setShowPossibleMatches] = useState(false);
+
+  const property = propertyData?.property || null;
+  const inquiry = propertyData?.inquiry || null;
+  const municipal = municipalityData?.municipal_data || null;
+
+  const confirmedCases = municipal?.cases || [];
+  const confirmedDocuments = municipal?.documents || [];
+  const possibleMatches = municipal?.possible_matches || [];
+
+  const coordinates = useMemo(() => {
+    if (!property?.latitude || !property?.longitude) return null;
+
+    return {
+      lat: String(property.latitude),
+      lon: String(property.longitude),
+    };
+  }, [property?.latitude, property?.longitude]);
+
+  const loadProperty = async () => {
+    setLoadingProperty(true);
+    setPropertyError("");
+
+    try {
+      const res = await fetch(
+        apiUrl(`/property.php?inquiry_id=${inquiryId}`)
+      );
+      const data: PropertyResponse = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Kunne ikke hente objektsdata.");
+      }
+
+      setPropertyData(data);
+    } catch (err) {
+      setPropertyError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke hente objektsdata."
+      );
+    } finally {
+      setLoadingProperty(false);
+    }
+  };
+
+  const loadMunicipality = async () => {
+    setLoadingMunicipality(true);
+    setMunicipalityError("");
+
+    try {
+      const res = await fetch(
+        apiUrl(`/municipality_provider.php?inquiry_id=${inquiryId}`)
+      );
+      const data: MunicipalityResponse = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(
+          data.message ||
+            data.detail ||
+            "Kunne ikke hente kommunale byggesaksdata."
+        );
+      }
+
+      setMunicipalityData(data);
+    } catch (err) {
+      setMunicipalityError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke hente kommunale byggesaksdata."
+      );
+    } finally {
+      setLoadingMunicipality(false);
+    }
+  };
+
+  useEffect(() => {
+    if (inquiryId <= 0) return;
+
+    void Promise.all([loadProperty(), loadMunicipality()]);
+  }, [inquiryId]);
+
+  const refreshVerifiedProperty = async () => {
+    setRefreshingProperty(true);
+    setPropertyError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(apiUrl("/property.php"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inquiry_id: inquiryId }),
+      });
+
+      const data: PropertyResponse = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(
+          data.message || "Kunne ikke oppdatere objektsdata."
+        );
+      }
+
+      setPropertyData(data);
+      setMessage("Objektsdata er oppdatert mot Kartverket.");
+
+      // Matrikkeldata kan ha endret seg. Hent kommunedata på nytt etterpå.
+      await refreshMunicipalityData();
+    } catch (err) {
+      setPropertyError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke oppdatere objektsdata."
+      );
+    } finally {
+      setRefreshingProperty(false);
+    }
+  };
+
+  const refreshMunicipalityData = async () => {
+    setRefreshingMunicipality(true);
+    setMunicipalityError("");
+
+    try {
+      const res = await fetch(
+        apiUrl(`/municipality_provider.php?inquiry_id=${inquiryId}`)
+      );
+      const data: MunicipalityResponse = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(
+          data.message ||
+            data.detail ||
+            "Kunne ikke oppdatere kommunale data."
+        );
+      }
+
+      setMunicipalityData(data);
+      setMessage("Kommunalt innsyn er oppdatert.");
+    } catch (err) {
+      setMunicipalityError(
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke oppdatere kommunale data."
+      );
+    } finally {
+      setRefreshingMunicipality(false);
+    }
+  };
+
+  const openMap = () => {
+    if (!coordinates) return;
+
+    window.open(
+      `https://www.google.com/maps?q=${encodeURIComponent(
+        `${coordinates.lat},${coordinates.lon}`
+      )}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  };
+
+
+
+  const [showMunicipalDetails, setShowMunicipalDetails] = useState(false);
+
+  const renderMunicipalEntry = (
+    entry: MunicipalEntry,
+    tone: "confirmed" | "possible" = "confirmed"
+  ) => {
+    const meta = municipalMeta(entry);
+
+    return (
+      <article
+        key={entry.identifier}
+        className={`rounded-2xl border p-4 ${
+          tone === "confirmed"
+            ? "border-slate-700 bg-slate-950/70"
+            : "border-amber-500/20 bg-amber-500/[0.04]"
+        }`}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`inline-flex px-2.5 py-1 rounded-full border text-[9px] uppercase font-black ${
+                  tone === "confirmed"
+                    ? "bg-cyan-500/10 border-cyan-500/20 text-cyan-300"
+                    : "bg-amber-500/10 border-amber-500/20 text-amber-300"
+                }`}
+              >
+                {entry.type || "Arkivtreff"}
+              </span>
+
+              {entry.match?.property_number && (
+                <span className="inline-flex px-2.5 py-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 text-[9px] uppercase font-black text-emerald-300">
+                  Matrikkelmatch
+                </span>
+              )}
+
+              {entry.match?.address && (
+                <span className="inline-flex px-2.5 py-1 rounded-full border border-blue-500/20 bg-blue-500/10 text-[9px] uppercase font-black text-blue-300">
+                  Adressematch
+                </span>
+              )}
+            </div>
+
+            <h3 className="mt-3 text-sm font-extrabold leading-6 text-white">
+              {entry.title}
+            </h3>
+
+            {meta.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-500">
+                {meta.map((value) => (
+                  <span key={value}>{value}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </article>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-[#070a11] text-white">
+      <header className="sticky top-0 z-40 border-b border-slate-800 bg-slate-950/95 backdrop-blur">
+        <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4 px-4 py-4 md:px-8">
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-400">
+              Prosjektdata
+            </p>
+            <h1 className="mt-1 truncate text-lg font-extrabold">
+              Eiendom & byggesak · #{inquiryId}
+            </h1>
+            <p className="mt-1 truncate text-xs text-slate-500">
+              {[customerName, property?.official_address, property?.city]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex shrink-0 items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-bold text-slate-300 hover:text-white"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Tilbake
+          </button>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-[1500px] space-y-5 px-4 py-6 md:px-8">
+        {message && (
+          <div className="flex items-start gap-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-5 py-4 text-xs text-emerald-300">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+            {message}
+          </div>
+        )}
+
+        <section className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0b0f17]">
+          {/* KOMMUNALT_INNSYN_COLLAPSIBLE_V1 */}
+          <div className="flex flex-col gap-4 border-b border-slate-800 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10">
+                  <Building2 className="h-5 w-5 text-emerald-300" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-400">
+                    Verifiserte objektsdata
+                  </p>
+                  <h2 className="mt-1 text-base font-extrabold">
+                    Eiendom
+                  </h2>
+                </div>
+              </div>
+
+              <p className="mt-3 max-w-3xl text-xs leading-5 text-slate-500">
+                Kundens opprinnelige opplysninger beholdes urørt. Denne delen
+                viser objektopplysninger hentet fra offentlige kilder og brukes
+                som kvalitetssikret grunnlag videre i prosjektet.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void refreshVerifiedProperty()}
+                disabled={refreshingProperty}
+                className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-extrabold text-slate-200 disabled:opacity-50"
+              >
+                {refreshingProperty ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                Oppdater objektsdata
+              </button>
+
+              <button
+                type="button"
+                onClick={openMap}
+                disabled={!coordinates}
+                className="flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2.5 text-xs font-extrabold text-cyan-300 disabled:opacity-40"
+              >
+                <MapPin className="h-4 w-4" />
+                Vis i kart
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {loadingProperty ? (
+            <div className="flex items-center justify-center gap-2 px-6 py-12 text-sm text-slate-500">
+              <Loader2 className="h-5 w-5 animate-spin text-cyan-400" />
+              Henter objektsdata...
+            </div>
+          ) : propertyError ? (
+            <div className="m-5 flex items-start gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-xs text-red-300">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {propertyError}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-5 p-5 xl:grid-cols-[1.4fr_0.6fr]">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {[
+                  ["Offisiell adresse", property?.official_address],
+                  [
+                    "Poststed",
+                    [property?.postal_code, property?.city]
+                      .filter(Boolean)
+                      .join(" "),
+                  ],
+                  ["Kommune", property?.municipality],
+                  ["Kommunenummer", property?.municipality_number],
+                  ["Gnr./bnr.", propertyNumber(property)],
+                  ["Bygningsnummer", property?.building_number],
+                  ["Bygningstype", property?.building_type],
+                  ["Koordinat N", property?.latitude],
+                  ["Koordinat Ø", property?.longitude],
+                ].map(([label, value]) => (
+                  <div
+                    key={String(label)}
+                    className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4"
+                  >
+                    <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                      {label}
+                    </p>
+                    <p className="mt-2 text-sm font-extrabold text-slate-200">
+                      {valueOrDash(value)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="space-y-3">
+                <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.05] p-4">
+                  <div className="flex items-center gap-2 text-emerald-300">
+                    <ShieldCheck className="h-4 w-4" />
+                    <p className="text-xs font-extrabold">
+                      Verifisert objektgrunnlag
+                    </p>
+                  </div>
+                  <p className="mt-2 text-[11px] leading-5 text-slate-400">
+                    Kilde: {property?.source || "Kartverket"}
+                  </p>
+                  <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                    Sist kontrollert: {formatDateTime(property?.verified_at)}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                  <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                    Kunden oppga
+                  </p>
+                  <p className="mt-2 text-xs font-bold text-slate-300">
+                    {[
+                      inquiry?.customer_address,
+                      inquiry?.customer_postal_code,
+                      inquiry?.customer_city,
+                    ]
+                      .filter(Boolean)
+                      .join(", ") || "Ingen adresseopplysninger"}
+                  </p>
+                  {inquiry?.customer_roof_type && (
+                    <p className="mt-2 text-[11px] leading-5 text-slate-500">
+                      Takopplysning: {inquiry.customer_roof_type}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0b0f17]">
+          <div className="flex flex-col gap-4 border-b border-slate-800 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-500/20 bg-cyan-500/10">
+                  <Search className="h-5 w-5 text-cyan-300" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-cyan-400">
+                    Kommunalt innsyn
+                  </p>
+                  <h2 className="mt-1 text-base font-extrabold">
+                    Byggesaker og dokumenter
+                  </h2>
+                  {/* MUNICIPAL_TOGGLE_FINAL */}
+                  <button
+                    type="button"
+                    onClick={() => setShowMunicipalDetails(v => !v)}
+                    aria-expanded={showMunicipalDetails}
+                    className="mt-2 inline-flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-bold text-cyan-200"
+                  >
+                    {showMunicipalDetails ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    {showMunicipalDetails ? "Skjul byggesaker" : `Vis byggesaker (${confirmedCases.length})`}
+                  </button>
+                </div>
+              </div>
+
+              <p className="mt-3 max-w-3xl text-xs leading-5 text-slate-500">
+                Treff kobles bare til prosjektet når adresse eller
+                matrikkelnummer kan bekreftes. Tvetydige treff presenteres
+                separat og brukes ikke som sikkert grunnlag.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void refreshMunicipalityData()}
+              disabled={refreshingMunicipality}
+              className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-extrabold text-slate-200 disabled:opacity-50"
+            >
+              {refreshingMunicipality ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              Oppdater kommunalt innsyn
+            </button>
+          </div>
+
+          {loadingMunicipality ? (
+            <div className="flex items-center justify-center gap-2 px-6 py-12 text-sm text-slate-500">
+              <Loader2 className="h-5 w-5 animate-spin text-cyan-400" />
+              Søker kommunalt innsyn...
+            </div>
+          ) : municipalityError ? (
+            <div className="m-5 flex items-start gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-300">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-extrabold">
+                  Automatisk kommunalt innsyn er ikke tilgjengelig.
+                </p>
+                <p className="mt-1 leading-5 text-amber-200/80">
+                  {municipalityError}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className={showMunicipalDetails ? "p-5" : "hidden"}>
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                {[
+                  [
+                    "Arkivtreff",
+                    municipal?.statistics?.raw_hits ?? 0,
+                    "Totalt kontrollert",
+                  ],
+                  [
+                    "Bekreftet",
+                    municipal?.statistics?.confirmed_hits ?? 0,
+                    "Sikkert koblet",
+                  ],
+                  [
+                    "Mulige treff",
+                    municipal?.statistics?.possible_hits ?? 0,
+                    "Krever vurdering",
+                  ],
+                  [
+                    "Sider",
+                    municipal?.statistics?.pages_fetched ?? 0,
+                    "Hentet fra kommunen",
+                  ],
+                ].map(([label, value, subtitle]) => (
+                  <div
+                    key={String(label)}
+                    className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4"
+                  >
+                    <p className="text-[9px] font-black uppercase tracking-wider text-slate-600">
+                      {label}
+                    </p>
+                    <p className="mt-2 text-2xl font-black text-white">
+                      {value}
+                    </p>
+                    <p className="mt-1 text-[10px] text-slate-500">
+                      {subtitle}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {confirmedCases.length === 0 &&
+              confirmedDocuments.length === 0 ? (
+                <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/60 p-6">
+                  <div className="flex items-start gap-3">
+                    <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-slate-500" />
+                    <div>
+                      <p className="text-sm font-extrabold text-slate-300">
+                        Ingen kommunale saker kunne bekreftes mot denne
+                        eiendommen.
+                      </p>
+                      <p className="mt-2 max-w-3xl text-xs leading-5 text-slate-500">
+                        Systemet har kontrollert kommunens søkeresultat, men
+                        fant ingen treff som kunne kobles sikkert til{" "}
+                        {property?.official_address || "adressen"}
+                        {property?.gnr && property?.bnr
+                          ? ` / gnr. ${property.gnr} bnr. ${property.bnr}`
+                          : ""}
+                        .
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
+                  <div>
+                    <div className="mb-3 flex items-center gap-2">
+                      <Building2 className="h-4 w-4 text-cyan-400" />
+                      <h3 className="text-sm font-extrabold">
+                        Bekreftede byggesaker
+                      </h3>
+                    </div>
+                    <div className="space-y-3">
+                      {confirmedCases.length > 0 ? (
+                        confirmedCases.map((entry) =>
+                          renderMunicipalEntry(entry, "confirmed")
+                        )
+                      ) : (
+                        <div className="rounded-2xl border border-dashed border-slate-800 p-5 text-xs text-slate-600">
+                          Ingen bekreftede byggesaker.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="mb-3 flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-violet-400" />
+                      <h3 className="text-sm font-extrabold">
+                        Bekreftede dokumenter
+                      </h3>
+                    </div>
+                    <div className="space-y-3">
+                      {confirmedDocuments.length > 0 ? (
+                        confirmedDocuments.map((entry) =>
+                          renderMunicipalEntry(entry, "confirmed")
+                        )
+                      ) : (
+                        <div className="rounded-2xl border border-dashed border-slate-800 p-5 text-xs text-slate-600">
+                          Ingen bekreftede dokumenter.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {possibleMatches.length > 0 && (
+                <div className="mt-5 overflow-hidden rounded-2xl border border-amber-500/20 bg-amber-500/[0.03]">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowPossibleMatches((current) => !current)
+                    }
+                    className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
+                  >
+                    <div>
+                      <p className="text-xs font-extrabold text-amber-300">
+                        Mulige treff i kommunens arkiv
+                      </p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Disse er ikke bekreftet mot objektet og må vurderes
+                        manuelt.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-[10px] font-black text-amber-300">
+                        {possibleMatches.length}
+                      </span>
+                      {showPossibleMatches ? (
+                        <ChevronUp className="h-4 w-4 text-amber-300" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 text-amber-300" />
+                      )}
+                    </div>
+                  </button>
+
+                  {showPossibleMatches && (
+                    <div className="space-y-3 border-t border-amber-500/10 p-4">
+                      {possibleMatches.map((entry) =>
+                        renderMunicipalEntry(entry, "possible")
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-slate-800 pt-4 text-[10px] text-slate-600">
+                <span>
+                  Kilde: {municipal?.source || "Kommunalt offentlig innsyn"}
+                </span>
+                {municipalityData?.fetched_at && (
+                  <span>
+                    Hentet: {formatDateTime(municipalityData.fetched_at)}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-3xl border border-slate-800 bg-[#0b0f17] p-5">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-violet-500/20 bg-violet-500/10">
+              <FileText className="h-5 w-5 text-violet-300" />
+            </div>
+
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-violet-400">
+                Neste utvidelse
+              </p>
+              <h2 className="mt-1 text-base font-extrabold">
+                Plan & regulering
+              </h2>
+              <p className="mt-2 max-w-3xl text-xs leading-5 text-slate-500">
+                Denne delen er klargjort for reguleringsplan,
+                kommuneplan, planbestemmelser og andre relevante plandata.
+                Vi kobler den på som neste datakilde uten å endre resten av
+                prosjektmodulen.
+              </p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}

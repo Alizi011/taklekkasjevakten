@@ -1,0 +1,76 @@
+import { useCallback, useEffect, useState } from "react";
+import { apiUrl } from "../lib/api";
+
+type Proposal = {
+  id: number;
+  version_no: number;
+  proposed_start_date: string;
+  estimated_duration: string;
+  status: string;
+  customer_response_note?: string | null;
+};
+
+export default function AdminAgreementProgress({ inquiryId }: { inquiryId: number }) {
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const load = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch(apiUrl("/admin_agreement_schedule_read.php"), {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        signal,
+        body: JSON.stringify({ inquiry_id: inquiryId }),
+      });
+      const data = await response.json();
+      if (!response.ok || data?.success !== true || !Array.isArray(data.proposals)) {
+        throw new Error(data?.message || "Kunne ikke hente datoforslaget.");
+      }
+      if (!signal?.aborted) setProposals(data.proposals);
+    } catch (e) {
+      if (!signal?.aborted) setError(e instanceof Error ? e.message : "Kunne ikke hente avtalestatus.");
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, [inquiryId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
+
+  const proposal = [...proposals].sort((a,b) =>
+    Number(b.version_no) - Number(a.version_no) || Number(b.id) - Number(a.id)
+  )[0];
+  const today = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Europe/Oslo", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+  const datePassed = Boolean(proposal?.proposed_start_date && proposal.proposed_start_date < today);
+  const title = !proposal ? "Ingen arbeidsdato foreslått" :
+    proposal.status === "pending_customer" ? "Avventer kundens godkjenning av arbeidsdato" :
+    proposal.status === "approved" ? "Arbeidsdato godkjent – kontroller avtaleopprettelse" :
+    proposal.status === "change_requested" ? "Kunden har bedt om endret arbeidsdato" :
+    "Datoforslag: " + proposal.status;
+
+  return (
+    <div className="space-y-2 border-t border-white/10 pt-3" aria-live="polite">
+      <p className="text-[10px] font-black uppercase tracking-wide text-cyan-300">Arbeidsavtale – datoplanlegging</p>
+      {loading ? <p className="text-xs text-slate-400">Henter status …</p> : error ?
+        <p role="alert" className="text-xs text-amber-300">{error}</p> : <>
+          <p className="text-xs font-bold text-amber-200">{title}</p>
+          {proposal && <p className="text-xs text-slate-300">Oppstart {proposal.proposed_start_date} · Varighet {proposal.estimated_duration}</p>}
+          {datePassed && proposal?.status === "pending_customer" &&
+            <p className="text-xs text-amber-300">Registrert oppstartsdato er passert. Datoforslaget er fortsatt ubesvart.</p>}
+          {proposal?.status === "change_requested" && proposal.customer_response_note &&
+            <p className="text-xs text-slate-300">Kundens merknad: {proposal.customer_response_note}</p>}
+          <p className="text-[11px] text-slate-500">Dette er prosjektets datoplanleggingsstatus, ikke en bekreftelse på at en avtale er sendt til signering.</p>
+        </>}
+      <button type="button" onClick={() => void load()} className="text-[11px] font-bold text-cyan-300 hover:underline">Oppdater status</button>
+    </div>
+  );
+}
