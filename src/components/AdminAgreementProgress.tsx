@@ -87,10 +87,18 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewError, setReviewError] = useState("");
   const [reviewSuccess, setReviewSuccess] = useState("");
-  const [reviewHistory, setReviewHistory] = useState<Array<{
-    id: number; brreg_person_name: string; role_name: string;
-    match_mode: string; checked_at: string;
-  }>>([]);
+  type RepresentativeReview = {
+    id: number;
+    brreg_person_name: string;
+    role_name: string;
+    match_mode: string;
+    checked_at: string;
+  };
+  const [reviewHistory, setReviewHistory] = useState<RepresentativeReview[]>([]);
+  // undefined = laster, null = ingen tidligere kontroll, error = utilgjengelig.
+  const [representativeReviews, setRepresentativeReviews] = useState<
+    Record<number, { latest: RepresentativeReview | null; error: boolean }>
+  >({});
 
   const normalizePersonName = (name: string) =>
     name.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("nb-NO");
@@ -152,6 +160,46 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
     void loadCustomerAccess(controller.signal);
     return () => controller.abort();
   }, [loadCustomerAccess]);
+
+  // Vis lagret kontroll i kundekortet uavhengig av om popupen er åpnet.
+  // Hver forespørsel er lesing og gjelder bare denne saken og kontaktpersonen.
+  useEffect(() => {
+    const controller = new AbortController();
+    setRepresentativeReviews({});
+    const members = customerMembers.filter(m => m.access_role === "customer_admin");
+    for (const member of members) {
+      void (async () => {
+        try {
+          const response = await fetch(apiUrl("/admin_representative_verification.php"), {
+            method: "POST",
+            credentials: "include",
+            cache: "no-store",
+            headers: { "Content-Type": "application/json" },
+            signal: controller.signal,
+            body: JSON.stringify({ action: "list", inquiry_id: inquiryId, member_id: member.id }),
+          });
+          const data = await response.json();
+          if (!response.ok || data?.success !== true || !Array.isArray(data.reviews)) {
+            throw new Error("Kunne ikke hente representantkontroll.");
+          }
+          if (!controller.signal.aborted) {
+            setRepresentativeReviews(old => ({
+              ...old,
+              [member.id]: { latest: data.reviews[0] || null, error: false },
+            }));
+          }
+        } catch {
+          if (!controller.signal.aborted) {
+            setRepresentativeReviews(old => ({
+              ...old,
+              [member.id]: { latest: null, error: true },
+            }));
+          }
+        }
+      })();
+    }
+    return () => controller.abort();
+  }, [inquiryId, customerMembers]);
 
   // Gjenbruk samme lagrede BRREG-oppslag som styrevisningen, uten refresh=1.
   useEffect(() => {
@@ -278,11 +326,16 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
       const data = await response.json();
       if (!response.ok || data?.success !== true) throw new Error(data?.message || "Kontrollen kunne ikke lagres.");
       setReviewSuccess(data.message || "Representantkontrollen er dokumentert.");
-      setReviewHistory(old => [{
+      const savedReview: RepresentativeReview = {
         id: Number(data.review_id), brreg_person_name: selected.name,
         role_name: selected.role, match_mode: exact ? "exact" : "manual",
         checked_at: new Date().toISOString(),
-      }, ...old]);
+      };
+      setReviewHistory(old => [savedReview, ...old]);
+      setRepresentativeReviews(old => ({
+        ...old,
+        [reviewMember.id]: { latest: savedReview, error: false },
+      }));
     } catch (e) {
       setReviewError(e instanceof Error ? e.message : "Kontrollen kunne ikke lagres.");
     } finally {
@@ -557,9 +610,26 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                       <p className="text-[11px] text-slate-400">Ingen bekreftet personkobling til BRREG i denne visningen.</p>
                     );
                   })()}
+                  {(() => {
+                    const review = representativeReviews[member.id];
+                    if (!review) return <p className="text-slate-400">Henter tidligere BRREG-kontroll …</p>;
+                    if (review.error) return <p className="text-amber-300">Lagret BRREG-kontroll kunne ikke hentes.</p>;
+                    if (!review.latest) return <p className="text-slate-400">Ingen representantkontroll er dokumentert ennå.</p>;
+                    return (
+                      <div className="mt-2 space-y-1 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.05] p-2">
+                        <p className="font-semibold text-emerald-300">BRREG-rolle dokumentert: {review.latest.role_name}</p>
+                        <p className="text-slate-200">Registrert BRREG-person: {review.latest.brreg_person_name}</p>
+                        <p className="text-slate-400">
+                          {review.latest.match_mode === "manual" ? "Manuell navnevurdering" : "Eksakt navnesamsvar"}
+                          {" · "}Kontroll: {new Date(review.latest.checked_at.replace(" ", "T") + (review.latest.checked_at.includes("Z") ? "" : review.latest.checked_at.includes("+") ? "" : "Z")).toLocaleString("nb-NO")}
+                        </p>
+                        <p className="text-slate-400">Rolle kontrollert. Dette er ikke identitetsverifisering eller godkjent signaturrett.</p>
+                      </div>
+                    );
+                  })()}
                   <button type="button" onClick={() => void openRepresentativeReview(member)}
                     className="mt-2 rounded-lg border border-cyan-500/40 px-3 py-2 font-bold text-cyan-200 hover:bg-cyan-500/10">
-                    Kontroller representant i BRREG
+                    {representativeReviews[member.id]?.latest ? "Se eller oppdater BRREG-kontroll" : "Kontroller representant i BRREG"}
                   </button>
                   <p className={member.status === "active" ? "text-emerald-300" : "text-slate-300"}>
                     Saksrolle: {member.access_role === "customer_admin" ? "Kundeadministrator" : member.access_role === "board_member" ? "Styremedlem" : "Kontaktperson"}
