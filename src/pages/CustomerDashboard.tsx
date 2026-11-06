@@ -3577,6 +3577,7 @@ export default function CustomerDashboard({
     endpoint={apiUrl("/customer_agreement_schedule.php")}
     previewMode={previewMode}
     onAgreementCreated={() => setAgreementSignerRefresh(n => n + 1)}
+    onStatusChange={() => setAgreementSignerRefresh(n => n + 1)}
   />
 <CustomerAgreementSigners
     key={agreementSignerRefresh}

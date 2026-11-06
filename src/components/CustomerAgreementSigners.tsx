@@ -44,6 +44,7 @@ export default function CustomerAgreementSigners({
   const [chairProposal, setChairProposal] = useState<string | null>(null);
   const [chairBusy, setChairBusy] = useState(false);
   const [chairProblem, setChairProblem] = useState("");
+  const [showOtherSigners, setShowOtherSigners] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -139,6 +140,7 @@ export default function CustomerAgreementSigners({
       const first = result.agreements?.[0];
       setSelectedAgreement(first ? Number(first.id) : 0);
       setSelected([]);
+      setShowOtherSigners(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Kunne ikke hente avtalene.");
     } finally {
@@ -199,6 +201,9 @@ export default function CustomerAgreementSigners({
     }).then(result => {
       if (!cancelled) {
         setChairProposal(result.proposed_signer?.full_name || null);
+        if (!result.proposed_signer?.full_name) {
+          setChairProblem("Ingen styreleder er foreslått. Kontakt oss dersom riktig signatar ikke vises.");
+        }
       }
     }).catch(e => {
       if (!cancelled) {
@@ -229,7 +234,7 @@ export default function CustomerAgreementSigners({
       setExisting([chairProposal]);
       setChairProposal(null);
       setMessage(
-        "Signataren er registrert. Signaturfullmakten kontrolleres før invitasjonen sendes."
+        "Riktig signatar er registrert. Du får beskjed når avtalen er klar for sikker signering."
       );
     } catch (e) {
       setError(
@@ -286,7 +291,7 @@ export default function CustomerAgreementSigners({
         <div>
           <h2 className="text-lg font-black">Signering av arbeidsavtale</h2>
           <p className="mt-1 text-xs text-slate-400">
-            Velg kundens signatarer. Marina Alizi signerer etter kunden.
+            Les avtalen og kontroller hvem som skal signere. Vi følger opp signeringsinvitasjonen.
           </p>
         </div>
         <button
@@ -315,7 +320,7 @@ export default function CustomerAgreementSigners({
 
       {data && data.agreements.length > 0 && (
         <>
-          <label className="mb-4 block text-sm">
+          {data.agreements.length > 1 ? <label className="mb-4 block text-sm">
             Arbeidsavtale
             <select
               value={selectedAgreement}
@@ -331,7 +336,11 @@ export default function CustomerAgreementSigners({
                 </option>
               ))}
             </select>
-          </label>
+          </label> : (
+            <p className="mb-4 text-sm font-semibold text-white">
+              {agreement?.agreement_number || `Avtale #${agreement?.id || ""}`}
+            </p>
+          )}
 
           {agreement?.document_sha256 && (
             <button
@@ -348,7 +357,7 @@ export default function CustomerAgreementSigners({
             agreement.document_sha256 && existing.length === 0 && (
             <div className="mb-5 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
               <h3 className="text-sm font-bold text-white">
-                Bekreft hvem som skal signere
+                Kontroller signatar
               </h3>
 
               {chairProposal ? (
@@ -357,11 +366,10 @@ export default function CustomerAgreementSigners({
                     {chairProposal}
                   </p>
                   <p className="mt-1 text-xs text-slate-400">
-                    Foreslått styreleder
+                    Foreslått signatar for avtalen
                   </p>
                   <p className="mt-3 text-xs leading-5 text-slate-300">
-                    Kontroller at opplysningene stemmer.
-                    Signaturfullmakten kontrolleres før signering.
+                    Kontroller at dette er riktig person. Signaturretten kontrolleres før invitasjonen sendes.
                   </p>
                   <button
                     type="button"
@@ -369,7 +377,7 @@ export default function CustomerAgreementSigners({
                     onClick={() => void confirmChair()}
                     className="mt-4 w-full rounded-xl bg-amber-400 px-4 py-3 text-sm font-black text-slate-950 disabled:opacity-50"
                   >
-                    {chairBusy ? "Registrerer …" : "Opplysningene stemmer"}
+                    {chairBusy ? "Bekrefter …" : "Ja, dette er riktig signatar"}
                   </button>
                   <button
                     type="button"
@@ -381,7 +389,7 @@ export default function CustomerAgreementSigners({
                     }}
                     className="mt-2 w-full rounded-lg border border-slate-600 px-4 py-3 text-xs font-semibold text-slate-200"
                   >
-                    Opplysningene stemmer ikke
+                    Feil person – kontakt oss
                   </button>
                 </>
               ) : (
@@ -394,10 +402,26 @@ export default function CustomerAgreementSigners({
 
           {existing.length > 0 && (
             <p className="mb-3 text-sm text-amber-300">
-              Registrerte signatarer: {existing.join(", ")}
+              Signatar registrert: {existing.join(", ")}
             </p>
           )}
 
+          {existing.length > 0 && agreement?.status !== "signed" && (
+            <p className="mb-4 text-xs text-slate-300">
+              Signataren er registrert. Når fullmakt og identitet er kontrollert, sendes signeringsinvitasjonen.
+            </p>
+          )}
+
+          {!previewMode && data.can_manage && agreement?.status === "draft" &&
+            Boolean(agreement.document_sha256) && existing.length === 0 && (
+            <button type="button" onClick={() => setShowOtherSigners(value => !value)}
+              className="mb-3 text-xs font-semibold text-amber-200 underline">
+              {showOtherSigners ? "Skjul andre signatarvalg" : "Finner du ikke riktig signatar? Vis andre valg"}
+            </button>
+          )}
+
+          {showOtherSigners && !previewMode && data.can_manage && agreement?.status === "draft" &&
+            Boolean(agreement.document_sha256) && existing.length === 0 && (
           <div className="space-y-2">
             {available.map(member => (
               <label
@@ -426,8 +450,9 @@ export default function CustomerAgreementSigners({
               </label>
             ))}
           </div>
+          )}
 
-          {data.can_manage && available.length === 0 && (
+          {showOtherSigners && data.can_manage && available.length === 0 && (
             <p className="mt-3 text-sm text-slate-400">
               Registrer styremedlemmer under «Styret og tilganger» først.
             </p>
@@ -440,7 +465,7 @@ export default function CustomerAgreementSigners({
             </p>
           )}
 
-          <button
+          {showOtherSigners && <button
             type="button"
             disabled={busy || !data.can_manage || selected.length === 0 ||
               agreement?.status !== "draft" ||
@@ -449,7 +474,7 @@ export default function CustomerAgreementSigners({
             className="mt-4 rounded-lg bg-amber-500 px-4 py-3 text-xs font-bold text-slate-950 disabled:opacity-40"
           >
             Registrer valgte signatarer
-          </button>
+          </button>}
         </>
       )}
       {pdfUrl && (
