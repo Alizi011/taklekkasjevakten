@@ -527,6 +527,25 @@ export default function AdminAgreementProgress({ inquiryId, organizationNumber }
   const pending = proposal?.status === "pending_customer";
   const approved = proposal?.status === "approved";
   const isSigned = agreement?.status === "signed";
+  const signingNextStep = isSigned
+    ? "Arbeidsavtalen er ferdig signert av begge parter. Ingen signeringshandling gjenstår."
+    : !agreement && pending
+      ? "Avventer kundens datogodkjenning. Bruk knappen for datopåminnelse når det er aktuelt."
+    : !agreement && approved
+      ? "Datoen er godkjent, men arbeidsavtalen mangler. Undersøk avtaleopprettelsen før ny invitasjon."
+    : !agreement
+      ? "Kontroller oppstartsdato og tilbudsstatus."
+    : signers.length === 0
+      ? "Arbeidsavtalen finnes, men ingen signatarer er registrert. Kontroller signatarregistreringen."
+    : agreement.status === "draft" && signers.some(s => !s.authority_verified_at)
+      ? "Kontroller og dokumenter signaturfullmakten for signatarene som mangler verifisering."
+    : agreement.status === "draft"
+      ? "Signaturfullmaktene er kontrollert. Klargjør arbeidsavtalen for signering."
+    : signers.some(s => s.status === "pending" && s.invitation_status)
+      ? "Signeringsinvitasjon er aktiv. Avvent signatur, eller kontakt signataren ved behov."
+    : signers.some(s => s.status === "pending" && s.authority_verified_at)
+      ? "Send signeringsinvitasjon til neste signatar etter kontroll av mobilnummeret. Kunden skal signere før Perun AS."
+    : "Oppdater signeringsstatus og undersøk hva som gjenstår på avtalen.";
   const dateReady = approved || Boolean(agreement);
   const title = agreement ? (agreementLabels[agreement.status] || `Arbeidsavtale: ${agreement.status}`) :
     pending ? "Avventer kundens godkjenning av arbeidsdato" :
@@ -935,12 +954,7 @@ export default function AdminAgreementProgress({ inquiryId, organizationNumber }
           )}
           <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/[0.05] p-3 space-y-1">
             <p className="text-xs font-bold text-cyan-200">Neste handling</p>
-            <p className="text-[11px] leading-5 text-slate-300">{isSigned ? "Ingen signeringspåminnelse nødvendig." :
-              agreement?.status === "sent_for_signature" || agreement?.status === "partially_signed" ?
-              "Følg opp utestående signatarer. Påminnelse aktiveres når sikker utsending er koblet til avtalen." :
-              pending ? "Kunden må gjennomgå arbeidsplanen i kundeportalen. Påminnelsesutsending er ennå ikke aktivert." :
-              approved ? "Følg opp avtaleopprettelse i eksisterende arbeidsflyt." :
-              agreement ? "Følg opp avtalen i eksisterende arbeidsflyt." : "Kontroller arbeidsplanleggingen."}</p>
+            <p className="text-[11px] leading-5 text-slate-300">{signingNextStep}</p>
           </div>
         </>}
       <button type="button" onClick={() => { void load(); void loadCustomerAccess(); }} disabled={loading || customerAccessLoading}
