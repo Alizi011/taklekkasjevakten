@@ -13,6 +13,7 @@ export default function CustomerFollowupTimeline({ inquiryId, sessionToken, offe
   const [agreement, setAgreement] = useState<Agreement | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [reloadCount, setReloadCount] = useState(0);
 
   useEffect(() => {
     if (!offerAccepted || (!previewMode && !sessionToken) || inquiryId <= 0) {
@@ -81,7 +82,15 @@ export default function CustomerFollowupTimeline({ inquiryId, sessionToken, offe
     };
     void load();
     return () => controller.abort();
-  }, [offerAccepted, previewMode, sessionToken, inquiryId, refreshKey]);
+  }, [offerAccepted, previewMode, sessionToken, inquiryId, refreshKey, reloadCount]);
+
+  // Recheck on return from the separate SMS signing page.
+  useEffect(() => {
+    if (!offerAccepted) return;
+    const refreshOnFocus = () => setReloadCount(count => count + 1);
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
+  }, [offerAccepted]);
 
   if (!offerAccepted) return null;
 
@@ -101,7 +110,7 @@ export default function CustomerFollowupTimeline({ inquiryId, sessionToken, offe
 
   const heading = report2Published ? "Rapport 2 publisert"
     : signed ? "Arbeidsavtalen er ferdig signert"
-    : agreement?.status === "partially_signed" ? "Avtalen er delvis signert"
+    : agreement?.status === "partially_signed" ? "Kundens signering er registrert – avventer øvrige signatarer"
     : agreement?.status === "sent_for_signature" ? "Avtalen er sendt til signering"
     : signingReady ? "Arbeidsavtalen er klar for signering"
     : documentReady ? "Arbeidsavtalen er opprettet"
@@ -148,10 +157,15 @@ export default function CustomerFollowupTimeline({ inquiryId, sessionToken, offe
           </div>
         </div>
         {!previewMode && !report2Published && (
-          <button type="button" onClick={onOpenAgreement} className="rounded-lg border border-amber-500/30 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-500/10">
-            {documentReady ? "Se arbeidsavtalen" : approved ? "Se avtalestatus" : "Åpne datobekreftelse"}
-          </button>
-        )}
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setReloadCount(count => count + 1)} disabled={loading} className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-slate-800 disabled:opacity-50">
+              {loading ? "Oppdaterer …" : "Oppdater status"}
+            </button>
+            <button type="button" onClick={onOpenAgreement} className="rounded-lg border border-amber-500/30 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-500/10">
+              {documentReady ? "Se arbeidsavtalen" : approved ? "Se avtalestatus" : "Åpne datobekreftelse"}
+            </button>
+          </div>
+        )
       </div>
       <p className="mt-3 text-[11px] text-slate-500">
         Signeringsstatus hentes fra Perun Core. Utførelse er ikke automatisk markert fullført.
