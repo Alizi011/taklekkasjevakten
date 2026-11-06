@@ -165,7 +165,7 @@ export default function CustomerFollowupTimeline({ inquiryId, sessionToken, offe
               {documentReady ? "Se arbeidsavtalen" : approved ? "Se avtalestatus" : "Åpne datobekreftelse"}
             </button>
           </div>
-        )
+        )}
       </div>
       <p className="mt-3 text-[11px] text-slate-500">
         Signeringsstatus hentes fra Perun Core. Utførelse er ikke automatisk markert fullført.
