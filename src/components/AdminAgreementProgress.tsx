@@ -621,7 +621,7 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                         <p className="text-slate-200">Registrert BRREG-person: {review.latest.brreg_person_name}</p>
                         <p className="text-slate-400">
                           {review.latest.match_mode === "manual" ? "Manuell navnevurdering" : "Eksakt navnesamsvar"}
-                          {" · "}Kontroll: {new Date(review.latest.checked_at.replace(" ", "T") + (review.latest.checked_at.includes("Z") ? "" : review.latest.checked_at.includes("+") ? "" : "Z")).toLocaleString("nb-NO")}
+                          {" · "}Kontroll: {review.latest.checked_at.replace("T", " ").replace(/Z$/, "")}
                         </p>
                         <p className="text-slate-400">Rolle kontrollert. Dette er ikke identitetsverifisering eller godkjent signaturrett.</p>
                       </div>
