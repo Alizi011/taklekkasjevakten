@@ -780,6 +780,36 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                         {" · "}Status: {signer.status}
                       </p>
 
+                      {signer.party === "customer" && (() => {
+                        // Koble kun en dokumentert BRREG-vurdering til signataren
+                        // når navnet stemmer med kontaktpersonen eller valgt
+                        // BRREG-person. Dette gir ALDRI signaturfullmakt.
+                        const linkedMember = customerMembers.find(member => {
+                          const review = representativeReviews[member.id]?.latest;
+                          return review && (
+                            normalizePersonName(member.full_name) === normalizePersonName(signer.full_name) ||
+                            normalizePersonName(review.brreg_person_name) === normalizePersonName(signer.full_name)
+                          );
+                        });
+                        if (!linkedMember) return null;
+                        const review = representativeReviews[linkedMember.id]?.latest;
+                        if (!review) return null;
+                        return (
+                          <div className="space-y-1 rounded-lg border border-cyan-500/25 bg-cyan-500/[0.05] p-3 text-xs">
+                            <p className="font-semibold text-cyan-200">Tidligere BRREG-rollekontroll</p>
+                            <p className="text-slate-200">{review.brreg_person_name} · {review.role_name}</p>
+                            <p className="text-slate-400">
+                              {review.match_mode === "manual" ? "Manuell navnevurdering" : "Eksakt navnesamsvar"}
+                              {" · "}Kontroll: {review.checked_at.replace("T", " ").replace(/Z$/, "")}
+                            </p>
+                            <p className="text-amber-200">
+                              Styreverv er ikke i seg selv dokumentert signaturrett. Kontroller
+                              BRREGs signaturbestemmelser eller gyldig fullmakt særskilt.
+                            </p>
+                          </div>
+                        );
+                      })()}
+
                       {signer.invitation_status && (
                         <p className="text-xs font-semibold text-emerald-300">
                           Aktiv signeringsinvitasjon – {signer.invitation_status === "verified"
