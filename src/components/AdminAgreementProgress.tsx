@@ -612,45 +612,39 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                   })()}
                   {(() => {
                     const review = representativeReviews[member.id];
-                    if (!review) return <p className="text-slate-400">Henter tidligere BRREG-kontroll …</p>;
-                    if (review.error) return <p className="text-amber-300">Lagret BRREG-kontroll kunne ikke hentes.</p>;
-                    if (!review.latest) return <p className="text-slate-400">Ingen representantkontroll er dokumentert ennå.</p>;
+                    if (!review) return <p className="text-xs text-slate-400">Henter representantkontroll …</p>;
+                    if (review.error) return <p className="text-xs text-amber-300">Lagret BRREG-kontroll kunne ikke hentes.</p>;
+                    if (!review.latest) return <p className="text-xs text-slate-400">Representantrollen er ikke dokumentert ennå.</p>;
                     return (
-                      <div className="mt-2 space-y-1 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.05] p-2">
+                      <div className="mt-2 space-y-1 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.05] p-3">
                         <p className="font-semibold text-emerald-300">BRREG-rolle dokumentert: {review.latest.role_name}</p>
-                        <p className="text-slate-200">Registrert BRREG-person: {review.latest.brreg_person_name}</p>
-                        <p className="text-slate-400">
-                          {review.latest.match_mode === "manual" ? "Manuell navnevurdering" : "Eksakt navnesamsvar"}
-                          {" · "}Kontroll: {review.latest.checked_at.replace("T", " ").replace(/Z$/, "")}
+                        <p className="text-slate-200">{review.latest.brreg_person_name}</p>
+                        <p className="text-xs text-slate-400">
+                          {review.latest.match_mode === "manual" ? "Navnesamsvar vurdert manuelt" : "Eksakt navnesamsvar"}
+                          {" · "}Kontrollert {review.latest.checked_at.replace("T", " ").replace(/Z$/, "")}
                         </p>
-                        <p className="text-slate-400">Rolle kontrollert. Dette er ikke identitetsverifisering eller godkjent signaturrett.</p>
                       </div>
                     );
                   })()}
+                  <p className="mt-2 text-xs text-slate-300">
+                    Kontaktpersonen kan følge opp forespørsler og tilbud gjennom eksisterende kundetilgang.
+                    Signaturrett vurderes først når en arbeidsavtale skal signeres.
+                  </p>
                   <button type="button" onClick={() => void openRepresentativeReview(member)}
                     className="mt-2 rounded-lg border border-cyan-500/40 px-3 py-2 font-bold text-cyan-200 hover:bg-cyan-500/10">
-                    {representativeReviews[member.id]?.latest ? "Se eller oppdater BRREG-kontroll" : "Kontroller representant i BRREG"}
+                    {representativeReviews[member.id]?.latest ? "Se BRREG-kontroll" : "Kontroller representant i BRREG"}
                   </button>
-                  <p className={member.status === "active" ? "text-emerald-300" : "text-slate-300"}>
-                    Saksrolle: {member.access_role === "customer_admin" ? "Kundeadministrator" : member.access_role === "board_member" ? "Styremedlem" : "Kontaktperson"}
-                    {member.status === "pending" ? " · Registrert, personlig innlogging ikke bekreftet" : member.status === "active" ? " · Innlogging bekreftet" : member.status === "invited" ? " · Invitert" : " · Tilgang trukket tilbake"}
-                  </p>
-                  <p className="text-slate-300">
-                    Identitet: {member.identity_verified_at ? "Verifisering registrert" : "Ikke verifisert"}
-                  </p>
-                  <p className="text-slate-300">
-                    Fullmakt: {member.authority_verified_at ? "Verifisering registrert" : "Ikke verifisert"}
-                  </p>
-                  <p className="text-slate-300">
-                    Invitasjon: {member.invitation_sent_at ? "Utsendelsesforsøk registrert" : "Ingen utsendelse registrert"}
-                  </p>
-
-                  {member.status === "active" &&
-                    member.organisation_role?.trim().toLowerCase() !== "styreleder" && (
-                    <p className="mt-2 text-amber-200">
-                      Registrert rolle er ikke styreleder. Bekreftelse av oppstart krever særskilt verifisert styrelederfullmakt.
-                    </p>
-                  )}
+                  <details className="mt-3 rounded-lg border border-slate-700/60 p-2 text-xs">
+                    <summary className="cursor-pointer font-semibold text-slate-300">Vis tekniske tilgangsdetaljer</summary>
+                    <div className="mt-2 space-y-1 text-slate-300">
+                      <p>Saksrolle: {member.access_role === "customer_admin" ? "Kundeadministrator" : member.access_role === "board_member" ? "Styremedlem" : "Kontaktperson"}</p>
+                      <p>Personlig medlemsøkt: {member.status === "active" ? "Bekreftet" : member.status === "pending" ? "Ikke bekreftet" : member.status === "invited" ? "Invitert" : "Tilgang trukket tilbake"}</p>
+                      <p>Personidentitet: {member.identity_verified_at ? "Verifisering registrert" : "Ikke verifisert"}</p>
+                      <p>Medlemsfullmakt: {member.authority_verified_at ? "Verifisering registrert" : "Ikke verifisert"}</p>
+                      <p>Invitasjon: {member.invitation_sent_at ? "Utsendelsesforsøk registrert" : "Ingen utsendelse registrert"}</p>
+                      <p className="text-slate-400">Disse opplysningene er separate fra den ordinære kundeportaltilgangen og BRREG-rollekontrollen.</p>
+                    </div>
+                  </details>
                 </div>
               ))}
           </div>
