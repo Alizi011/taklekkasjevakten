@@ -54,6 +54,7 @@ interface CustomerDashboardProps {
   onBackToMain?: () => void;
   previewInquiryId?: number;
   previewMode?: boolean;
+  onOpenBusinessPreview?: (customerId: number) => void;
 }
 
 type ReportStatus =
@@ -673,6 +674,7 @@ export default function CustomerDashboard({
   onBackToMain,
   previewInquiryId,
   previewMode = false,
+  onOpenBusinessPreview,
 }: CustomerDashboardProps) {
   const [showSubmittedSummary, setShowSubmittedSummary] = useState(false);
   const [serviceSlide, setServiceSlide] = useState(0);
@@ -3302,12 +3304,21 @@ export default function CustomerDashboard({
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="hidden text-right sm:block">
-              <p className="text-xs font-bold text-white">
-                {inq.customer_name || "Kunde"}
-              </p>
-              <p className="text-[10px] text-slate-500">Kundeportal</p>
-            </div>
+            {/* TLV_CUSTOMER_ACCOUNT_HEADER_V1 */}
+            <CustomerAccountSwitcher
+              inquiryId={Number(inq.id)}
+              endpoint={apiUrl("/customer_accounts.php")}
+              previewMode={previewMode}
+              currentAccountName={String(inq.customer_name || "")}
+              placement="header"
+              onOpenBusinessPreview={
+                previewMode &&
+                onOpenBusinessPreview &&
+                Number(inq.customer_id) > 0
+                  ? () => onOpenBusinessPreview(Number(inq.customer_id))
+                  : undefined
+              }
+            />
 
 
 {previewMode && onBackToMain ? (
@@ -3344,12 +3355,7 @@ export default function CustomerDashboard({
 
       <div className="mx-auto grid max-w-[1440px] grid-cols-1 md:grid-cols-[190px_minmax(0,1fr)]">
         <aside className="hidden min-h-[calc(100vh-73px)] border-r border-slate-800/80 bg-[#071321] px-3 py-6 md:block">
-          <CustomerAccountSwitcher
-              inquiryId={Number(inq.id)}
-              endpoint={apiUrl("/customer_accounts.php")}
-              previewMode={previewMode}
-              currentAccountName={String(inq.customer_name || '')}
-            />
+
 
 <nav className="space-y-2">
             {[
@@ -3564,22 +3570,14 @@ export default function CustomerDashboard({
               {customerPortalView === "offers" && (
   <>
   
-  {followupOfferAccepted && (
-    <div className="mb-4 rounded-xl border border-slate-700 bg-slate-900/30 p-4 text-xs text-slate-300">
-      Registrert oppstart og kundens bekreftelse finner du i høyrepanelet på oversikten.
-      <button type="button" onClick={() => openCustomerPortalView("overview")}
-        className="ml-2 font-bold text-amber-300 hover:underline">Gå til oppstart</button>
-    </div>
-  )}
-  {!followupOfferAccepted && (
-    <CustomerAgreementSchedule
-      inquiryId={Number(inq.id)}
-      sessionToken={previewMode ? "" : (window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || "")}
-      endpoint={apiUrl("/customer_agreement_schedule.php")}
-      previewMode={previewMode}
-      onAgreementCreated={() => setAgreementSignerRefresh(n => n + 1)}
-    />
-  )}
+
+  <CustomerAgreementSchedule
+    inquiryId={Number(inq.id)}
+    sessionToken={previewMode ? "" : (window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || "")}
+    endpoint={apiUrl("/customer_agreement_schedule.php")}
+    previewMode={previewMode}
+    onAgreementCreated={() => setAgreementSignerRefresh(n => n + 1)}
+  />
 <CustomerAgreementSigners
     key={agreementSignerRefresh}
     inquiryId={Number(inq.id)}
@@ -4122,7 +4120,30 @@ export default function CustomerDashboard({
 
             </div>
 
-            <aside className="border-t border-slate-800/80 bg-slate-950/35 p-6 lg:border-l lg:border-t-0 md:p-7">
+            <aside className="tlv-start-date-attention border-t border-slate-800/80 bg-slate-950/35 p-6 lg:border-l lg:border-t-0 md:p-7">
+              <style>{`
+                @keyframes tlvStartDateGlow {
+                  0%, 100% {
+                    box-shadow: inset 0 0 0 1px rgba(245,184,0,0.12),
+                                0 0 0 rgba(245,184,0,0);
+                  }
+                  50% {
+                    box-shadow: inset 0 0 0 2px rgba(245,184,0,0.85),
+                                0 0 26px rgba(245,184,0,0.16);
+                  }
+                }
+
+                .tlv-start-date-attention:has([data-start-date-pending="true"]) {
+                  animation: tlvStartDateGlow 3s ease-in-out infinite;
+                }
+
+                @media (prefers-reduced-motion: reduce) {
+                  .tlv-start-date-attention:has([data-start-date-pending="true"]) {
+                    animation: none;
+                    box-shadow: inset 0 0 0 1px rgba(245,184,0,0.55);
+                  }
+                }
+              `}</style>
               <p className="text-[9px] font-black uppercase tracking-[0.16em] text-amber-400">Neste steg</p>
               <h3 className="mt-2 text-lg font-black text-white">
                 {followupOfferAccepted ? "Bekreft oppstart" : originalWorkFinished

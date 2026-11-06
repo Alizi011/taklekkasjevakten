@@ -39,6 +39,57 @@ export default function CustomerAgreementSigners({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [pdfUrl, setPdfUrl] = useState("");
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [chairProposal, setChairProposal] = useState<string | null>(null);
+  const [chairBusy, setChairBusy] = useState(false);
+  const [chairProblem, setChairProblem] = useState("");
+
+  useEffect(() => {
+    return () => {
+      if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+    };
+  }, [pdfUrl]);
+
+  async function openAgreementPdf(agreementId: number) {
+    if (previewMode || !sessionToken || !agreementId || pdfBusy) return;
+
+    setPdfBusy(true);
+    setError("");
+
+    try {
+      const response = await fetch(
+        apiUrl("/customer_agreement_document.php"),
+        {
+          method: "POST",
+          credentials: "omit",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            inquiry_id: inquiryId,
+            agreement_id: agreementId,
+            session_token: sessionToken,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.message || "Kunne ikke åpne arbeidsavtalen.");
+      }
+
+      const blob = await response.blob();
+      if (!blob.type.includes("application/pdf")) {
+        throw new Error("Serveren returnerte ikke en PDF.");
+      }
+
+      setPdfUrl(URL.createObjectURL(blob));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "PDF-visningen feilet.");
+    } finally {
+      setPdfBusy(false);
+    }
+  }
 
   async function request(
     path: string,
@@ -64,7 +115,7 @@ export default function CustomerAgreementSigners({
     return result;
   }
 
-  async function load() {
+  async function load(showFeedback = false) {
     setBusy(true);
     setError("");
 
@@ -75,6 +126,16 @@ export default function CustomerAgreementSigners({
       );
 
       setData(result);
+
+      if (showFeedback) {
+        setMessage(
+          previewMode
+            ? "Forhåndsvisningen er oppdatert. Ingen endringer er utført."
+            : result.can_manage
+              ? "Avtale- og signatarstatus er oppdatert."
+              : "Status er hentet. Denne innloggingen gir ikke tilgang til å administrere signatarer. Personlig hovedkontaktinnlogging kan være nødvendig."
+        );
+      }
       const first = result.agreements?.[0];
       setSelectedAgreement(first ? Number(first.id) : 0);
       setSelected([]);
@@ -90,7 +151,7 @@ export default function CustomerAgreementSigners({
   }, [inquiryId, sessionToken, previewMode]);
 
   useEffect(() => {
-    if (!selectedAgreement || !data?.can_manage) {
+    if (!selectedAgreement || !data || previewMode) {
       setExisting([]);
       return;
     }
@@ -115,7 +176,69 @@ export default function CustomerAgreementSigners({
     });
 
     return () => { cancelled = true; };
-  }, [selectedAgreement, data?.can_manage]);
+  }, [selectedAgreement, data, previewMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setChairProposal(null);
+    setChairProblem("");
+
+    const agreement = data?.agreements.find(
+      a => Number(a.id) === selectedAgreement
+    );
+
+    if (previewMode || !agreement ||
+        agreement.status !== "draft" ||
+        !agreement.document_sha256) {
+      return;
+    }
+
+    request("/customer_agreement_signers.php", {
+      action: "chair_proposal",
+      agreement_id: selectedAgreement,
+    }).then(result => {
+      if (!cancelled) {
+        setChairProposal(result.proposed_signer?.full_name || null);
+      }
+    }).catch(e => {
+      if (!cancelled) {
+        setChairProblem(
+          e instanceof Error ? e.message : "Kunne ikke hente styreleder."
+        );
+      }
+    });
+
+    return () => { cancelled = true; };
+  }, [selectedAgreement, data, previewMode]);
+
+  async function confirmChair() {
+    if (!chairProposal || !selectedAgreement || previewMode || chairBusy) return;
+
+    setChairBusy(true);
+    setError("");
+    setMessage("");
+
+    try {
+      await request("/customer_agreement_signers.php", {
+        action: "confirm_chair",
+        agreement_id: selectedAgreement,
+        confirmed_full_name: chairProposal,
+        confirmed: true,
+      });
+
+      setExisting([chairProposal]);
+      setChairProposal(null);
+      setMessage(
+        "Signataren er registrert. Signaturfullmakten kontrolleres før invitasjonen sendes."
+      );
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Kunne ikke bekrefte signataren."
+      );
+    } finally {
+      setChairBusy(false);
+    }
+  }
 
   async function register() {
     if (!selectedAgreement || selected.length === 0) return;
@@ -168,10 +291,14 @@ export default function CustomerAgreementSigners({
         </div>
         <button
           type="button"
-          onClick={() => void load()}
-          className="rounded-lg border border-slate-700 px-3 py-2 text-xs"
+          onClick={() => {
+            setMessage("");
+            void load(true);
+          }}
+          disabled={busy}
+          className="rounded-lg border border-slate-700 px-3 py-2 text-xs disabled:opacity-50"
         >
-          Oppdater
+          {busy ? "Oppdaterer …" : "Oppdater"}
         </button>
       </div>
 
@@ -205,6 +332,65 @@ export default function CustomerAgreementSigners({
               ))}
             </select>
           </label>
+
+          {agreement?.document_sha256 && (
+            <button
+              type="button"
+              disabled={previewMode || pdfBusy}
+              onClick={() => void openAgreementPdf(Number(agreement.id))}
+              className="mb-5 w-full rounded-xl bg-amber-400 px-4 py-3 text-sm font-black text-slate-950 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {pdfBusy ? "Åpner arbeidsavtalen …" : "Les arbeidsavtalen"}
+            </button>
+          )}
+
+          {!previewMode && agreement?.status === "draft" &&
+            agreement.document_sha256 && existing.length === 0 && (
+            <div className="mb-5 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
+              <h3 className="text-sm font-bold text-white">
+                Bekreft hvem som skal signere
+              </h3>
+
+              {chairProposal ? (
+                <>
+                  <p className="mt-3 text-base font-bold text-amber-300">
+                    {chairProposal}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Foreslått styreleder
+                  </p>
+                  <p className="mt-3 text-xs leading-5 text-slate-300">
+                    Kontroller at opplysningene stemmer.
+                    Signaturfullmakten kontrolleres før signering.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={chairBusy}
+                    onClick={() => void confirmChair()}
+                    className="mt-4 w-full rounded-xl bg-amber-400 px-4 py-3 text-sm font-black text-slate-950 disabled:opacity-50"
+                  >
+                    {chairBusy ? "Registrerer …" : "Opplysningene stemmer"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setChairProblem(
+                        "Opplysningene stemmer ikke. Kontakt prosjektansvarlig slik at signataren kan korrigeres før signering."
+                      );
+                      setChairProposal(null);
+                    }}
+                    className="mt-2 w-full rounded-lg border border-slate-600 px-4 py-3 text-xs font-semibold text-slate-200"
+                  >
+                    Opplysningene stemmer ikke
+                  </button>
+                </>
+              ) : (
+                <p className="mt-3 text-xs text-slate-400">
+                  {chairProblem || "Henter forslag til styreleder …"}
+                </p>
+              )}
+            </div>
+          )}
 
           {existing.length > 0 && (
             <p className="mb-3 text-sm text-amber-300">
@@ -265,6 +451,42 @@ export default function CustomerAgreementSigners({
             Registrer valgte signatarer
           </button>
         </>
+      )}
+      {pdfUrl && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Arbeidsavtale"
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/95 p-3 sm:p-6"
+        >
+          <div className="flex h-[95vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-amber-500/40 bg-slate-950">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-800 p-4">
+              <h3 className="font-bold text-white">Arbeidsavtale</h3>
+              <button
+                type="button"
+                onClick={() => setPdfUrl("")}
+                className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-white"
+              >
+                Lukk
+              </button>
+            </div>
+            <iframe
+              title="Les hele arbeidsavtalen"
+              src={pdfUrl}
+              className="min-h-0 w-full flex-1 bg-white"
+            />
+            <div className="border-t border-slate-800 p-3">
+              <a
+                href={pdfUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm font-semibold text-amber-300 underline"
+              >
+                Åpne PDF i eget vindu
+              </a>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );

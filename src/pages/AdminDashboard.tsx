@@ -2024,8 +2024,32 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       <BusinessCustomerDashboard
         previewMode
         previewCustomerId={previewBusinessCustomerId}
+        onOpenCasePreview={() => {
+          const previousCase = inquiries.find(
+            (item) =>
+              Number(item.id) === previewCustomerInquiryId &&
+              Number((item as any).customer_id) === previewBusinessCustomerId
+          );
+          const latestCase = inquiries
+            .filter(
+              (item) =>
+                Number((item as any).customer_id) === previewBusinessCustomerId
+            )
+            .sort((a, b) => Number(b.id) - Number(a.id))[0];
+
+          const targetCase = previousCase || latestCase;
+
+          if (!targetCase) {
+            alert("Fant ingen registrert sak for denne virksomheten.");
+            return;
+          }
+
+          setPreviewCustomerInquiryId(Number(targetCase.id));
+          setPreviewBusinessCustomerId(null);
+        }}
         onBackToAdmin={() => {
           setPreviewBusinessCustomerId(null);
+          setPreviewCustomerInquiryId(null);
           setActiveTab("kunder");
         }}
       />
@@ -2037,6 +2061,10 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       <CustomerDashboard
         previewMode
         previewInquiryId={previewCustomerInquiryId}
+        onOpenBusinessPreview={(customerId) => {
+          if (!Number.isInteger(customerId) || customerId <= 0) return;
+          setPreviewBusinessCustomerId(customerId);
+        }}
         onBackToMain={() => {
           setPreviewCustomerInquiryId(null);
           if (!selectedInquiry) {

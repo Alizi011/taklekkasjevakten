@@ -12,6 +12,8 @@ type Props = {
   endpoint: string;
   previewMode?: boolean;
   currentAccountName?: string;
+  placement?: "sidebar" | "header";
+  onOpenBusinessPreview?: () => void;
 };
 
 const SESSION_KEY = "taklekkasjevakten_customer_session";
@@ -32,6 +34,8 @@ export default function CustomerAccountSwitcher({
   endpoint,
   previewMode = false,
   currentAccountName = "",
+  placement = "sidebar",
+  onOpenBusinessPreview,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [organisations, setOrganisations] = useState<Organisation[]>([]);
@@ -125,20 +129,24 @@ export default function CustomerAccountSwitcher({
   );
 
   return (
-    <div className="mb-5 px-1 py-2">
+    <div className={placement === "header" ? "relative min-w-0" : "mb-5 px-1 py-2"}>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         aria-label="Vis kundekontoer"
-        className="flex w-full items-center justify-between gap-2 text-left"
+        className={placement === "header"
+          ? "flex max-w-[230px] items-center justify-between gap-2 rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-left hover:border-cyan-500/50"
+          : "flex w-full items-center justify-between gap-2 text-left"}
       >
         <div className="min-w-0">
 
 
-          <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-white">
+          <div className={placement === "header"
+              ? "flex items-center gap-2 text-xs font-semibold text-white"
+              : "mt-2 flex items-center gap-2 text-sm font-semibold text-white"}>
             <Building2 size={16} className="shrink-0 text-amber-400" />
-            <span className="break-words">{displayName}</span>
+            <span className={placement === "header" ? "truncate" : "break-words"}>{displayName}</span>
           </div>
         </div>
 
@@ -151,7 +159,9 @@ export default function CustomerAccountSwitcher({
       </button>
 
       {open && (
-        <div className="mt-4 space-y-4 border-t border-slate-800 pt-4">
+        <div className={placement === "header"
+            ? "absolute right-0 top-full z-[60] mt-2 w-[min(90vw,320px)] space-y-4 rounded-xl border border-slate-700 bg-[#0b1422] p-4 text-left shadow-2xl"
+            : "mt-4 space-y-4 border-t border-slate-800 pt-4"}>
           <div className="flex items-start gap-2">
             <CheckCircle2
               size={16}
@@ -169,6 +179,19 @@ export default function CustomerAccountSwitcher({
               </p>
             </div>
           </div>
+
+          {previewMode && onOpenBusinessPreview && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onOpenBusinessPreview();
+              }}
+              className="w-full rounded-lg border border-slate-700 px-3 py-2 text-left text-xs font-semibold text-amber-300 hover:bg-slate-800"
+            >
+              Åpne virksomhetsportal
+            </button>
+          )}
 
           {loading && (
             <p className="text-xs text-slate-400">

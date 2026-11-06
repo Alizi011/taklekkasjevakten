@@ -631,7 +631,7 @@ export default function AdminReportReview({
 
     try {
       const [reportRes, completionRes, checklistRes, photoRes] = await Promise.all([
-        fetch(apiUrl(`/reports.php?inquiry_id=${inquiryId}`)),
+        fetch(apiUrl(`/reports.php?inquiry_id=${inquiryId}`), { credentials: "include" }),
         fetch(apiUrl(`/completion_reports.php?inquiry_id=${inquiryId}`)),
         fetch(apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)),
         fetch(apiUrl(`/photos.php?inquiry_id=${inquiryId}`)),
@@ -1141,6 +1141,7 @@ export default function AdminReportReview({
     successMessage: string
   ): Promise<ReportData> => {
     const res = await fetch(apiUrl("/reports.php"), {
+      credentials: "include",
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1264,7 +1265,8 @@ export default function AdminReportReview({
         setReport(data.report);
       } else {
         const reportRes = await fetch(
-          apiUrl(`/reports.php?inquiry_id=${inquiryId}`)
+          apiUrl(`/reports.php?inquiry_id=${inquiryId}`),
+          { credentials: "include" }
         );
         const reportData = await reportRes.json();
         if (reportRes.ok && reportData.success) {
@@ -1417,6 +1419,7 @@ export default function AdminReportReview({
 
     try {
       const res = await fetch(apiUrl("/reports.php"), {
+        credentials: "include",
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1506,6 +1509,7 @@ export default function AdminReportReview({
       history: history.slice(-5), ...(legacy ? { legacy_ai_draft: legacy } : {}),
     });
     const response = await fetch(apiUrl("/reports.php"), {
+      credentials: "include",
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ inquiry_id: inquiryId, ai_draft: stored }),
@@ -1633,6 +1637,7 @@ export default function AdminReportReview({
     }
     try {
       const res = await fetch(apiUrl("/reports.php"), {
+        credentials: "include",
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

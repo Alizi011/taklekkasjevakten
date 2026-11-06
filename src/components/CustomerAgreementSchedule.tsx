@@ -80,8 +80,8 @@ export default function CustomerAgreementSchedule({ inquiryId, sessionToken, end
   const wrapper = compact ? "mt-5 text-white" : "rounded-2xl border border-amber-500/30 bg-[#0b1422] p-5 text-white";
 
   return (
-    <section className={wrapper} aria-label="Oppstartsdato og varighet">
-      {!compact && <h2 className="text-lg font-bold">Bekreft registrert oppstart</h2>}
+    <section className={wrapper} data-start-date-pending={latest?.status === "pending_customer" ? "true" : undefined} aria-label="Oppstartsdato og varighet">
+      {!compact && <h2 className="text-lg font-bold">Godkjenn oppstartsdato</h2>}
       {loading ? (
         <p className="mt-3 text-xs text-slate-400">Henter oppstartsdato og varighet …</p>
       ) : !latest ? (
@@ -100,11 +100,21 @@ export default function CustomerAgreementSchedule({ inquiryId, sessionToken, end
           </div>
           {latest.proposal_note && <p className="text-xs leading-5 text-slate-400">{latest.proposal_note}</p>}
           {previewMode ? (
-            <p className="text-xs font-semibold text-amber-200">{latest.status === "pending_customer" ? "Avventer kundens bekreftelse" : approved ? "Oppstart og varighet er bekreftet av kunden" : latest.status === "change_requested" ? "Kunden har bedt om endring" : `Status: ${latest.status}`}</p>
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-amber-200">{latest.status === "pending_customer" ? "Avventer kundens bekreftelse" : approved ? "Oppstart og varighet er bekreftet av kunden" : latest.status === "change_requested" ? "Kunden har bedt om endring" : `Status: ${latest.status}`}</p>
+              {latest.status === "pending_customer" && (
+                <div className="space-y-3">
+                  <p className="text-[11px] leading-5 text-slate-400">Se gjennom oppstartsdatoen og forventet varighet. Velg om tidspunktet passer, eller be om en endring. Deretter kan du gå videre til arbeidsavtalen.</p>
+                  <button type="button" disabled title="Forhåndsvisning – kun kunden kan bekrefte datoen" className="w-full cursor-not-allowed rounded-xl bg-amber-400 px-3 py-3 text-xs font-black text-slate-950 opacity-80">Datoen passer</button>
+                  <button type="button" disabled title="Forhåndsvisning – kun kunden kan be om endring" className="w-full cursor-not-allowed rounded-lg border border-slate-700 px-3 py-2.5 text-xs font-semibold text-slate-300 opacity-80">Be om endring</button>
+                  <p className="text-[10px] text-slate-500">Forhåndsvisning: Kundens knapper vises, men kan ikke brukes av administrator.</p>
+                </div>
+              )}
+            </div>
           ) : latest.status === "pending_customer" ? (
             <div className="space-y-3">
-              <p className="text-[11px] leading-5 text-slate-400">Kontroller opplysningene. Datoen gjelder faktisk oppstart; din bekreftelse registreres med dagens dato.</p>
-              <button type="button" disabled={saving} onClick={() => void respond("approve", latest.id)} className="w-full rounded-xl bg-amber-400 px-3 py-3 text-xs font-black text-slate-950 hover:bg-amber-300 disabled:opacity-50">{saving ? "Lagrer …" : "Bekreft oppstart og varighet"}</button>
+              <p className="text-[11px] leading-5 text-slate-400">Se gjennom oppstartsdatoen og forventet varighet. Velg om tidspunktet passer, eller be om en endring. Deretter kan du gå videre til arbeidsavtalen.</p>
+              <button type="button" disabled={saving} onClick={() => void respond("approve", latest.id)} className="w-full rounded-xl bg-amber-400 px-3 py-3 text-xs font-black text-slate-950 hover:bg-amber-300 disabled:opacity-50">{saving ? "Lagrer …" : "Datoen passer"}</button>
               {!showChange ? (
                 <button type="button" onClick={() => setShowChange(true)} className="w-full rounded-lg border border-slate-700 px-3 py-2.5 text-xs font-semibold text-slate-300 hover:text-white">Be om endring</button>
               ) : (

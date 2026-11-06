@@ -42,6 +42,7 @@ interface BusinessCustomerDashboardProps {
   previewCustomerId?: number;
   previewMode?: boolean;
   onBackToAdmin?: () => void;
+  onOpenCasePreview?: () => void;
 }
 
 interface BusinessCustomer {
@@ -194,6 +195,7 @@ export default function BusinessCustomerDashboard({
   previewCustomerId,
   previewMode = false,
   onBackToAdmin,
+  onOpenCasePreview,
 }: BusinessCustomerDashboardProps) {
   const [view, setView] = useState<BusinessView>("oversikt");
 
@@ -716,6 +718,15 @@ export default function BusinessCustomerDashboard({
           </div>
 
           <div className="flex items-center gap-2">
+            {previewMode && onOpenCasePreview && (
+              <button
+                type="button"
+                onClick={onOpenCasePreview}
+                className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-bold text-amber-300 hover:border-amber-500/50"
+              >
+                Åpne saksvisning
+              </button>
+            )}
             {previewMode && onBackToAdmin ? (
               <button
                 type="button"

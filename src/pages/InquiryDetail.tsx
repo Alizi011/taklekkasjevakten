@@ -975,13 +975,6 @@ export default function InquiryDetail({
     const currentOfferStatus = String(offer?.status || "").toLowerCase();
     const currentInquiryStatus = String(inquiry.status || "").toLowerCase();
 
-    const serviceBadge = (
-      <span className="px-3 py-1 bg-cyan-500/10 text-cyan-200 border border-cyan-500/30 rounded-xl text-xs font-bold inline-flex items-center gap-1.5">
-        <ClipboardList className="w-4 h-4" />
-        Bestilt: {orderedService}
-      </span>
-    );
-
     let statusBadge: React.ReactNode;
 
     if (rawStage === "garanti_5ar") {
@@ -1029,12 +1022,7 @@ export default function InquiryDetail({
       currentOfferStatus === "avvist" ||
       currentInquiryStatus === "tilbud_avvist"
     ) {
-      statusBadge = (
-        <span className="px-3 py-1 bg-red-500/10 text-red-300 border border-red-500/30 rounded-xl text-xs font-bold inline-flex items-center gap-1.5">
-          <AlertTriangle className="w-4 h-4" />
-          Tilbud: Avvist
-        </span>
-      );
+      statusBadge = null;
     } else if (currentOfferStatus === "utkast") {
       statusBadge = (
         <span className="px-3 py-1 bg-slate-500/10 text-slate-300 border border-slate-500/30 rounded-xl text-xs font-bold inline-flex items-center gap-1.5">
@@ -1103,12 +1091,7 @@ export default function InquiryDetail({
       );
     }
 
-    return (
-      <>
-        {serviceBadge}
-        {statusBadge}
-      </>
-    );
+    return statusBadge;
   };
 
 
@@ -5514,6 +5497,3 @@ export default function InquiryDetail({
     </div>
   );
 }
-
-
-

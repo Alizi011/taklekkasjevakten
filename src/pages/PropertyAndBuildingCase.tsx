@@ -231,7 +231,8 @@ export default function PropertyAndBuildingCase({
 
     try {
       const res = await fetch(
-        apiUrl(`/property.php?inquiry_id=${inquiryId}`)
+        apiUrl(`/property.php?inquiry_id=${inquiryId}`),
+        { credentials: "include" }
       );
       const data: PropertyResponse = await res.json();
 
@@ -257,7 +258,8 @@ export default function PropertyAndBuildingCase({
 
     try {
       const res = await fetch(
-        apiUrl(`/municipality_provider.php?inquiry_id=${inquiryId}`)
+        apiUrl(`/municipality_provider.php?inquiry_id=${inquiryId}`),
+        { credentials: "include" }
       );
       const data: MunicipalityResponse = await res.json();
 
@@ -294,6 +296,7 @@ export default function PropertyAndBuildingCase({
 
     try {
       const res = await fetch(apiUrl("/property.php"), {
+        credentials: "include",
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ inquiry_id: inquiryId }),
@@ -329,7 +332,8 @@ export default function PropertyAndBuildingCase({
 
     try {
       const res = await fetch(
-        apiUrl(`/municipality_provider.php?inquiry_id=${inquiryId}`)
+        apiUrl(`/municipality_provider.php?inquiry_id=${inquiryId}`),
+        { credentials: "include" }
       );
       const data: MunicipalityResponse = await res.json();
 
