@@ -336,6 +336,19 @@ export default function CustomerAgreementSigners({
   const available = (data?.members || []).filter(
     m => ["active", "invited"].includes(m.status)
   );
+  const customerSigners = previewMode
+    ? (previewSigners || []).filter(signer => signer.party === "customer")
+    : existing.map(name => ({ full_name: name }));
+  const signersKnown = !previewMode || (previewSigners !== null && !previewSignerError);
+  const customerSignerRegistered = signersKnown && customerSigners.length > 0;
+  const authorityChecked = previewMode && customerSignerRegistered &&
+    (previewSigners || []).filter(signer => signer.party === "customer")
+      .every(signer => Boolean(signer.authority_verified_at));
+  const signingInvited = previewMode && customerSignerRegistered &&
+    (previewSigners || []).some(signer => signer.party === "customer" && Boolean(signer.invitation_status));
+  const signingComplete = previewMode && customerSignerRegistered &&
+    (previewSigners || []).filter(signer => signer.party === "customer")
+      .every(signer => signer.status === "signed");
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5 text-slate-100">
@@ -372,6 +385,52 @@ export default function CustomerAgreementSigners({
 
       {data && data.agreements.length > 0 && (
         <>
+          <div className="mb-5 rounded-xl border border-slate-700/70 bg-slate-900/60 p-4">
+            <h3 className="text-sm font-bold text-white">Videre mot signering</h3>
+            <p className="mt-1 text-xs text-slate-400">
+              {previewMode ? "Administrator ser registrert fremdrift, uten å kunne svare for kunden." :
+                "Her ser du hva som er klart og hva som gjenstår."}
+            </p>
+            <ol className="mt-4 space-y-3 text-xs">
+              <li className="flex items-start gap-3">
+                <span className={agreement?.document_sha256 ? "font-bold text-emerald-300" : "text-amber-300"}>
+                  {agreement?.document_sha256 ? "✓" : "○"}
+                </span>
+                <span>Arbeidsavtale {agreement?.document_sha256 ? "opprettet og klar til gjennomlesning" : "under utarbeidelse"}</span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className={customerSignerRegistered ? "font-bold text-emerald-300" : "text-amber-300"}>
+                  {customerSignerRegistered ? "✓" : "○"}
+                </span>
+                <span>{!signersKnown ? "Henter signatarstatus …" : customerSignerRegistered
+                  ? "Kundesignatar registrert"
+                  : "Kunden må bekrefte hvem som skal signere"}</span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className={authorityChecked ? "font-bold text-emerald-300" : "text-slate-400"}>
+                  {authorityChecked ? "✓" : "○"}
+                </span>
+                <span>{authorityChecked ? "Signaturfullmakt kontrollert" :
+                  "Administrator kontrollerer signaturrett før invitasjon"}</span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className={signingInvited ? "font-bold text-emerald-300" : "text-slate-400"}>
+                  {signingInvited ? "✓" : "○"}
+                </span>
+                <span>{signingInvited ? "Signeringsinvitasjon registrert" : "Signeringsinvitasjon sendes"}</span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className={signingComplete ? "font-bold text-emerald-300" : "text-slate-400"}>
+                  {signingComplete ? "✓" : "○"}
+                </span>
+                <span>{signingComplete ? "Kundens signatur er registrert" : "Kunden signerer avtalen"}</span>
+              </li>
+            </ol>
+            {!previewMode && <p className="mt-3 text-[11px] text-slate-400">
+              Opplysninger om fullmakt og invitasjon oppdateres av prosjektansvarlig.
+            </p>}
+          </div>
+
           <label className="mb-4 block text-sm">
             Arbeidsavtale
             <select
