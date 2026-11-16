@@ -20,6 +20,7 @@ type Props = {
   inquiryId: number;
   offerNumber: string;
   saving?: boolean;
+  previewMode?: boolean;
 };
 
 const SESSION_KEY = "taklekkasjevakten_project_manager_session";
@@ -34,6 +35,7 @@ export default function AgreementPlanning({
   inquiryId,
   offerNumber,
   saving = false,
+  previewMode = false,
 }: Props) {
   const [startDate, setStartDate] = useState("");
   const [duration, setDuration] = useState("");
@@ -48,7 +50,7 @@ export default function AgreementPlanning({
       : "";
 
   const load = useCallback(async () => {
-    if (!sessionToken || inquiryId <= 0) {
+    if ((!previewMode && !sessionToken) || inquiryId <= 0) {
       setLoading(false);
       return;
     }
@@ -56,9 +58,10 @@ export default function AgreementPlanning({
     setLoading(true);
     try {
       const response = await fetch(
-        apiUrl("/project_manager_agreement_schedule.php"),
+        apiUrl(previewMode ? "/admin_agreement_schedule_read.php" : "/project_manager_agreement_schedule.php"),
         {
           method: "POST",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "list",
@@ -87,7 +90,7 @@ export default function AgreementPlanning({
     } finally {
       setLoading(false);
     }
-  }, [sessionToken, inquiryId, offerNumber]);
+  }, [sessionToken, inquiryId, offerNumber, previewMode]);
 
   useEffect(() => {
     void load();
@@ -99,7 +102,7 @@ export default function AgreementPlanning({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!sessionToken || !startDate || !duration || saving || busy || locked) {
+    if (previewMode || !sessionToken || !startDate || !duration || saving || busy || locked) {
       return;
     }
 
@@ -131,7 +134,7 @@ export default function AgreementPlanning({
         <p className="mt-1 text-sm text-slate-400">
           Registrer faktisk oppstartsdato og forventet varighet.
           Datoen kan ligge tilbake i tid dersom arbeidet allerede har startet.
-          Styreleder skal godkjenne datoen før avtalen opprettes.
+          Kunden skal godkjenne datoen før avtalen opprettes.
         </p>
       </div>
 
@@ -147,11 +150,11 @@ export default function AgreementPlanning({
           <p className="mt-1">Varighet: {proposal.estimated_duration}</p>
           <p className="mt-2 text-amber-300">
             {proposal.status === "pending_customer"
-              ? "Avventer styreleders godkjenning"
+              ? "Avventer kundens godkjenning"
               : proposal.status === "approved"
                 ? "Arbeidsdato godkjent"
                 : proposal.status === "change_requested"
-                  ? "Styreleder har bedt om endring"
+                  ? "Kunden har bedt om endring"
                   : `Status: ${proposal.status}`}
           </p>
           {proposal.customer_response_note && (
@@ -195,19 +198,19 @@ export default function AgreementPlanning({
           </label>
 
           <p className="text-xs text-slate-400">
-            Varigheten er et estimat. Datoen sendes til styreleder,
+            Varigheten er et estimat. Datoen sendes til kunden,
             ikke direkte til signering.
           </p>
 
           <button
             type="submit"
-            disabled={saving || busy || !sessionToken || !startDate || !duration}
+            disabled={previewMode || saving || busy || !sessionToken || !startDate || !duration}
             className="w-full rounded-lg bg-amber-500 px-4 py-3 font-bold text-slate-950 disabled:opacity-50"
           >
-            {saving || busy ? "Sender …" : replacingPending ? "Send korrigert dato til styreleder" : "Send dato til styreleder"}
+            {previewMode ? "Forhåndsvisning – sending deaktivert" : saving || busy ? "Sender …" : replacingPending ? "Send korrigert dato til kunden" : "Send dato til kunden"}
           </button>
 
-          {!sessionToken && (
+          {!previewMode && !sessionToken && (
             <p className="text-xs text-amber-300">
               Ordinær prosjektlederinnlogging kreves for innsending.
             </p>

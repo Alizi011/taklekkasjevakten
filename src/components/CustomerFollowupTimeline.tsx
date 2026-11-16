@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Clock3, FileText } from "lucide-react";
+import { CheckCircle2, Clock3 } from "lucide-react";
 import { apiUrl } from "../lib/api";
 
 type Proposal = { id: number; version_no: number; status: string; proposed_start_date: string; estimated_duration: string };
@@ -31,9 +31,13 @@ export default function CustomerFollowupTimeline({ inquiryId, sessionToken, offe
   if (!offerAccepted) return null;
   const approved = proposal?.status === "approved";
   const current = approved ? 2 : 1;
-  const summary = proposal ? `${proposal.proposed_start_date} · ${proposal.estimated_duration}` : "Oppstart og varighet må kontrolleres";
+  const summary = proposal
+    ? `${new Intl.DateTimeFormat("nb-NO", { day: "numeric", month: "short" }).format(
+        new Date(`${proposal.proposed_start_date.slice(0, 10)}T12:00:00`)
+      )} · ${proposal.estimated_duration}`
+    : "";
   return (
-    <div className="border-t border-slate-800/80 px-6 py-7 md:px-8" aria-label="Videre tiltak">
+    <div className="min-w-0 rounded-b-2xl border border-t-0 border-slate-700/70 bg-slate-900/40 p-4" aria-label="Videre tiltak">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-[10px] font-black uppercase tracking-wider text-amber-300">Fase 2 · Videre utbedring</p>
@@ -41,35 +45,59 @@ export default function CustomerFollowupTimeline({ inquiryId, sessionToken, offe
         </div>
         <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1.5 text-[10px] font-bold text-emerald-300">Tilbud akseptert</span>
       </div>
-      <div className="overflow-x-auto pb-2">
-        <div className="flex min-w-[690px] items-start">
+      <div className="relative min-w-0">
+        <div className="relative grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-3">
           {labels.map((label, index) => {
             const done = index === 0 || (index === 1 && approved) || (index === 5 && report2Published);
             const active = index === current && !report2Published;
             return (
-              <div key={label} className="flex min-w-0 flex-1 items-start">
+              <div key={label} className="min-w-0">
                 <div className="flex min-w-0 flex-1 flex-col items-center text-center">
                   <span className={`grid h-9 w-9 place-items-center rounded-full border text-xs font-black ${done ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300" : active ? "border-amber-400/60 bg-amber-500/15 text-amber-200 ring-4 ring-amber-500/5" : "border-slate-700 bg-slate-950 text-slate-500"}`}>{done ? <CheckCircle2 className="h-4 w-4" /> : active ? <Clock3 className="h-4 w-4" /> : index + 1}</span>
                   <p className={`mt-2 text-[10px] font-extrabold ${done ? "text-emerald-300" : active ? "text-amber-200" : "text-slate-500"}`}>{label}</p>
+                  {index === 1 && (
+                    <div className="mt-2 space-y-1 text-center">
+                      {approved && (
+                        <p className="text-[10px] font-bold text-emerald-300">
+                          Oppstart godkjent
+                        </p>
+                      )}
+                      {loading ? (
+                        <p className="text-[10px] text-slate-400">
+                          Henter dato …
+                        </p>
+                      ) : proposal && (
+                        <p className="text-[10px] leading-4 text-slate-300">
+                          {summary}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
-                {index < labels.length - 1 && <div className={`mt-[18px] h-px flex-1 ${index === 0 || (index === 1 && approved) ? "bg-emerald-500/35" : "bg-slate-800"}`} />}
+                {index < labels.length - 1 && <div className={`hidden mt-[18px] h-px flex-1 ${index === 0 || (index === 1 && approved) ? "bg-emerald-500/35" : "bg-slate-800"}`} />}
               </div>
             );
           })}
         </div>
       </div>
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-700/70 bg-slate-950/45 p-4">
-        <div className="flex min-w-0 items-start gap-3">
-          <FileText className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" />
-          <div>
-            <p className="text-sm font-bold text-white">{report2Published ? "Rapport 2 publisert" : approved ? "Oppstartsdato godkjent" : "Avventer bekreftelse av oppstart"}</p>
-            <p className="mt-1 text-xs text-slate-300">{loading ? "Henter dato og varighet …" : summary}</p>
-            {error && <p role="alert" className="mt-1 text-xs text-amber-300">{error}</p>}
-          </div>
+      {error && (
+        <p role="alert" className="mt-3 text-xs text-amber-300">
+          {error}
+        </p>
+      )}
+
+      {!previewMode && !report2Published && (
+        <div className="mt-4 flex justify-end">
+          <button
+            type="button"
+            onClick={onOpenAgreement}
+            className="rounded-lg border border-amber-500/30 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-500/10"
+          >
+            {approved ? "Se arbeidsavtale" : "Åpne datobekreftelse"}
+          </button>
         </div>
-        {!previewMode && !report2Published && <button type="button" onClick={onOpenAgreement} className="rounded-lg border border-amber-500/30 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-500/10">{approved ? "Se arbeidsavtale" : "Åpne datobekreftelse"}</button>}
-      </div>
-      <p className="mt-3 text-[11px] text-slate-500">Avtale, signering og utførelse markeres ikke automatisk fullført før egne statuskilder er koblet til.</p>
+      )}
+
     </div>
   );
 }

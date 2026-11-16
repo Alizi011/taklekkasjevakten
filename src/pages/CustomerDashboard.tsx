@@ -1,6 +1,8 @@
+import { messageFetch } from "../lib/messageApi";
 import CustomerAgreementSchedule from "@/components/CustomerAgreementSchedule";
 import CustomerFollowupTimeline from "@/components/CustomerFollowupTimeline";
-import CustomerAgreementSigners from "../components/CustomerAgreementSigners";
+import CustomerAgreementSignerCard from "../components/CustomerAgreementSignerCard";
+import CustomerAgreementPdfViewer from "../components/CustomerAgreementPdfViewer";
 import { UsersRound } from "lucide-react";
 import CustomerMemberActivation from "../components/CustomerMemberActivation";
 import CustomerBoardAccess from "../components/CustomerBoardAccess";
@@ -49,6 +51,7 @@ import {
   MessageSquare,
   Trash2,
 } from "lucide-react";
+
 
 interface CustomerDashboardProps {
   onBackToMain?: () => void;
@@ -645,24 +648,24 @@ function OfferDescriptionDocument({ value }: { value?: string | null }) {
   const section = /^\d+[.)]\s+\S/;
   const subheadings = /^(?:Følgende arbeider inngår:?|Forberedelse og rengjøring|Reparasjon av murverk|Reparasjon av murpuss og overflatebehandling|Utbedring av rotbeslag og tetting mot taktekking|Montering av pipehetter|Kvalitet og gjennomføring|Forutsetninger og avgrensninger)$/i;
   return (
-    <div className="space-y-0 text-[13px] leading-7 text-slate-200 md:text-sm">
+    <div className="space-y-0 text-[12px] leading-6 text-slate-200 md:text-[13px]">
       {lines.map((line, index) => {
-        if (!line) return <div key={index} className="h-3" aria-hidden="true" />;
+        if (!line) return <div key={index} className="h-2" aria-hidden="true" />;
         if (section.test(line)) return (
-          <h4 key={index} className="mb-3 mt-7 border-l-[3px] border-amber-400 bg-slate-800/45 px-4 py-3 text-base font-extrabold leading-snug text-white first:mt-1">
+          <h4 key={index} className="mb-3 mt-5 rounded-r-lg border-l-[3px] border-amber-400 bg-slate-800/35 px-3 py-2.5 text-[13px] font-bold leading-5 text-white first:mt-1">
             {line}
           </h4>
         );
         if (subheadings.test(line)) return (
-          <h5 key={index} className="mb-2 mt-5 text-sm font-bold text-amber-200">{line}</h5>
+          <h5 key={index} className="mb-2 mt-4 text-[12px] font-bold leading-5 text-amber-200 md:text-[13px]">{line}</h5>
         );
         if (/^(?:TILBUD\s*[–-]|TILBYDER:|PROSJEKT:)/i.test(line)) return (
           <p key={index} className="mb-2 text-xs font-semibold tracking-wide text-slate-300">{line}</p>
         );
         if (/^[•▪‣*-]\s+/.test(line)) return (
-          <div key={index} className="flex gap-3 pl-2"><span className="mt-3 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" /><p className="min-w-0 flex-1">{line.replace(/^[•▪‣*-]\s+/, "")}</p></div>
+          <div key={index} className="flex items-start gap-2.5 py-1 pl-1 leading-6"><span className="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" /><p className="min-w-0 flex-1">{line.replace(/^[•▪‣*-]\s+/, "")}</p></div>
         );
-        return <p key={index} className="break-words leading-7 text-slate-300">{line}</p>;
+        return <p key={index} className="mb-2 break-words leading-6 text-slate-300">{line}</p>;
       })}
     </div>
   );
@@ -676,6 +679,7 @@ export default function CustomerDashboard({
   previewMode = false,
   onOpenBusinessPreview,
 }: CustomerDashboardProps) {
+  const messagesRequest = (url: string, init?: RequestInit) => messageFetch(url, init, previewMode ? "admin" : "customer");
   const [showSubmittedSummary, setShowSubmittedSummary] = useState(false);
   const [serviceSlide, setServiceSlide] = useState(0);
   const [expandedProcessStep, setExpandedProcessStep] = useState<number | null>(null);
@@ -710,8 +714,12 @@ export default function CustomerDashboard({
   const [offer, setOffer] = useState<CustomerOffer | null>(null);
   const [offers, setOffers] = useState<CustomerOffer[]>([]);
   const [agreementSignerRefresh, setAgreementSignerRefresh] = useState(0);
+  const [agreementPdfOpen, setAgreementPdfOpen] = useState(false);
+  const [resolvedSignerAgreement, setResolvedSignerAgreement] = useState<{ inquiryId: number; agreementId: number; documentSha256: string } | null>(null);
+  const [customerStartDateApproved, setCustomerStartDateApproved] = useState(false);
+  const [customerStartDatePending, setCustomerStartDatePending] = useState(false);
   const [expandedOfferId, setExpandedOfferId] = useState<number | null>(null);
-  const [offersTab, setOffersTab] = useState<"current" | "history" | "appointments">("current");
+  const [offersTab, setOffersTab] = useState<"current" | "accepted" | "declined" | "history" | "appointments">("current");
   const [reportExpanded, setReportExpanded] = useState(false);
   const [completionReportExpanded, setCompletionReportExpanded] = useState(false);
   const [completionReport, setCompletionReport] =
@@ -1831,9 +1839,19 @@ export default function CustomerDashboard({
       const completionTask = (async () => {
         try {
           const completionRes = await fetch(
-            apiUrl(
-              `/completion_reports.php?inquiry_id=${currentInquiryId}&published=1`
-            )
+            previewMode
+              ? apiUrl(`/completion_reports.php?inquiry_id=${currentInquiryId}&published=1`)
+              : apiUrl("/customer_completion_report.php"),
+            previewMode
+              ? { credentials: "include" }
+              : {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    inquiry_id: currentInquiryId,
+                    session_token: window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY),
+                  }),
+                }
           );
           const completionData = await completionRes.json();
 
@@ -2212,7 +2230,7 @@ export default function CustomerDashboard({
     }
 
     try {
-      const res = await fetch(
+      const res = await messagesRequest(
         apiUrl(`/messages.php?inquiry_id=${inquiryId}`)
       );
       const data = await res.json();
@@ -2253,6 +2271,7 @@ export default function CustomerDashboard({
   };
 
   const sendCustomerPortalMessage = async () => {
+    if (previewMode) { setMessageComposerError("Administratorens forhåndsvisning er kun for lesing."); return; }
     const message = messageDraft.trim();
 
     if (!message || messageSending || !inquiryData?.inquiry?.id) {
@@ -2263,7 +2282,7 @@ export default function CustomerDashboard({
     setMessageComposerError("");
 
     try {
-      const res = await fetch(apiUrl("/messages.php"), {
+      const res = await messagesRequest(apiUrl("/messages.php"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -2780,6 +2799,27 @@ export default function CustomerDashboard({
     const deadline = new Date(String(item.expires_at).replace(" ", "T")).getTime();
     return Number.isFinite(deadline) && Date.now() >= deadline;
   };
+  // Kundeportal: grupper tilbud etter faktisk status.
+  const offerInSelectedTab = (item: CustomerOffer): boolean => {
+    const status = String(item.status || "").toLowerCase();
+
+    switch (offersTab) {
+      case "current":
+        return status === "publisert" && !offerExpired(item);
+      case "accepted":
+        return status === "akseptert";
+      case "declined":
+        return status === "avvist" || status === "avslatt";
+      case "history":
+        return status !== "utkast" &&
+          status !== "akseptert" &&
+          status !== "avvist" &&
+          status !== "avslatt" &&
+          !(status === "publisert" && !offerExpired(item));
+      default:
+        return false;
+    }
+  };
   // Tilbudslisten er sortert med nyeste id først. Historiske tilbud
   // må aldri overstyre et nyere tilbud eller en aktiv avtale.
   const latestCustomerOffer = offers[0] || null;
@@ -2788,6 +2828,13 @@ export default function CustomerDashboard({
   const initialOfferAccepted =
     offers.some((item) => String(item.status || "").toLowerCase() === "akseptert") ||
     String(inq.status || "").toLowerCase() === "tilbud_akseptert";
+  // Direkte fastpristilbud kan ha et reelt oppstartsforslag i Core selv om
+  // offer_context er "initial". Dette er ikke et oppfølgingstilbud.
+  const acceptedDirectFixedOffer = offers.some((item) =>
+    String(item.status || "").toLowerCase() === "akseptert" &&
+    String(item.offer_context || "initial").toLowerCase() === "initial" &&
+    String(item.pricing_mode || "").toLowerCase() === "fixed"
+  );
   const initialScheduleStatus = String(followupSchedule?.status || "").toLowerCase();
   const initialScheduleConfirmed = initialScheduleStatus === "bekreftet";
   const initialScheduleReady =
@@ -2804,7 +2851,7 @@ export default function CustomerDashboard({
   // Dato fra den opprinnelige avtalen brukes som oppdragsdato, ikke som
   // en oppdiktet/selvstendig verifisert ferdigstillelsesdato.
   const originalWorkFinished = reportPublished || completionReportPublished;
-  const originalWorkDate = String(followupSchedule?.schedule_date || inq.booking_date || "");
+
   const originalWorkLabel = initialServiceLabel === "Taklekkasjesøk" ? "Lekkasjesøk" : initialServiceLabel;
   // Tilbudshistorikken inneholder bare kundesynlige tilbud. Interne utkast
   // skal kun gi status via kundeautorisert next_step-API, aldri via offers.php.
@@ -2821,12 +2868,15 @@ export default function CustomerDashboard({
     followupStatus === "akseptert" || nextStepStatus === "offer_accepted"
   );
   const followupOfferRejected = reportPublished && followupStatus === "avvist";
-  const currentFollowupHeadline = followupOfferAccepted ? "Bekreft oppstartsdato"
+  const currentFollowupHeadline = followupOfferAccepted && customerStartDateApproved ? "Gå videre til arbeidsavtalen"
+    : followupOfferAccepted ? "Bekreft oppstartsdato"
     : followupOfferReady ? "Nytt tilbud på utbedring er klart"
     : followupOfferRejected ? "Tilbud på videre utbedring er avslått"
     : followupUnderPreparation ? "Vi utarbeider et tilbud på varig utbedring"
     : customerNextStep?.title || "Rapporten er klar";
-  const currentFollowupDescription = followupOfferAccepted
+  const currentFollowupDescription = followupOfferAccepted && customerStartDateApproved
+    ? "Oppstartsdato og varighet er bekreftet. Åpne arbeidsavtalen og kontroller hvem som skal signere."
+    : followupOfferAccepted
     ? "Prosjektansvarlig har valgt oppstartsdato for utbedringsarbeidet. Kontroller datoen og forventet varighet, og bekreft at opplysningene stemmer. Deretter går du videre til arbeidsavtalen."
     : followupOfferReady
     ? "Et nytt tilbud er publisert. Du kan se priser og vilkår og svare under Tilbud og avtaler."
@@ -3304,6 +3354,68 @@ export default function CustomerDashboard({
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Kontakt og styretilgang i toppbaren */}
+            <details className="group relative">
+              <summary
+                className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2.5 text-xs font-bold text-amber-200 hover:bg-amber-500/10 [&::-webkit-details-marker]:hidden"
+                aria-label="Vis prosjektansvarlig"
+              >
+                <PhoneCall className="h-4 w-4" />
+                <span className="hidden lg:inline">Kontakt</span>
+              </summary>
+
+              <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-slate-700 bg-[#111d2c] p-4 shadow-2xl">
+                <p className="text-[10px] font-black uppercase tracking-wide text-amber-300">
+                  Prosjektansvarlig
+                </p>
+                <p className="mt-2 text-sm font-bold text-white">
+                  {String(projectManagerContact?.name || "Ikke oppgitt")}
+                </p>
+
+                {(() => {
+                  const phone = String(projectManagerContact?.phone || "").trim();
+                  return /^\+?[0-9\s-]{6,20}$/.test(phone) ? (
+                    <a
+                      href={`tel:${phone.replace(/[^0-9+]/g, "")}`}
+                      className="mt-3 flex items-center gap-2 text-xs font-semibold text-amber-200 hover:underline"
+                    >
+                      <PhoneCall className="h-4 w-4" />
+                      {phone}
+                    </a>
+                  ) : (
+                    <p className="mt-3 text-xs text-slate-400">
+                      Telefon ikke tilgjengelig
+                    </p>
+                  );
+                })()}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBoardViewOpen(false);
+                    openCustomerPortalView("messages");
+                  }}
+                  className="mt-4 w-full rounded-lg bg-amber-400 px-3 py-2.5 text-xs font-black text-slate-950 hover:bg-amber-300"
+                >
+                  Send melding
+                </button>
+              </div>
+            </details>
+
+            <button
+              type="button"
+              onClick={() => {
+                openCustomerPortalView("overview");
+                setBoardViewOpen(true);
+              }}
+              className="flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/[0.06] px-3 py-2.5 text-xs font-bold text-cyan-200 hover:bg-cyan-500/10"
+              title="Styret og tilganger"
+              aria-label="Åpne styret og tilganger"
+            >
+              <UsersRound className="h-4 w-4" />
+              <span className="hidden lg:inline">Styret</span>
+            </button>
+
             {/* TLV_CUSTOMER_ACCOUNT_HEADER_V1 */}
             <CustomerAccountSwitcher
               inquiryId={Number(inq.id)}
@@ -3400,6 +3512,167 @@ export default function CustomerDashboard({
               );
             })}
           </nav>
+
+                    {/* TLV_SIDEBAR_SERVICES_V1 */}
+          <section
+            aria-label="Våre tjenester"
+            className="mt-8 min-w-0 border-t border-slate-800 pt-5"
+          >
+            <p className="mb-3 px-1 text-[10px] font-black uppercase tracking-wider text-amber-400">
+              Våre tjenester
+            </p>
+
+            {(() => {
+              const portalServices = [
+              {
+                image: "/service-lekkasjesok.jpg",
+                title: "Lekkasjesøk & Service Tak",
+                badge: "Kjernetjeneste",
+                shortDesc:
+                  "Vårt spesialteam rykker ut, lokaliserer den eksakte lekkasjekilden på takflaten og utfører reparasjon på stedet.",
+                highlights: [
+                  "Søker kilde fra over- & underside",
+                  "Midlertidig tetting på stedet",
+                  "Forsikrings- & tilstandsrapport",
+                ],
+                imagePosition: "center 28%",
+              },
+              {
+                image: "/service-takkontroll.jpg",
+                title: "Takkontroll og Inspeksjon",
+                badge: "Forebyggende",
+                shortDesc:
+                  "Regelmessig inspeksjon for å opprettholde garantier og forlenge takets levetid.",
+                highlights: [
+                  "Gjennomgang av beslag & sluk",
+                  "Opprettholder garantier",
+                  "Avdekker slitasje tidlig",
+                ],
+                imagePosition: "center 42%",
+              },
+              {
+                image: "/service-vedlikehold.jpg",
+                title: "Vedlikeholdsavtaler Tak",
+                badge: "Langsiktig trygghet",
+                shortDesc:
+                  "Skreddersydde avtaler med årlig sjekk, takrennevask og utskifting av skadd stein.",
+                highlights: [
+                  "Vask & rense av takrenner",
+                  "Bytte av skadde takstein",
+                  "Skreddersydd for eiendommen",
+                ],
+                imagePosition: "center 48%",
+              },
+              {
+                image: "/service-flatt-tak.jpg",
+                title: "Flatt tak & Membran",
+                badge: "Spesialistfag",
+                shortDesc:
+                  "Profesjonell feilsøking, legging og tetting av flate tak med kvalitetssikring av fall.",
+                highlights: [
+                  "Sikrer minst 2% fall & drenering",
+                  "Testing før overlevering",
+                  "Næringsbygg & bolig",
+                ],
+                imagePosition: "center 48%",
+              },
+              {
+                image: "/service-terrasse.jpg",
+                title: "Terrasser / Takterrasser",
+                badge: "Uteområde",
+                shortDesc:
+                  "Tetting av fuktinnsig, membranarbeid og konstruksjonsfeil på terrasser og balkonger.",
+                highlights: [
+                  "Tetting mot fasade & overganger",
+                  "Membran & konstruksjonsfeil",
+                  "Varig & estetisk resultat",
+                ],
+                imagePosition: "center 50%",
+              },
+              {
+                image: "/service-takfornying.jpg",
+                title: "Takfornying",
+                badge: "Estetisk & Teknisk",
+                shortDesc:
+                  "Helhetlig fornying av betongtakstein og metalltak for forlenget levetid.",
+                highlights: [
+                  "Fornyer betongstein & metall",
+                  "Grundig teknisk kontroll",
+                  "Forlenger takets levetid",
+                ],
+                imagePosition: "center 42%",
+              },
+            ];
+
+              const page = serviceSlide % 2;
+
+              const visibleServices = portalServices.slice(
+                page * 3,
+                page * 3 + 3
+              );
+
+              return (
+                <div className="space-y-3">
+                  {visibleServices.map((service) => (
+                    <article
+                      key={service.title}
+                      className="min-w-0 overflow-hidden rounded-xl border border-slate-700/70 bg-slate-900/70"
+                    >
+                      <div className="relative h-24 overflow-hidden">
+                        <img
+                          src={service.image}
+                          alt={service.title}
+                          className="h-full w-full object-cover"
+                          style={{ objectPosition: service.imagePosition }}
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 to-transparent" />
+
+                        <span className="absolute bottom-2 left-2 right-2 text-[9px] font-bold text-amber-300">
+                          {service.badge}
+                        </span>
+                      </div>
+
+                      <div className="space-y-1.5 p-3">
+                        <h3 className="break-words text-[11px] font-black leading-4 text-white">
+                          {service.title}
+                        </h3>
+
+                        <p className="line-clamp-2 text-[10px] leading-4 text-slate-400">
+                          {service.shortDesc}
+                        </p>
+                      </div>
+                    </article>
+                  ))}
+
+                  <div className="flex items-center justify-between gap-2 pt-2">
+                    <span className="text-[10px] text-slate-400">
+                      Side {page + 1} av 2
+                    </span>
+
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setServiceSlide(prev => (prev + 1) % 2)}
+                        aria-label="Forrige tjenester"
+                        className="grid h-8 w-8 place-items-center rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-800"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setServiceSlide(prev => (prev + 1) % 2)}
+                        aria-label="Neste tjenester"
+                        className="grid h-8 w-8 place-items-center rounded-lg border border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </section>
 
           <div className="mt-12 rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
             <p className="text-xs font-black">Trenger du hjelp?</p>
@@ -3568,30 +3841,9 @@ export default function CustomerDashboard({
               )}
 
               {customerPortalView === "offers" && (
-  <>
-  
-
-  <CustomerAgreementSchedule
-    inquiryId={Number(inq.id)}
-    sessionToken={previewMode ? "" : (window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || "")}
-    endpoint={apiUrl("/customer_agreement_schedule.php")}
-    previewMode={previewMode}
-    onAgreementCreated={() => setAgreementSignerRefresh(n => n + 1)}
-  />
-<CustomerAgreementSigners
-    key={agreementSignerRefresh}
-    inquiryId={Number(inq.id)}
-    sessionToken={window.localStorage.getItem(
-      CUSTOMER_PORTAL_SESSION_STORAGE_KEY
-    ) || ""}
-    previewMode={previewMode}
-  />
-</>
-)}
-{customerPortalView === "offers" && (
                 <div className="mt-6 space-y-5">
                   <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-4">
-                    {([ ["current", "Aktuelle tilbud"], ["history", "Tidligere avtaler"], ["appointments", "Avtaler og oppdrag"] ] as const).map(([key, label]) => (
+                    {([ ["current", "Til svar"], ["accepted", "Akseptert"], ["declined", "Avslått"], ["history", "Historikk"], ["appointments", "Avtaler og oppdrag"] ] as const).map(([key, label]) => (
                       <button key={key} type="button" onClick={() => setOffersTab(key)} className={`rounded-xl border px-4 py-2.5 text-xs font-bold transition ${offersTab === key ? "border-amber-500/50 bg-amber-500/10 text-amber-200" : "border-slate-700 bg-slate-950/55 text-slate-400 hover:text-white"}`}>
                         {label}
                       </button>
@@ -3599,6 +3851,20 @@ export default function CustomerDashboard({
                   </div>
                   {offerError && <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-xs text-red-200">{offerError}</div>}
                   {offerMessage && <div role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-xs text-emerald-200">{offerMessage}</div>}
+                  {offersTab === "appointments" && acceptedDirectFixedOffer && !followupOfferAccepted && (
+                    <CustomerAgreementSchedule
+                      inquiryId={Number(inq.id)}
+                      sessionToken={previewMode ? "" : (window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || "")}
+                      endpoint={apiUrl("/customer_agreement_schedule.php")}
+                      previewMode={previewMode}
+                      hideWhenEmpty
+                      onAgreementCreated={() => setAgreementSignerRefresh(n => n + 1)}
+                      onStatusChange={() => setAgreementSignerRefresh(n => n + 1)}
+                      onPendingChange={setCustomerStartDatePending}
+                      onApprovalChange={setCustomerStartDateApproved}
+                      onOpenAgreement={() => setAgreementPdfOpen(true)}
+                    />
+                  )}
                   {offersTab === "appointments" ? (
                     followupSchedule ? (
                       <div className="rounded-2xl border border-slate-700 bg-slate-950/55 p-5">
@@ -3617,13 +3883,13 @@ export default function CustomerDashboard({
                           {newTimeRequestSent ? <p className="mt-3 text-xs text-emerald-300">Forespørselen er registrert.</p> : <button type="button" onClick={requestNewTime} disabled={requestingNewTime} className="mt-3 rounded-xl bg-amber-400 px-4 py-2.5 text-xs font-black text-slate-950 disabled:opacity-50">{requestingNewTime ? "Sender…" : "Be om nytt tidspunkt"}</button>}
                         </div>
                       )}
-                      {offers.filter(item => offersTab === "history" ? (item.status !== "publisert" || offerExpired(item)) && !(followupOfferAccepted && item.id === newestFollowupOffer?.id && item.status === "akseptert") : (item.status === "publisert" && !offerExpired(item)) || (followupOfferAccepted && item.id === newestFollowupOffer?.id && item.status === "akseptert")).length === 0 ? (
+                      {offers.filter(offerInSelectedTab).length === 0 ? (
                         <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-8 text-center">
                           <ShieldCheck className="mx-auto h-8 w-8 text-slate-600" />
                           <p className="mt-3 text-sm font-black">{offersTab === "history" ? "Ingen tidligere avtaler" : "Ingen åpne tilbud akkurat nå"}</p>
                           <p className="mt-2 text-xs text-slate-400">Publiserte tilbud vises her når de er tilgjengelige.</p>
                         </div>
-                      ) : offers.filter(item => offersTab === "history" ? (item.status !== "publisert" || offerExpired(item)) && !(followupOfferAccepted && item.id === newestFollowupOffer?.id && item.status === "akseptert") : (item.status === "publisert" && !offerExpired(item)) || (followupOfferAccepted && item.id === newestFollowupOffer?.id && item.status === "akseptert")).map(item => {
+                      ) : offers.filter(offerInSelectedTab).map(item => {
                         const isOpen = item.status === "publisert" && !offerExpired(item);
                         const isFollowup = item.offer_context === "followup";
                         const expanded = isOpen || (followupOfferAccepted && item.id === newestFollowupOffer?.id && item.status === "akseptert") || expandedOfferId === item.id;
@@ -3634,7 +3900,7 @@ export default function CustomerDashboard({
                           <article key={`offer-design-${item.id}`} className={`overflow-hidden rounded-3xl border shadow-xl ${isOpen ? "border-amber-500/35 bg-[#0b1422]" : "border-slate-700 bg-[#0b1422]"}`}>
                             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 p-5 md:p-7">
                               <div className="min-w-0 flex-1">
-                                <span className={`inline-flex rounded-full px-3 py-1 text-[10px] font-black ${isOpen ? "bg-emerald-400 text-slate-950" : "bg-slate-800 text-slate-200"}`}>{isOpen ? (item.revision_parent_offer_id ? "Revidert tilbud – kan aksepteres" : "Tilbud – kan aksepteres") : item.status === "akseptert" ? "Akseptert tilbud" : offerExpired(item) ? "Utløpt tilbud" : "Tidligere tilbud"}</span>
+                                <span className={`inline-flex rounded-full px-3 py-1 text-[10px] font-black ${isOpen ? "bg-emerald-400 text-slate-950" : "bg-slate-800 text-slate-200"}`}>{isOpen ? (item.revision_parent_offer_id ? "Revidert tilbud – kan aksepteres" : "Tilbud – kan aksepteres") : item.status === "akseptert" ? "Akseptert tilbud" : ["avvist", "avslatt"].includes(item.status) ? "Avslått tilbud" : offerExpired(item) ? "Utløpt tilbud" : "Tidligere tilbud"}</span>
                                 <h2 className="mt-3 text-xl font-black leading-tight md:text-2xl">{item.title || (isFollowup ? "Tilbud på videre utbedring" : getServiceLabel(item.service))}</h2>
                                 <p className="mt-2 text-xs leading-6 text-slate-400">{isFollowup ? "Et nytt tilbud om videre utbedring. Den opprinnelige avtalen og rapporten er bevart." : "Gjennomgå pris, arbeidsbeskrivelse og avtalte vilkår."}</p>
                               </div>
@@ -3907,6 +4173,7 @@ export default function CustomerDashboard({
                     }
                     customerName={inq.customer_name || "Kunde"}
                     showComposer={false}
+                    previewMode={previewMode}
                     refreshKey={messageRefreshKey}
                   />
                 </div>
@@ -3960,76 +4227,74 @@ export default function CustomerDashboard({
                 
               </div>
 
-                            {/* CUSTOMER_CONTACT_CARDS_INSIDE_PROPERTY */}
-              <div className="mt-5 grid grid-cols-1 gap-3 border-y border-slate-800/80 py-4 sm:grid-cols-2">
+                            {/* VARSEL OM NYTT PUBLISERT TILBUD PÅ OVERSIKT */}
+              {(() => {
+                const pendingOffer = offers.find(
+                  item => item.status === "publisert" && !offerExpired(item)
+                );
 
-                <section className="flex flex-col rounded-xl border border-slate-700/70 bg-[#111d2c] p-3.5">
-                  <div className="flex items-center gap-2">
-                    <UsersRound className="h-4 w-4 text-amber-400" />
-                    <h3 className="text-xs font-black text-white">
-                      Prosjektansvarlig
-                    </h3>
-                  </div>
+                if (!pendingOffer) return null;
 
-                  <p className="mt-2 text-sm font-bold text-white">
-                    {String(projectManagerContact?.name || "Ikke oppgitt")}
-                  </p>
-
-                  <div className="mt-2 flex flex-wrap items-center gap-x-8 gap-y-3">
-                    {(() => {
-                      const phone = String(projectManagerContact?.phone || "").trim();
-
-                      return /^\+?[0-9\s-]{6,20}$/.test(phone) ? (
-                        <a
-                          href={`tel:${phone.replace(/[^0-9+]/g, "")}`}
-                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-300 hover:underline"
-                        >
-                          <PhoneCall className="h-3.5 w-3.5" />
-                          {phone}
-                        </a>
-                      ) : (
-                        <span className="text-xs text-slate-500">
-                          Telefon ikke tilgjengelig
-                        </span>
-                      );
-                    })()}
+                return (
+                  <section
+                    role="status"
+                    className="mt-6 rounded-2xl border border-amber-500/40 bg-amber-500/[0.08] p-4 md:p-5"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        <FileText className="mt-1 h-5 w-5 shrink-0 text-amber-400" />
+                        <div>
+                          <h3 className="text-sm font-black text-amber-300">
+                            Dere har fått et nytt tilbud!
+                          </h3>
+                          <p className="mt-2 text-sm font-bold text-white">
+                            {pendingOffer.title || "Nytt pristilbud"}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-300">
+                            {pendingOffer.offer_number || `Tilbud #${pendingOffer.id}`}
+                          </p>
+                          {pendingOffer.calculated_inc_vat != null && (
+                            <p className="mt-2 text-sm font-black text-emerald-300">
+                              kr {formatOfferAmount(pendingOffer.calculated_inc_vat)} inkl. mva.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <span className="rounded-full border border-amber-500/30 px-3 py-1 text-[10px] font-bold text-amber-300">
+                        Avventer svar
+                      </span>
+                    </div>
 
                     <button
                       type="button"
                       onClick={() => {
-                        setBoardViewOpen(false);
-                        openCustomerPortalView("messages");
+                        setOffersTab("current");
+                        setExpandedOfferId(pendingOffer.id);
+                        openCustomerPortalView("offers");
                       }}
-                      className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-1.5 text-[11px] font-bold text-amber-200 hover:bg-amber-500/20"
+                      className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-amber-400 px-5 py-3 text-xs font-black text-slate-950 hover:bg-amber-300"
                     >
-                      Send melding
+                      <FileText className="h-4 w-4" />
+                      Se det nye tilbudet
                     </button>
+                  </section>
+                );
+              })()}
+
+              {acceptedDirectFixedOffer && !followupOfferAccepted && customerStartDatePending && (
+                <section role="status" className="mt-6 rounded-2xl border border-amber-500/50 bg-amber-500/[0.08] p-4 md:p-5">
+                  <div className="flex items-start gap-3">
+                    <CalendarCheck className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" />
+                    <div>
+                      <h3 className="text-sm font-black text-amber-200">Oppstartsdato venter på ditt svar</h3>
+                      <p className="mt-2 text-xs leading-5 text-slate-300">Prosjektansvarlig har foreslått oppstart for et akseptert tilbud. Kontroller dato og varighet, og godkjenn eller be om endring.</p>
+                      <button type="button" onClick={() => { setOffersTab("appointments"); openCustomerPortalView("offers"); }} className="mt-3 rounded-xl bg-amber-400 px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-amber-300">Se og besvar datoforslag</button>
+                    </div>
                   </div>
                 </section>
+              )}
 
-                <section className="flex flex-col rounded-xl border border-cyan-500/25 bg-[#111d2c] p-3.5">
-                  <div className="flex items-center gap-2">
-                    <UsersRound className="h-4 w-4 text-cyan-300" />
-                    <h3 className="text-xs font-black text-white">
-                      Styret og tilganger
-                    </h3>
-                  </div>
-
-                  <p className="mt-2 text-xs text-slate-400">
-                    Administrer tilganger
-                  </p>
-
-                  <button
-                    type="button"
-                    onClick={() => setBoardViewOpen(true)}
-                    className="mt-3 w-fit rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-[11px] font-bold text-cyan-200 hover:bg-cyan-500/20"
-                  >
-                    Send invitasjon
-                  </button>
-                </section>
-
-              </div>
-{/* DITT PROSJEKT - OVERSIKT */}
+              {/* DITT PROSJEKT - OVERSIKT */}
               <div className="mt-6 space-y-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -4118,6 +4383,81 @@ export default function CustomerDashboard({
               </div>
 
 
+          <div className={followupOfferAccepted ? "mt-6 min-w-0 rounded-t-2xl border border-b-0 border-slate-700/70 bg-slate-900/40 p-4" : "mt-6 min-w-0 rounded-2xl border border-slate-700/70 bg-slate-900/40 p-4"}>
+            <div className="mb-4 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-600">Fase 1 · Undersøkelse og rapport</p>
+                <p className="mt-1 text-xs text-slate-400">Fra bestilling til gjennomført undersøkelse og rapport.</p>
+              </div>
+              <span className="text-[10px] font-bold text-emerald-300">
+                {originalWorkFinished ? `${originalWorkLabel} fullført` : `Steg ${Math.min(getCustomerProcessStep(), 6)} av 6`}
+              </span>
+            </div>
+
+            <div className="relative min-w-0">
+  <div
+    aria-hidden="true"
+    className="pointer-events-none absolute left-[10%] right-[10%] top-[18px] hidden h-[2px] bg-slate-700 lg:block"
+  />
+  {originalWorkFinished && (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute left-[10%] right-[10%] top-[18px] hidden h-[2px] bg-emerald-500/50 lg:block"
+    />
+  )}
+  <div className="relative grid grid-cols-2 gap-x-3 gap-y-5 lg:grid-cols-5">
+                {(originalWorkFinished
+                  ? ["Bestilling", "Tilbud og avtale", "Avtalt tid", originalWorkLabel, "Rapport 1"]
+                  : isInitialFieldFlow
+                  ? ["Bestilling", "Pris og vilkår", "Tidspunkt", "Opplysninger", initialServiceLabel, "Rapport"]
+                  : ["Opplysninger", "Digital befaring", "Tilbud & plan", "Feltarbeid", "Rapport", "Videre oppfølging"]
+                ).map((title, index, arr) => {
+                  const step = index + 1;
+                   const current = originalWorkFinished ? arr.length + 1 : getCustomerProcessStep();
+                  const complete = step < current;
+                  const active = step === current;
+
+                  return (
+                    <div key={`${step}-${title}`} className="min-w-0">
+                      <div className="flex min-w-0 flex-1 flex-col items-center text-center">
+                        <div
+                          className={`grid h-9 w-9 place-items-center rounded-full border text-xs font-black ${
+                            complete
+                              ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                              : active
+                              ? "border-amber-400/60 bg-amber-500/15 text-amber-300 ring-4 ring-amber-500/5"
+                              : "border-slate-700 bg-slate-950 text-slate-600"
+                          }`}
+                        >
+                          {complete ? <CheckCircle2 className="h-4 w-4" /> : step}
+                        </div>
+                        <p className={`mt-2 text-[10px] font-extrabold ${active ? "text-white" : complete ? "text-emerald-300" : "text-slate-600"}`}>
+                          {title}
+                        </p>
+                      </div>
+                      {index < arr.length - 1 && (
+                        <div className={`hidden mt-[18px] h-px flex-1 ${step < current ? "bg-emerald-500/35" : "bg-slate-800"}`} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+              <div className="mt-0 min-w-0">
+                          {followupOfferAccepted && (
+            <CustomerFollowupTimeline
+              inquiryId={Number(inq.id)}
+              sessionToken={previewMode ? "" : (window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || "")}
+              offerAccepted={followupOfferAccepted}
+              report2Published={Boolean(completionReportPublished)}
+              refreshKey={agreementSignerRefresh}
+              previewMode={previewMode}
+              onOpenAgreement={() => setAgreementPdfOpen(true)}
+            />
+          )}
+              </div>
             </div>
 
             <aside className="tlv-start-date-attention border-t border-slate-800/80 bg-slate-950/35 p-6 lg:border-l lg:border-t-0 md:p-7">
@@ -4146,7 +4486,9 @@ export default function CustomerDashboard({
               `}</style>
               <p className="text-[9px] font-black uppercase tracking-[0.16em] text-amber-400">Neste steg</p>
               <h3 className="mt-2 text-lg font-black text-white">
-                {followupOfferAccepted ? "Bekreft oppstart" : originalWorkFinished
+                {acceptedDirectFixedOffer && !followupOfferAccepted && customerStartDatePending ? "Godkjenn foreslått oppstartsdato"
+                  : followupOfferAccepted && customerStartDateApproved ? "Gå videre til arbeidsavtalen"
+                  : followupOfferAccepted ? "Bekreft oppstart" : originalWorkFinished
                   ? currentFollowupHeadline
                   : offer?.status === "publisert" && !offerExpired(offer) ? "Godkjenn oppdraget"
                   : initialSchedulePending ? "Bekreft tidspunkt"
@@ -4154,7 +4496,11 @@ export default function CustomerDashboard({
                   : "Følg saken videre"}
               </h3>
               <p className="mt-2 text-xs leading-5 text-slate-400">
-                {followupOfferAccepted ? "Prosjektansvarlig har registrert oppstartsdato og forventet varighet. Kontroller og svar nedenfor." : originalWorkFinished
+                {acceptedDirectFixedOffer && !followupOfferAccepted && customerStartDatePending
+                  ? "Prosjektansvarlig har foreslått oppstartsdato og varighet. Godkjenn datoen nedenfor, eller be om endring."
+                  : followupOfferAccepted && customerStartDateApproved
+                  ? "Oppstart og varighet er bekreftet. Gå til Tilbud og avtaler for å lese arbeidsavtalen og bekrefte signatar."
+                  : followupOfferAccepted ? "Prosjektansvarlig har registrert oppstartsdato og forventet varighet. Kontroller og svar nedenfor." : originalWorkFinished
                   ? currentFollowupDescription
                   : offer?.status === "publisert" && !offerExpired(offer)
                   ? "Pris og vilkår er klare. Åpne tilbudet og godkjenn når alt ser riktig ut."
@@ -4164,16 +4510,19 @@ export default function CustomerDashboard({
                   : "Du kan følge status, avtaler og dokumentasjon fra menyen."}
               </p>
 
-              {followupOfferAccepted ? (
+              {(followupOfferAccepted || acceptedDirectFixedOffer) ? (
                 <CustomerAgreementSchedule
                   inquiryId={Number(inq.id)}
                   sessionToken={previewMode ? "" : (window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || "")}
                   endpoint={apiUrl("/customer_agreement_schedule.php")}
                   previewMode={previewMode}
                   compact
+                  hideWhenEmpty={!followupOfferAccepted}
+                  onPendingChange={setCustomerStartDatePending}
                   onAgreementCreated={() => setAgreementSignerRefresh(n => n + 1)}
                   onStatusChange={() => setAgreementSignerRefresh(n => n + 1)}
-                  onOpenAgreement={() => { setOffersTab("current"); openCustomerPortalView("offers"); }}
+                  onApprovalChange={setCustomerStartDateApproved}
+                  onOpenAgreement={() => setAgreementPdfOpen(true)}
                 />
               ) : originalWorkFinished ? null : followupSchedule?.schedule_date ? (
                 <div className="mt-5 border-t border-slate-800/80 pt-4">
@@ -4181,6 +4530,53 @@ export default function CustomerDashboard({
                   <p className="mt-2 text-sm font-bold text-white">{formatBookingDate(followupSchedule.schedule_date)} kl. {String(followupSchedule.start_time || "").substring(0, 5)}</p>
                 </div>
               ) : null}
+
+              {followupOfferAccepted && customerStartDateApproved && (
+                <div className="mt-5 rounded-2xl border border-amber-500/40 bg-amber-500/[0.06] p-4">
+                  <div className="flex items-center gap-3">
+                    <FileText className="h-6 w-6 text-amber-400" />
+                    <div>
+                      <h4 className="text-sm font-black text-white">
+                        Arbeidsavtale
+                      </h4>
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        Knyttet til godkjent oppstart
+                      </p>
+                    </div>
+                  </div>
+
+                  <CustomerAgreementPdfViewer
+                    inquiryId={Number(inq.id)}
+                    expectedTlvOfferId={String(newestFollowupOffer?.status || "").toLowerCase() === "akseptert" ? Number(newestFollowupOffer?.id) : undefined}
+                    sessionToken={previewMode ? "" : (
+                      window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || ""
+                    )}
+                    previewMode={previewMode}
+                    compactPreview
+                    onAgreementResolved={(agreementId, documentSha256) => setResolvedSignerAgreement(agreementId && documentSha256 ? { inquiryId: Number(inq.id), agreementId, documentSha256 } : null)}
+                    onClose={() => setAgreementPdfOpen(true)}
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setAgreementPdfOpen(true)}
+                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-amber-400 px-4 py-3 text-xs font-black text-slate-950 transition hover:bg-amber-300"
+                  >
+                    <FileText className="h-4 w-4" />
+                    Les arbeidsavtalen
+                  </button>
+
+                  <div className="mt-5 border-t border-slate-700/70 pt-4">
+  <CustomerAgreementSignerCard
+    inquiryId={Number(inq.id)}
+    agreementId={resolvedSignerAgreement?.inquiryId === Number(inq.id) ? resolvedSignerAgreement.agreementId : null}
+    expectedDocumentHash={resolvedSignerAgreement?.inquiryId === Number(inq.id) ? resolvedSignerAgreement.documentSha256 : null}
+    sessionToken={previewMode ? "" : (window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || "")}
+    previewMode={previewMode}
+  />
+</div>
+                </div>
+              )}
 
               <div className="mt-6 grid gap-2">
                 {followupOfferReady && <button type="button" onClick={() => { setOffersTab("current"); openCustomerPortalView("offers"); }} className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-400 px-4 py-3 text-xs font-black text-slate-950 hover:bg-amber-300"><FileText className="h-4 w-4" />Se nytt tilbud</button>}
@@ -4231,80 +4627,10 @@ export default function CustomerDashboard({
             </aside>
           </div>
 
-          <div className="border-t border-slate-800/80 px-6 py-6 md:px-8">
-            <div className="mb-4 flex items-center justify-between gap-4">
-              <div>
-                <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-600">Saksforløp</p>
-                <p className="mt-1 text-xs text-slate-400">Fase 1 · Undersøkelse og rapport. Videre utbedring vises rett under.</p>
-              </div>
-              <span className="text-[10px] font-bold text-slate-500">
-                {originalWorkFinished ? "Fase 1 fullført" : `Steg ${Math.min(getCustomerProcessStep(), 6)} av 6`}
-              </span>
-            </div>
 
-            <div className="overflow-x-auto pb-1">
-              <div className="flex min-w-[720px] items-start">
-                {(originalWorkFinished
-                  ? ["Bestilling", "Tilbud og avtale", "Avtalt tid", originalWorkLabel, "Rapport 1"]
-                  : isInitialFieldFlow
-                  ? ["Bestilling", "Pris og vilkår", "Tidspunkt", "Opplysninger", initialServiceLabel, "Rapport"]
-                  : ["Opplysninger", "Digital befaring", "Tilbud & plan", "Feltarbeid", "Rapport", "Videre oppfølging"]
-                ).map((title, index, arr) => {
-                  const step = index + 1;
-                   const current = originalWorkFinished ? arr.length + 1 : getCustomerProcessStep();
-                  const complete = step < current;
-                  const active = step === current;
 
-                  return (
-                    <div key={`${step}-${title}`} className="flex min-w-0 flex-1 items-start">
-                      <div className="flex min-w-0 flex-1 flex-col items-center text-center">
-                        <div
-                          className={`grid h-9 w-9 place-items-center rounded-full border text-xs font-black ${
-                            complete
-                              ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                              : active
-                              ? "border-amber-400/60 bg-amber-500/15 text-amber-300 ring-4 ring-amber-500/5"
-                              : "border-slate-700 bg-slate-950 text-slate-600"
-                          }`}
-                        >
-                          {complete ? <CheckCircle2 className="h-4 w-4" /> : step}
-                        </div>
-                        <p className={`mt-2 text-[10px] font-extrabold ${active ? "text-white" : complete ? "text-emerald-300" : "text-slate-600"}`}>
-                          {title}
-                        </p>
-                      </div>
-                      {index < arr.length - 1 && (
-                        <div className={`mt-[18px] h-px flex-1 ${step < current ? "bg-emerald-500/35" : "bg-slate-800"}`} />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
 
-          {originalWorkFinished && (
-            <div className="border-t border-slate-800/80 px-6 py-4 md:px-8">
-              <span className="inline-flex items-center gap-2 text-xs font-bold text-emerald-300">
-                <CheckCircle2 className="h-4 w-4" /> {originalWorkLabel} fullført
-              </span>
-              {originalWorkDate && (
-                <span className="ml-3 text-xs text-slate-400">Oppdragsdato: {formatBookingDate(originalWorkDate)}</span>
-              )}
-            </div>
-          )}
 
-          {followupOfferAccepted && (
-            <CustomerFollowupTimeline
-              inquiryId={Number(inq.id)}
-              sessionToken={previewMode ? "" : (window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || "")}
-              offerAccepted={followupOfferAccepted}
-              report2Published={Boolean(completionReportPublished)}
-              refreshKey={agreementSignerRefresh}
-              previewMode={previewMode}
-              onOpenAgreement={() => { setOffersTab("current"); openCustomerPortalView("offers"); }}
-            />
-          )}
 
           {!followupOfferAccepted && (
           <div className="flex flex-col gap-4 border-t border-slate-800/80 bg-slate-950/20 px-6 py-5 sm:flex-row sm:items-center sm:justify-between md:px-8">
@@ -6440,197 +6766,7 @@ export default function CustomerDashboard({
             </section>
           )}
 
-        <section aria-label="Flere tjenester fra Taklekkasjevakten" className="relative mt-20 overflow-hidden rounded-[30px] border border-cyan-200/30 bg-gradient-to-br from-[#e5f8f8] via-[#eef4ff] to-[#fff0d8] p-6 text-slate-900 shadow-xl md:mt-36 md:p-8">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-teal-700">
-                Våre tjenester
-              </p>
-              <h2 className="mt-2 text-xl md:text-2xl font-black text-slate-950">
-                Ta vare på taket videre
-              </h2>
-              <p className="mt-2 text-xs md:text-sm text-slate-600">
-                Tjenester som kan være aktuelle basert på arbeidet vi har utført.
-              </p>
-            </div>
 
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setServiceSlide((prev) => Math.max(0, prev - 1))}
-                disabled={serviceSlide === 0}
-                className="w-10 h-10 rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-teal-50 hover:border-teal-500 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition-all"
-                aria-label="Forrige tjenester"
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setServiceSlide((prev) => Math.min(1, prev + 1))}
-                disabled={serviceSlide === 1}
-                className="w-10 h-10 rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-teal-50 hover:border-teal-500 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition-all"
-                aria-label="Neste tjenester"
-              >
-                <ChevronRight className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-
-          {(() => {
-            const portalServices = [
-              {
-                image: "/service-lekkasjesok.jpg",
-                title: "Lekkasjesøk & Service Tak",
-                badge: "Kjernetjeneste",
-                shortDesc:
-                  "Vårt spesialteam rykker ut, lokaliserer den eksakte lekkasjekilden på takflaten og utfører reparasjon på stedet.",
-                highlights: [
-                  "Søker kilde fra over- & underside",
-                  "Midlertidig tetting på stedet",
-                  "Forsikrings- & tilstandsrapport",
-                ],
-                imagePosition: "center 28%",
-              },
-              {
-                image: "/service-takkontroll.jpg",
-                title: "Takkontroll og Inspeksjon",
-                badge: "Forebyggende",
-                shortDesc:
-                  "Regelmessig inspeksjon for å opprettholde garantier og forlenge takets levetid.",
-                highlights: [
-                  "Gjennomgang av beslag & sluk",
-                  "Opprettholder garantier",
-                  "Avdekker slitasje tidlig",
-                ],
-                imagePosition: "center 42%",
-              },
-              {
-                image: "/service-vedlikehold.jpg",
-                title: "Vedlikeholdsavtaler Tak",
-                badge: "Langsiktig trygghet",
-                shortDesc:
-                  "Skreddersydde avtaler med årlig sjekk, takrennevask og utskifting av skadd stein.",
-                highlights: [
-                  "Vask & rense av takrenner",
-                  "Bytte av skadde takstein",
-                  "Skreddersydd for eiendommen",
-                ],
-                imagePosition: "center 48%",
-              },
-              {
-                image: "/service-flatt-tak.jpg",
-                title: "Flatt tak & Membran",
-                badge: "Spesialistfag",
-                shortDesc:
-                  "Profesjonell feilsøking, legging og tetting av flate tak med kvalitetssikring av fall.",
-                highlights: [
-                  "Sikrer minst 2% fall & drenering",
-                  "Testing før overlevering",
-                  "Næringsbygg & bolig",
-                ],
-                imagePosition: "center 48%",
-              },
-              {
-                image: "/service-terrasse.jpg",
-                title: "Terrasser / Takterrasser",
-                badge: "Uteområde",
-                shortDesc:
-                  "Tetting av fuktinnsig, membranarbeid og konstruksjonsfeil på terrasser og balkonger.",
-                highlights: [
-                  "Tetting mot fasade & overganger",
-                  "Membran & konstruksjonsfeil",
-                  "Varig & estetisk resultat",
-                ],
-                imagePosition: "center 50%",
-              },
-              {
-                image: "/service-takfornying.jpg",
-                title: "Takfornying",
-                badge: "Estetisk & Teknisk",
-                shortDesc:
-                  "Helhetlig fornying av betongtakstein og metalltak for forlenget levetid.",
-                highlights: [
-                  "Fornyer betongstein & metall",
-                  "Grundig teknisk kontroll",
-                  "Forlenger takets levetid",
-                ],
-                imagePosition: "center 42%",
-              },
-            ];
-
-            const visibleServices = portalServices.slice(
-              serviceSlide * 3,
-              serviceSlide * 3 + 3
-            );
-
-            return (
-              <>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                  {visibleServices.map((service) => (
-                    <article
-                      key={service.title}
-                      className="overflow-hidden rounded-2xl border border-white/80 bg-white shadow-md flex flex-col min-h-[430px] transition-transform hover:-translate-y-1 hover:shadow-xl"
-                    >
-                      <div className="relative h-56 overflow-hidden bg-slate-950">
-                        <img
-                          src={service.image}
-                          alt={service.title}
-                          className="h-full w-full object-cover scale-[1.02]"
-                          style={{ objectPosition: service.imagePosition }}
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/35 to-transparent" />
-
-                        <span className="absolute right-3 top-3 rounded-full border border-amber-500/30 bg-slate-950/90 px-3 py-1 text-[10px] font-extrabold text-amber-400 shadow-lg">
-                          {service.badge}
-                        </span>
-
-                        <div className="absolute bottom-4 left-4 right-4">
-                          <h3 className="text-base md:text-lg font-black text-white">
-                            {service.title}
-                          </h3>
-                          <p className="mt-1 text-[11px] leading-5 text-slate-300 line-clamp-2">
-                            {service.shortDesc}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="p-5 flex-1">
-                        <ul className="space-y-2.5">
-                          {service.highlights.map((item) => (
-                            <li
-                              key={item}
-                              className="flex items-start gap-2 text-[11px] leading-5 text-slate-700"
-                            >
-                              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                              <span>{item}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-
-                <div className="mt-5 flex items-center justify-center gap-2">
-                  {[0, 1].map((page) => (
-                    <button
-                      key={page}
-                      type="button"
-                      onClick={() => setServiceSlide(page)}
-                      className={`h-2.5 rounded-full transition-all ${
-                        serviceSlide === page
-                          ? "w-8 bg-[#F5B800]"
-                          : "w-2.5 bg-slate-700 hover:bg-slate-600"
-                      }`}
-                      aria-label={`Vis tjenesteside ${page + 1}`}
-                    />
-                  ))}
-                </div>
-              </>
-            );
-          })()}
-        </section>
 
           </div>
                 </div>
@@ -6715,6 +6851,18 @@ export default function CustomerDashboard({
             </div>
           </div>
         </div>
+      )}
+
+      {agreementPdfOpen && inquiryData?.inquiry?.id && (
+        <CustomerAgreementPdfViewer
+          inquiryId={Number(inquiryData.inquiry.id)}
+          expectedTlvOfferId={String(newestFollowupOffer?.status || "").toLowerCase() === "akseptert" ? Number(newestFollowupOffer?.id) : undefined}
+          sessionToken={previewMode ? "" : (
+            window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || ""
+          )}
+          previewMode={previewMode}
+          onClose={() => setAgreementPdfOpen(false)}
+        />
       )}
 
       {liveInspectionOpen && !previewMode && inquiryData?.inquiry?.id && (

@@ -1,5 +1,5 @@
 import NewManualInquiryModal from '../components/NewManualInquiryModal';
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Inbox,
   AlertTriangle,
@@ -38,8 +38,7 @@ import {
   RefreshCw,
   ArrowRight,
   ArrowUpDown,
-  RotateCcw,
-} from "lucide-react";
+  } from "lucide-react";
 import InquiryDetail, { type Inquiry } from "./InquiryDetail";
 import ChecklistManager from "../components/ChecklistManager";
 import CustomerList, { type Customer } from "../components/CustomerList";
@@ -57,7 +56,11 @@ import TimeOverviewPage from "./TimeOverviewPage";
 import ProspectPage from "./ProspectPage";
 import EmailCenterPage from "./EmailCenterPage";
 import SettingsPage from "./SettingsPage";
-import { API_BASE, apiUrl } from "../lib/api";
+import { API_BASE, apiUrl, apiAssetUrl } from "../lib/api";
+import CoreCaseStatusBadge, { type CoreCaseStatusView } from "../components/CoreCaseStatusBadge";
+import CoreCaseStatusFilter from "../components/CoreCaseStatusFilter";
+import { countCoreStatusRows, filterCoreStatusRows, type CoreCaseStatusFilterValue } from "../lib/coreCaseStatusFilter";
+import { coreCaseStatusForInquiry, createCoreCaseStatusLoader, type CoreCaseStatusesSnapshot } from "../lib/coreCaseStatuses";
 interface ProjectData {
   id: number;
   title: string;
@@ -307,8 +310,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     "aktive" | "handling" | "avsluttede" | "rapporter"
   >("aktive");
   // Egen visningskategori; endrer aldri lagret oppdragsstatus.
-  type WorkTab = "alle" | "kommende" | "utlopt_tilbud" | "kunde" | "rapport" | "utfort" | "avbestilt";
+  type WorkTab = "alle" | "kommende" | "utlopt_tilbud" | "kunde" | "rapport" | "utfort" | "avbestilt" | "pa_vent";
   const [workTab, setWorkTab] = useState<WorkTab>("alle");
+  const [coreStatusFilter, setCoreStatusFilter] = useState<CoreCaseStatusFilterValue>("active");
+  const [coreCaseStatuses, setCoreCaseStatuses] = useState<CoreCaseStatusesSnapshot>(
+    () => ({ state: "loading", byInquiryId: new Map() }),
+  );
+  const coreCaseStatusLoader = useRef<ReturnType<typeof createCoreCaseStatusLoader> | null>(null);
   const [drivingLogTab, setDrivingLogTab] = useState<
     "oversikt" | "kjoringer" | "kjoretoy" | "kilometerstand"
   >("oversikt");
@@ -342,6 +350,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   
   const [showNewManualInquiry, setShowNewManualInquiry] = useState(false);
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
+  const [pausedInquiryIds, setPausedInquiryIds] = useState<number[]>([]);
+  const [pauseListError, setPauseListError] = useState("");
   const [loading, setLoading] = useState<boolean>(true);
   const [filterType, setFilterType] = useState<string>("alle");
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -357,6 +367,9 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   // Tilbudsstatus er separat fra sakens og rapportens status.
   type OverviewOffer = { id: number; offer_number?: string | null; status: string; offer_context?: string | null; revision_parent_offer_id?: number | null };
   const [overviewOffers, setOverviewOffers] = useState<Record<string, OverviewOffer[]>>({});
+  // Property photos are read-only and loaded from the same endpoint as InquiryDetail.
+  const [propertyCardImages, setPropertyCardImages] = useState<Record<string, string>>({});
+
   // Les kun fakturering som faktisk er registrert for arbeidsetappen i Perun Core.
   // null betyr ukjent (innlogging, migrering eller kobling mangler) – aldri anta «Nei».
   type StageInvoiceSummary = { invoiced: boolean; documents: Array<{ document_id: number }> };
@@ -389,6 +402,30 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       }
       return next;
     });
+  };
+
+  const fetchPropertyCardImages = async (items: Inquiry[]) => {
+    // A missing/failed property image never blocks the ordinary case overview.
+    const found = await Promise.all(items.filter((item) => Number(item.id) !== 19).map(async (item) => {
+      const id = String(item.id);
+      try {
+        const res = await fetch(apiUrl(`/property_image.php?inquiry_id=${encodeURIComponent(id)}`), {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!res.ok) return [id, ""] as const;
+        const data = await res.json();
+        if (!data?.success || typeof data.image_url !== "string") return [id, ""] as const;
+        const raw = data.image_url.trim();
+        if (!raw || /^(?:javascript|data|blob):/i.test(raw)) return [id, ""] as const;
+        const url = apiAssetUrl(raw);
+        if (!/^https?:\/\//i.test(url)) return [id, ""] as const;
+        return [id, url] as const;
+      } catch {
+        return [id, ""] as const;
+      }
+    }));
+    setPropertyCardImages(Object.fromEntries(found.filter(([, url]) => Boolean(url))));
   };
 
   const [reportArchive, setReportArchive] = useState<ReportArchiveItem[]>([]);
@@ -556,8 +593,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       items.map(async (inq) => {
         try {
           const [reportRes, completionRes] = await Promise.all([
-            fetch(`${API_BASE}/reports.php?inquiry_id=${inq.id}`),
-            fetch(`${API_BASE}/completion_reports.php?inquiry_id=${inq.id}`),
+            fetch(`${API_BASE}/reports.php?inquiry_id=${inq.id}`, { credentials: "include" }),
+            fetch(`${API_BASE}/completion_reports.php?inquiry_id=${inq.id}`, { credentials: "include" }),
           ]);
 
           const [reportData, completionData] = await Promise.all([
@@ -642,17 +679,39 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
 
   const fetchInquiries = async () => {
+    void coreCaseStatusLoader.current?.refresh();
     try {
+      // Hent pausestatus før oppdragene vises.
+      // Manglende tilgang må ikke føre til at pausede saker vises som aktive.
+      const pauseRes = await fetch(apiUrl("/admin_inquiry_pause.php"), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "list" }),
+      });
+      const pauseData = await pauseRes.json();
+      if (!pauseRes.ok || !pauseData.success || !Array.isArray(pauseData.paused_inquiry_ids)) {
+        throw new Error(pauseData.message || "Kunne ikke hente pausestatus.");
+      }
+
       const res = await fetch(apiUrl("/inquiries.php"));
       const data = await res.json();
+      if (!res.ok || !Array.isArray(data)) {
+        throw new Error("Kunne ikke hente oppdrag.");
+      }
+
+      setPausedInquiryIds(pauseData.paused_inquiry_ids.map(Number));
+      setPauseListError("");
       if (Array.isArray(data)) {
         setInquiries(data);
         await fetchReportStatuses(data);
         await fetchOverviewOffers(data);
+        void fetchPropertyCardImages(data);
         void fetchStageInvoices(data);
       }
     } catch (err) {
       console.error("Feil ved henting av henvendelser:", err);
+      setPauseListError(err instanceof Error ? err.message : "Kunne ikke hente saksoversikten.");
     } finally {
       setLoading(false);
     }
@@ -864,8 +923,16 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   };
 
   useEffect(() => {
+    const loader = createCoreCaseStatusLoader(apiUrl("/admin_core_case_status.php"), (snapshot) => {
+      setCoreCaseStatuses(snapshot);
+    });
+    coreCaseStatusLoader.current = loader;
     fetchInquiries();
     fetchAdminEmployees();
+    return () => {
+      loader.dispose();
+      if (coreCaseStatusLoader.current === loader) coreCaseStatusLoader.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -1754,7 +1821,9 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   };
 
   const isActiveInquiry = (inq: Inquiry): boolean =>
-    !isCompletedInquiry(inq) && !hasExpiredLatestOffer(inq);
+    !pausedInquiryIds.includes(Number(inq.id)) &&
+    !isCompletedInquiry(inq) &&
+    !hasExpiredLatestOffer(inq);
 
 
 
@@ -1796,6 +1865,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   }).length;
 
   const awaitingCustomerCount = inquiries.filter((i) => {
+    if (!isActiveInquiry(i)) return false;
     const status = String((i as any).status || "").toLowerCase();
     return [
       "tilbud_sendt",
@@ -1821,6 +1891,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   }).length;
 
   const scheduledTodayCount = inquiries.filter((i) => {
+    if (!isActiveInquiry(i)) return false;
     const bookingDate = String((i as any).booking_date || "");
     if (!bookingDate) return false;
     const today = new Date();
@@ -1837,14 +1908,16 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   // Én visningskategori per sak, kun når eksisterende data dokumenterer den.
   // Saker uten sikker klassifisering ligger alltid i «Alle oppdrag».
   const getWorkCategory = (inq: Inquiry): WorkTab | "uavklart" => {
+    if (pausedInquiryIds.includes(Number(inq.id))) return "pa_vent";
     const status = String(inq.status || "").toLowerCase();
-    const bookingStatus = String(
-      (inq as any).latest_field_schedule_status || ""
+    const cancellationType = String(
+      (inq as any).latest_field_schedule_cancellation_type || ""
     ).trim().toLowerCase();
 
-    // Siste registrerte booking avgjør om oppdraget er avbestilt.
-    // Tilbudsstatus og historikk endres ikke.
-    if (["avlyst", "avbestilt", "kansellert", "cancelled"].includes(bookingStatus)) {
+    // En dokumentert kundeavbestilling per telefon gjelder oppdraget.
+    // Administrativ annullering av en feilregistrert booking
+    // er ikke i seg selv en avbestilling av oppdraget.
+    if (cancellationType === "customer_phone") {
       return "avbestilt";
     }
 
@@ -1857,8 +1930,15 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     const reportPublished = report?.status === "publisert";
     const finishedReport = reportPublished && report?.report_type === "rapport2";
 
-    if (["avbestilt", "avlyst", "kansellert", "cancelled", "tilbud_avvist"].includes(status) ||
-        (status === "avsluttet" && !finishedReport && latest?.status === "avvist")) return "avbestilt";
+    const latestOfferAccepted = String(
+      (inq as any).latest_offer_status || ""
+    ).trim().toLowerCase() === "akseptert";
+
+    if (
+      ["avbestilt", "avlyst", "kansellert", "cancelled"].includes(status) ||
+      (status === "tilbud_avvist" && !latestOfferAccepted) ||
+      (status === "avsluttet" && !finishedReport && latest?.status === "avvist")
+    ) return "avbestilt";
     // En avsluttet sak skal ikke klassifiseres som rapportarbeid
     // på grunn av en gammel rapportstatus.
     // Avviste/avbestilte saker håndteres i regelen over.
@@ -1896,17 +1976,37 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     { id: "utfort", label: "Utført" },
     { id: "utlopt_tilbud", label: "Utløpte tilbud" },
     { id: "avbestilt", label: "Avbestilt" },
-    { id: "alle", label: "Alle oppdrag" }
+    { id: "pa_vent", label: "Administrativ pause" },
+    { id: "alle", label: "Alle arbeidskategorier" }
   ];
-  const workTabCounts = Object.fromEntries(workTabOptions.map((tab) => [tab.id,
-    inquiries.filter((inq) => Number(inq.id) !== 19 && (tab.id === "alle" || getWorkCategory(inq) === tab.id)).length
-  ])) as Record<WorkTab, number>;
 
   // Visningen bygger på de eksisterende oppdrags- og rapport-API-ene.
   // Filtrene er kun visuelle; ingen statuser endres uten en eksplisitt handling.
-  const dashboardRows = inquiries
-    .filter((i) => Number(i.id) !== 19 && (activeSubTab === "aktive" || activeSubTab === "rapporter" || isActiveInquiry(i) || String(i.status || "").toLowerCase() === "tilbud_sendt"))
+  const dashboardRows = (pauseListError ? [] : inquiries)
+    .filter((i) =>
+      Number(i.id) !== 19 &&
+      (
+        activeSubTab === "aktive" ||
+        activeSubTab === "rapporter" ||
+        isActiveInquiry(i) ||
+        String(i.status || "").toLowerCase() === "tilbud_sendt"
+      )
+    )
     .filter((i) => {
+      if (pausedInquiryIds.includes(Number(i.id)) && workTab !== "pa_vent" && workTab !== "alle") {
+        return false;
+      }
+      // Avbestilte oppdrag skal ikke vises som aktive.
+      // De beholdes i den egne kategorien «Avbestilt».
+      // Ny aktiv feltavtale vil endre kategorien automatisk.
+      if (
+        activeSubTab === "aktive" &&
+        workTab !== "avbestilt" && workTab !== "alle" &&
+        getWorkCategory(i) === "avbestilt"
+      ) {
+        return false;
+      }
+
       const status = String(i.status || "").toLowerCase();
       const reportNeedsAdmin = needsAdminReportAction(reportStatuses[i.id.toString()]);
       const responsible = String((i as any).assigned_to || "").trim();
@@ -1932,7 +2032,6 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         const local = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
         return booking === local;
       }
-      if (filterType === "planlagt_i_dag") {const d = String((i as any).booking_date || "").slice(0,10); const now=new Date();const today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;return d === today;}
       if (filterType === "neste_7_dager") {
         const d = getInquiryBookingDate(i);
         if (!d) return false;
@@ -1946,6 +2045,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       return true;
     })
     .sort((a,b) => sortNewest ? Number(b.id) - Number(a.id) : Number(a.id) - Number(b.id));
+
+  // One authenticated API snapshot supplies both the column and Core-only filters.
+  const coreStatusSourceAvailable = coreCaseStatuses.state === "ready";
+  const coreStatusForRow = (inquiry: Inquiry): CoreCaseStatusView =>
+    coreCaseStatusForInquiry(coreCaseStatuses, inquiry.id);
+  const coreStatusCounts = countCoreStatusRows(dashboardRows, coreStatusForRow, coreStatusSourceAvailable);
+  const coreFilteredRows = filterCoreStatusRows(dashboardRows, coreStatusFilter, coreStatusForRow, coreStatusCounts !== null);
 
   const openDashboardView = (tab: "aktive" | "handling" | "rapporter" | "avsluttede", filter = "alle") => {
     setActiveSubTab(tab);
@@ -2109,6 +2215,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     return (
       <InquiryDetail
         inquiry={selectedInquiry}
+        coreCaseStatus={coreStatusForRow(selectedInquiry)}
         onBack={() => {
           setSelectedInquiry(null);
           fetchInquiries();
@@ -2577,27 +2684,25 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               )}
             </section>
 
-            {/* NØKKELTALL */}
-            <section>
-              <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            {/* SAMLET OPPDRAGSOVERSIKT: nøkkeltall, søk og resultatliste */}
+            <section className="overflow-hidden rounded-2xl border border-[#865064] bg-[#231019]">
+              <div className="p-4 md:p-5">
+                <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
                 <div>
                   <h3 className="text-base font-black text-white">Saksgang – oversikt</h3>
                   <p className="mt-1 text-xs text-[#d6b8c3]">Fra nye henvendelser til oppfølging, rapporter og avslutning.</p>
                 </div>
-                <span className="rounded-lg border border-[#67303c] bg-[#270e17] px-3 py-1.5 text-xs text-[#e3c6cd]">{inquiries.filter(isActiveInquiry).length} aktive av {totalCount} totalt</span>
+                <span className="rounded-lg border border-[#67303c] bg-[#270e17] px-3 py-1.5 text-xs text-[#e3c6cd]">{inquiries.filter(isActiveInquiry).length} under oppfølging av {totalCount} totalt</span>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <div className="grid gap-2 sm:grid-cols-3">
                 {[
                   {title:"Nye saker", value:newInquiriesCount, icon:Inbox, accent:"text-emerald-300", view:"aktive" as const, filter:"nye_saker"},
-                  {title:"Mangler prosjektansvarlig", value:unassignedCount, icon:Users, accent:"text-rose-300", view:"handling" as const, filter:"alle"},
-                  {title:"Rapporter til godkjenning", value:reportsForReviewCount, icon:FileText, accent:"text-sky-300", view:"rapporter" as const, filter:"rapporter_til_gjennomgang"},
                   {title:"Planlagt i dag", value:scheduledTodayCount, icon:CalendarCheck, accent:"text-indigo-300", view:"aktive" as const, filter:"planlagt_i_dag"},
                   {title:"Avventer kunde", value:awaitingCustomerCount, icon:Clock3, accent:"text-amber-300", view:"aktive" as const, filter:"avventer_kunde"},
                 ].map((tile) => {
                   const TileIcon = tile.icon;
-                  const hot = tile.value > 0 && (tile.title === "Mangler prosjektansvarlig" || tile.title === "Rapporter til godkjenning");
                   return (
-                    <button key={tile.title} type="button" onClick={() => openDashboardView(tile.view, tile.filter)} className={`group flex min-h-[125px] flex-col justify-between rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 ${hot ? "border-rose-400/50 bg-[#3a1724]" : "border-[#65313e] bg-[#2b121c]/90 hover:border-rose-400/60 hover:bg-[#3a1724]"}`}>
+                    <button key={tile.title} type="button" onClick={() => openDashboardView(tile.view, tile.filter)} className="group flex min-h-[94px] flex-col justify-between rounded-xl border border-[#65313e] bg-[#2b121c]/90 p-3 text-left transition hover:-translate-y-0.5 hover:border-rose-400/60 hover:bg-[#3a1724]">
                       <div className="flex items-center justify-between gap-2">
                         <TileIcon className={`h-5 w-5 ${tile.accent}`} />
                         <ChevronRight className="h-4 w-4 text-[#b995a2] transition group-hover:translate-x-0.5" />
@@ -2609,142 +2714,147 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     </button>
                   );
                 })}
+                </div>
               </div>
-            </section>
 
             {quickAssignMessage && <div role="status" className="rounded-xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-xs text-rose-100">{quickAssignMessage}</div>}
             {notificationMessage && <div role="status" className="rounded-xl border border-sky-400/20 bg-sky-400/10 px-4 py-3 text-xs text-sky-100">{notificationMessage}</div>}
 
-            {/* FILTER */}
-            <section className="rounded-2xl border border-[#5d2937] bg-[#2c111c] p-3 md:p-4">
-              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(210px,1fr)_180px_180px_190px_auto]">
-                <label className="relative">
+            {/* SØK – samme panel som oppdragslisten */}
+            <div className="border-t border-[#5d2937] px-4 py-3 md:px-5">
+              <div className="w-full">
+                <label className="relative block w-full">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#d0acb8]" />
                   <input aria-label="Søk i oppdrag" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Søk kunde, adresse eller oppdragsnummer…" className="w-full rounded-xl border border-[#60313d] bg-[#1b0b12] py-3 pl-10 pr-3 text-xs text-white outline-none placeholder:text-[#b995a2] focus:border-rose-400" />
                 </label>
-                <select aria-label="Statusfilter" value={activeSubTab} onChange={(e) => openDashboardView(e.target.value as "aktive"|"handling"|"rapporter"|"avsluttede")} className="rounded-xl border border-[#60313d] bg-[#1b0b12] px-3 py-3 text-xs text-white">
-                  <option value="aktive">Alle aktive</option>
-                  <option value="handling">Krever handling</option>
-                  <option value="rapporter">Rapporter til admin</option>
-                  <option value="avsluttede">Avsluttede</option>
-                </select>
-                <select aria-label="Tjenestefilter" value={serviceFilter} onChange={(e) => setServiceFilter(e.target.value)} className="rounded-xl border border-[#60313d] bg-[#1b0b12] px-3 py-3 text-xs text-white">
-                  <option value="alle">Alle tjenester</option>
-                  <option value="lekkasje">Lekkasjesøk</option>
-                  <option value="takkontroll">Takkontroll</option>
-                  <option value="service">Service</option>
-                  <option value="akutt">Akutt</option>
-                </select>
-                <select aria-label="Prosjektansvarligfilter" value={managerFilter} onChange={(e) => setManagerFilter(e.target.value)} className="rounded-xl border border-[#60313d] bg-[#1b0b12] px-3 py-3 text-xs text-white">
-                  <option value="alle">Alle prosjektansvarlige</option>
-                  <option value="uten">Ikke tildelt</option>
-                  {adminEmployees.filter((emp) => emp.status === "Aktiv" && emp.role === "Prosjektleder").map((emp) => <option key={emp.id} value={String(emp.id)}>{emp.name}</option>)}
-                </select>
-                <button type="button" onClick={() => {openDashboardView("aktive"); setSortNewest(true);}} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#60313d] bg-[#381725] px-3 py-3 text-xs font-bold text-[#f6dfe5] transition hover:bg-[#492033]"><RotateCcw className="h-3.5 w-3.5" /> Nullstill</button>
-              </div>
-            </section>
+                
+                
+                
 
-            {/* OPPDRAGSKATEGORIER – kun lesefiltre, ingen statuser skrives tilbake */}
-            <nav aria-label="Oppdrag etter arbeidsfase" className="flex flex-wrap gap-2 rounded-2xl border border-[#5d2937] bg-[#2c111c] p-3">
-              {workTabOptions.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  aria-current={workTab === tab.id ? "page" : undefined}
-                  onClick={() => { setWorkTab(tab.id); setActiveSubTab("aktive"); setFilterType("alle"); }}
-                  className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2.5 text-[11px] font-bold transition ${workTab === tab.id ? "border-rose-400/60 bg-[#62263a] text-white" : "border-[#613244] bg-[#24101a] text-[#e0bdc9] hover:bg-[#432033]"}`}
-                >
-                  {tab.label}
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${workTab === tab.id ? "bg-rose-300/20 text-rose-100" : "bg-[#442030] text-[#e0bdc9]"}`}>
-                    {workTabCounts[tab.id]}
-                  </span>
-                </button>
-              ))}
-            </nav>
+              </div>
+            </div>
 
             {/* RESULTATLISTE */}
             {activeSubTab !== "avsluttede" && (
-              <section id="oppdrag-resultatliste" className="scroll-mt-24 overflow-hidden rounded-2xl border border-[#65313e] bg-[#2a101a]">
+              <div id="oppdrag-resultatliste" className="scroll-mt-24 border-t border-[#572636]">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#572636] px-5 py-4">
                   <div>
-                    <h3 className="text-base font-black text-white">{workTab !== "alle" ? workTabOptions.find((tab) => tab.id === workTab)?.label : activeSubTab === "handling" ? "Oppdrag som krever handling" : activeSubTab === "rapporter" ? "Rapporter til behandling" : "Aktive oppdrag"}</h3>
-                    <p className="mt-1 text-xs text-[#d9b8c3]">{dashboardRows.length} oppdrag vises · åpne en rad for full saksinformasjon</p>
+                    <CoreCaseStatusFilter
+                      value={coreStatusFilter}
+                      counts={coreStatusCounts}
+                      unavailableMessage={coreCaseStatuses.state === "loading" ? "Henter Core-status …" : coreStatusFilter === "all" ? "Core-status er utilgjengelig. Viser alle saker innenfor gjeldende filtre uten statusklassifisering." : "Core-status er utilgjengelig. Kan ikke bekrefte saker eller antall for valgt hovedstatus."}
+                      onChange={(value) => {
+                        // Statusvalg skal ikke kombineres med gamle hurtigfiltre.
+                        setActiveSubTab("aktive");
+                        setFilterType("alle");
+                        setWorkTab("alle");
+                        setManagerFilter("alle");
+                        setServiceFilter("alle");
+                        setSearchQuery("");
+                        setCoreStatusFilter(value);
+                      }}
+                    />
+                    {(workTab !== "alle" || activeSubTab === "handling" || activeSubTab === "rapporter") && (
+                      <h3 className="mt-2 text-base font-black text-white">{workTab !== "alle" ? workTabOptions.find((tab) => tab.id === workTab)?.label : activeSubTab === "handling" ? "Oppdrag som krever handling" : "Rapporter til behandling"}</h3>
+                    )}
+                    <p className="mt-1 text-xs text-[#d9b8c3]">{!coreStatusSourceAvailable && coreStatusFilter !== "all" ? "Antall for valgt hovedstatus er ukjent." : `${coreFilteredRows.length} oppdrag vises · åpne en rad for full saksinformasjon`}</p>
                   </div>
                   <button type="button" onClick={() => setSortNewest((v) => !v)} className="inline-flex items-center gap-2 rounded-lg border border-[#693546] bg-[#391a27] px-3 py-2 text-xs font-semibold text-[#ecd0d8]"><ArrowUpDown className="h-3.5 w-3.5" /> Nummer {sortNewest ? "nyeste først" : "eldste først"}</button>
                 </div>
-                {loading ? (
-                  <div className="flex items-center justify-center gap-2 p-12 text-sm text-[#e2c3cd]"><Loader2 className="h-4 w-4 animate-spin" /> Henter oppdrag…</div>
-                ) : dashboardRows.length === 0 ? (
-                  <div className="p-12 text-center text-sm text-[#d9b8c3]">Ingen oppdrag samsvarer med filtrene.</div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[760px] text-left text-xs">
-                      <thead className="bg-[#200c14] text-[10px] font-extrabold uppercase tracking-wider text-[#d4b1bd]">
-                        <tr>
-                          <th className="px-5 py-4">Kunde / adresse</th>
-                          <th className="px-3 py-4">Fakturert</th>
-                          <th className="px-3 py-4">Arbeidsfase</th>
-                          <th className="px-3 py-4">Dato</th>
-                          <th className="px-3 py-4">Status</th>
-                          <th className="px-3 py-4 text-right">Handling</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[#562736]">
-                        {dashboardRows.map((inq) => {
-                          const id = inq.id.toString();
-                          const responsible = String((inq as any).assigned_to || "").trim();
-                          const unassigned = !responsible && !(inq as any).assigned_project_manager_id;
-                          const needsReport = needsAdminReportAction(reportStatuses[id]);
-                          return (
-                            <tr key={id} onClick={() => setSelectedInquiry(inq)} className="group cursor-pointer bg-[#2c111b] transition-colors even:bg-[#321520] hover:bg-[#4a2030]">
-                              <td className="px-5 py-4">
-                                <div className="flex items-start gap-3">
-                                  <span className="rounded-lg border border-[#633347] bg-[#1b0a12] px-2 py-1.5 font-mono text-xs font-black text-[#f6e9ed]">#{id}</span>
-                                  <div className="min-w-[200px]">
-                                    <div className="flex flex-wrap items-center gap-2 font-extrabold text-white">
-                                      {inq.customer_name || inq.customerName || "Ukjent kunde"}
-                                      {isNewInquiry(inq) && <span className="rounded-md bg-amber-400 px-1.5 py-0.5 text-[9px] font-black text-[#221018]">NY</span>}
-                                    </div>
-                                    <div className="mt-1 flex items-center gap-1 text-[11px] text-[#e8cbd4]"><MapPin className="h-3 w-3 shrink-0 text-amber-300" />{[inq.address, inq.postal_code, inq.city].filter(Boolean).join(", ")}</div>
-                                    <div className="mt-1 text-[10px] text-[#c5a5b2]">{inq.roof_type || inq.roofType || "Taktype ikke oppgitt"}{inq.building_type ? ` · ${inq.building_type}` : ""}</div>
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="px-3 py-4">{getStageInvoiceBadge(inq)}</td>
-                              <td className="px-3 py-4">{getCurrentStageBadge(inq)}</td>
-                              <td className="whitespace-nowrap px-3 py-4 text-[#ecd4dd]">{parseCompactBookingDetails(inq.notes, inq.created_at, (inq as any).booking_date)}</td>
-                              <td className="px-3 py-4">{getOfferStatusBadges(inq)}</td>
-                              <td className="px-3 py-4 text-right" onClick={(e) => e.stopPropagation()}>
-                                {unassigned && !needsReport && (
-                                  <div className="mb-2 flex flex-col items-end gap-1.5">
-                                    <select aria-label={`Velg prosjektansvarlig for oppdrag ${id}`} value={quickManagerSelections[id] || ""} onChange={(e) => setQuickManagerSelections((prev) => ({ ...prev, [id]: e.target.value }))} className="max-w-[170px] rounded-lg border border-[#774051] bg-[#210c15] px-2 py-2 text-[11px] text-white">
-                                      <option value="">Velg prosjektansvarlig</option>
-                                      {adminEmployees.filter((emp) => emp.status === "Aktiv" && emp.role === "Prosjektleder").map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
-                                    </select>
-                                    <button type="button" disabled={!quickManagerSelections[id] || quickAssignBusyId === id} onClick={() => void quickAssignProjectManager(inq)} className="rounded-lg bg-rose-600 px-3 py-2 text-[11px] font-black text-white disabled:opacity-40">{quickAssignBusyId === id ? "Tildeler…" : "Tildel"}</button>
-                                  </div>
-                                )}
-                                <div className="relative inline-flex">
-                                  <button type="button" aria-label={`Flere handlinger for oppdrag ${id}`} aria-expanded={openActionMenuId === id} onClick={() => setOpenActionMenuId((current) => (current === id ? null : id))} className="rounded-lg border border-[#714050] bg-[#1e0b13] p-2 text-[#f2dbe2] hover:bg-[#4b2331]"><MoreHorizontal className="h-4 w-4" /></button>
-                                  {openActionMenuId === id && (
-                                    <div className="absolute right-0 top-10 z-50 w-48 space-y-1 rounded-xl border border-[#794052] bg-[#210c15] p-1.5 text-left shadow-2xl">
-                                      <button type="button" onClick={() => {setOpenActionMenuId(null); setSelectedInquiry(inq);}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-white hover:bg-[#542439]">Åpne oppdrag</button>
-                                      {needsReport && <button type="button" onClick={() => {setOpenActionMenuId(null); setReviewInquiry(inq);}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-sky-200 hover:bg-[#542439]">Behandle rapport</button>}
-                                      <button type="button" onClick={() => {setOpenActionMenuId(null); void createAdminReminder(inq, "project_manager");}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-white hover:bg-[#542439]">Purr prosjektansvarlig</button>
-                                      <button type="button" onClick={() => {setOpenActionMenuId(null); void createAdminReminder(inq, "customer");}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-white hover:bg-[#542439]">Påminn kunde</button>
-                                    </div>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                {pauseListError && (
+                  <div role="alert" className="border-b border-rose-400/40 bg-rose-500/10 px-5 py-3 text-xs text-rose-200">
+                    Kunne ikke kontrollere pausestatus: {pauseListError}. Oppdragslisten er midlertidig skjult for å unngå feilvisning.
                   </div>
                 )}
-              </section>
+                {loading || (coreCaseStatuses.state === "loading" && coreStatusFilter !== "all") ? (
+                  <div className="flex items-center justify-center gap-2 p-12 text-sm text-[#e2c3cd]"><Loader2 className="h-4 w-4 animate-spin" /> Henter oppdrag…</div>
+                ) : !coreStatusSourceAvailable && coreStatusFilter !== "all" ? (
+                  <div role="alert" className="p-8 text-sm text-amber-200">Core-status kunne ikke hentes. Kan ikke vise valgt hovedstatus. Oppdater data eller velg «Alle oppdrag» for å vise saker uten statusfiltrering.</div>
+                ) : coreFilteredRows.length === 0 ? (
+                  <div className="p-12 text-center text-sm text-[#d9b8c3]">Ingen oppdrag samsvarer med filtrene.</div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 p-3 sm:p-4 lg:grid-cols-2 2xl:grid-cols-3">
+                    {coreFilteredRows.map((inq) => {
+                      const id = inq.id.toString();
+                      const responsible = String((inq as any).assigned_to || "").trim();
+                      const unassigned = !responsible && !(inq as any).assigned_project_manager_id;
+                      const needsReport = needsAdminReportAction(reportStatuses[id]);
+                      const propertyImage = propertyCardImages[id];
+                      return (
+                        <article key={id} className="relative isolate flex min-w-0 flex-col gap-3 overflow-visible rounded-2xl border border-[#955568] bg-[#472333] p-4 shadow-[0_8px_25px_rgba(0,0,0,0.16)] transition-all hover:border-rose-300/60 hover:shadow-[0_12px_32px_rgba(0,0,0,0.22)]">
+                          {propertyImage && (
+                            <div className="pointer-events-none absolute inset-x-0 top-0 h-[54%] overflow-hidden rounded-t-2xl" aria-hidden="true">
+                              <img
+                                src={propertyImage}
+                                alt=""
+                                loading="lazy"
+                                className="h-full w-full object-cover object-center opacity-75"
+                                onError={() => setPropertyCardImages((previous) => {
+                                  if (previous[id] !== propertyImage) return previous;
+                                  const next = { ...previous };
+                                  delete next[id];
+                                  return next;
+                                })}
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-r from-[#331522]/95 via-[#381725]/75 to-[#381725]/35" />
+                              <div className="absolute inset-0 bg-gradient-to-t from-[#472333] via-[#472333]/35 to-transparent" />
+                            </div>
+                          )}
+                          <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-white/[0.035] to-transparent" aria-hidden="true" />
+                          <div className="relative z-10 flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                                <span className="rounded-lg border border-[#633347] bg-[#1b0a12] px-2 py-1 font-mono text-xs font-black text-[#f6e9ed]">#{id}</span>
+                                {isNewInquiry(inq) && <span className="rounded-md bg-amber-400 px-1.5 py-0.5 text-[9px] font-black text-[#221018]">NY</span>}
+                              </div>
+                              <h4 className="break-words text-sm font-extrabold text-white">{inq.customer_name || inq.customerName || "Ukjent kunde"}</h4>
+                              <p className="mt-1 flex items-start gap-1.5 text-[11px] leading-5 text-[#e8cbd4]">
+                                <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-amber-300" />
+                                <span>{[inq.address, inq.postal_code, inq.city].filter(Boolean).join(", ") || "Adresse ikke oppgitt"}</span>
+                              </p>
+                              <p className="mt-1 text-[10px] text-[#c5a5b2]">{inq.roof_type || inq.roofType || "Taktype ikke oppgitt"}{inq.building_type ? ` · ${inq.building_type}` : ""}</p>
+                            </div>
+                            <div className="relative z-10 shrink-0">
+                              <button type="button" aria-label={`Flere handlinger for oppdrag ${id}`} aria-expanded={openActionMenuId === id} onClick={() => setOpenActionMenuId((current) => current === id ? null : id)} className="rounded-lg border border-[#714050] bg-[#1e0b13] p-2 text-[#f2dbe2] hover:bg-[#4b2331]"><MoreHorizontal className="h-4 w-4" /></button>
+                              {openActionMenuId === id && (
+                                <div className="absolute right-0 top-10 z-30 w-48 space-y-1 rounded-xl border border-[#794052] bg-[#210c15] p-1.5 text-left shadow-2xl">
+                                  <button type="button" onClick={() => {setOpenActionMenuId(null); setSelectedInquiry(inq);}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-white hover:bg-[#542439]">Åpne oppdrag</button>
+                                  {needsReport && <button type="button" onClick={() => {setOpenActionMenuId(null); setReviewInquiry(inq);}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-sky-200 hover:bg-[#542439]">Behandle rapport</button>}
+                                  <button type="button" onClick={() => {setOpenActionMenuId(null); void createAdminReminder(inq, "project_manager");}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-white hover:bg-[#542439]">Purr prosjektansvarlig</button>
+                                  <button type="button" onClick={() => {setOpenActionMenuId(null); void createAdminReminder(inq, "customer");}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-white hover:bg-[#542439]">Påminn kunde</button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="relative z-10 flex flex-wrap items-center gap-2">
+                            {getCurrentStageBadge(inq)}
+                            {getOfferStatusBadges(inq)}
+                          </div>
+                          <div className="relative z-10 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-[#a16b7b]/60 pt-3 text-xs">
+                            <div className="min-w-0"><div className="mb-1 text-[10px] text-[#c5a5b2]">Hovedstatus (Core)</div><CoreCaseStatusBadge {...coreStatusForRow(inq)} /></div>
+                            <div className="min-w-0"><div className="mb-1 text-[10px] text-[#c5a5b2]">Fakturert</div>{getStageInvoiceBadge(inq)}</div>
+                            <div className="col-span-2"><div className="mb-1 text-[10px] text-[#c5a5b2]">Dato</div><span className="text-[#ecd4dd]">{parseCompactBookingDetails(inq.notes, inq.created_at, (inq as any).booking_date)}</span></div>
+                          </div>
+                          {unassigned && !needsReport && (
+                            <div className="relative z-10 space-y-2 border-t border-[#a16b7b]/60 pt-3">
+                              <select aria-label={`Velg prosjektansvarlig for oppdrag ${id}`} value={quickManagerSelections[id] || ""} onChange={(e) => setQuickManagerSelections((prev) => ({ ...prev, [id]: e.target.value }))} className="w-full rounded-lg border border-[#774051] bg-[#210c15] px-2 py-2 text-xs text-white">
+                                <option value="">Velg prosjektansvarlig</option>
+                                {adminEmployees.filter((emp) => emp.status === "Aktiv" && emp.role === "Prosjektleder").map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+                              </select>
+                              <button type="button" disabled={!quickManagerSelections[id] || quickAssignBusyId === id} onClick={() => void quickAssignProjectManager(inq)} className="w-full rounded-lg bg-rose-600 px-3 py-2 text-xs font-black text-white disabled:opacity-40">{quickAssignBusyId === id ? "Tildeler…" : "Tildel prosjektansvarlig"}</button>
+                            </div>
+                          )}
+                          <button type="button" onClick={() => setSelectedInquiry(inq)} className="relative z-10 mt-auto flex w-full items-center justify-center gap-2 rounded-xl border border-[#c57490] bg-gradient-to-r from-[#79334e] to-[#61243e] px-3 py-2.5 text-xs font-bold text-white shadow-sm transition hover:border-rose-300 hover:from-[#92405e] hover:to-[#76314f]">
+                            Åpne oppdrag <ArrowRight className="h-3.5 w-3.5" />
+                          </button>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             )}
+            </section>
           </div>
         )}
 

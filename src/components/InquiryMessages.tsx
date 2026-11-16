@@ -1,3 +1,4 @@
+import { messageFetch } from "../lib/messageApi";
 import { useEffect, useState } from "react";
 import {
   Loader2,
@@ -10,9 +11,13 @@ import {
 } from "lucide-react";
 import { apiUrl } from "../lib/api";
 
+const messagesRequest = (url: string, init?: RequestInit) =>
+  messageFetch(url, init, window.localStorage.getItem("taklekkasjevakten_project_manager_session") ? "project_manager" : "admin");
+
 interface MessageRow {
   id: number;
   thread_id: number;
+  thread_status?: string;
   inquiry_id: number;
   sender_type: "customer" | "admin" | "project_manager";
   sender_id?: number | null;
@@ -56,7 +61,7 @@ export default function InquiryMessages({
     setError("");
 
     try {
-      const res = await fetch(
+      const res = await messagesRequest(
         apiUrl(`/messages.php?inquiry_id=${inquiryId}`)
       );
 
@@ -80,7 +85,7 @@ export default function InquiryMessages({
 
       await Promise.all(
         unreadCustomerMessages.map((message) =>
-          fetch(apiUrl("/messages.php"), {
+          messagesRequest(apiUrl("/messages.php"), {
             method: "PATCH",
             headers: {
               "Content-Type": "application/json",
@@ -124,6 +129,7 @@ export default function InquiryMessages({
   |--------------------------------------------------------------------------
   */
   const sendMessage = async () => {
+    if (!window.localStorage.getItem("taklekkasjevakten_project_manager_session")) { setError("Administratorens forhåndsvisning er kun for lesing."); return; }
     const text = messageText.trim();
 
     if (!text || sending || sendingSms) return;
@@ -133,13 +139,14 @@ export default function InquiryMessages({
     setSuccessMessage("");
 
     try {
-      const res = await fetch(apiUrl("/messages.php"), {
+      const res = await messagesRequest(apiUrl("/messages.php"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           inquiry_id: inquiryId,
+          thread_id: [...messages].reverse().find((m) => m.thread_status === "open")?.thread_id,
           sender_type: "project_manager",
           sender_name: projectManagerName || "",
           recipient_type: "customer",

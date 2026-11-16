@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
+import { apiUrl } from "../lib/api";
 import { CalendarDays, CheckCircle2, Clock3 } from "lucide-react";
 
 type Proposal = {
   id: number;
+  offer_id?: number | string;
   version_no: number;
   proposed_start_date: string;
   estimated_duration: string;
@@ -17,8 +19,11 @@ type Props = {
   endpoint: string;
   previewMode?: boolean;
   compact?: boolean;
+  hideWhenEmpty?: boolean;
+  onPendingChange?: (pending: boolean) => void;
   onAgreementCreated?: () => void;
   onStatusChange?: () => void;
+  onApprovalChange?: (approved: boolean) => void;
   onOpenAgreement?: () => void;
 };
 
@@ -27,7 +32,7 @@ const dateLabel = (value: string) => {
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("nb-NO", { day: "numeric", month: "long", year: "numeric" }).format(date);
 };
 
-export default function CustomerAgreementSchedule({ inquiryId, sessionToken, endpoint, previewMode = false, compact = false, onAgreementCreated, onStatusChange, onOpenAgreement }: Props) {
+export default function CustomerAgreementSchedule({ inquiryId, sessionToken, endpoint, previewMode = false, compact = false, hideWhenEmpty = false, onPendingChange, onAgreementCreated, onStatusChange, onApprovalChange, onOpenAgreement }: Props) {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -35,6 +40,9 @@ export default function CustomerAgreementSchedule({ inquiryId, sessionToken, end
   const [message, setMessage] = useState("");
   const [note, setNote] = useState("");
   const [showChange, setShowChange] = useState(false);
+  const [documentAvailability, setDocumentAvailability] = useState<
+    "checking" | "ready" | "missing" | "error"
+  >("checking");
 
   async function load() {
     if ((!previewMode && !sessionToken) || inquiryId <= 0) { setLoading(false); return; }
@@ -44,9 +52,102 @@ export default function CustomerAgreementSchedule({ inquiryId, sessionToken, end
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.message || "Kunne ikke hente datoforslag.");
       const rows = (Array.isArray(data.proposals) ? data.proposals : []) as Proposal[];
-      setProposals([...rows].sort((a, b) => b.version_no - a.version_no || b.id - a.id));
+      const sorted = [...rows].sort((a, b) => b.version_no - a.version_no || b.id - a.id);
+      setProposals(sorted);
+      onApprovalChange?.(sorted[0]?.status === "approved");
+      onPendingChange?.(sorted[0]?.status === "pending_customer");
+
+      setDocumentAvailability("checking");
+
+      const latestByOffer = new Map<number, Proposal>();
+
+      for (const proposal of sorted) {
+        const offerId = Number(proposal.offer_id);
+
+        if (!Number.isSafeInteger(offerId) || offerId <= 0) {
+          continue;
+        }
+
+        const previous = latestByOffer.get(offerId);
+
+        if (
+          !previous ||
+          Number(proposal.version_no) > Number(previous.version_no)
+        ) {
+          latestByOffer.set(offerId, proposal);
+        }
+      }
+
+      const approvedOfferIds = [...latestByOffer.entries()]
+        .filter(([, proposal]) => proposal.status === "approved")
+        .map(([offerId]) => offerId);
+
+      if (approvedOfferIds.length === 0) {
+        setDocumentAvailability("missing");
+      } else {
+        try {
+          const overviewResponse = await fetch(
+            apiUrl("/customer_agreements_overview.php"),
+            {
+              method: "POST",
+              credentials: previewMode ? "include" : "omit",
+              cache: "no-store",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(
+                previewMode
+                  ? { inquiry_id: inquiryId, admin_preview: true }
+                  : { inquiry_id: inquiryId, session_token: sessionToken }
+              ),
+            }
+          );
+
+          const overview = await overviewResponse.json();
+
+          if (!overviewResponse.ok || overview.success !== true) {
+            throw new Error(
+              overview.message || "Kunne ikke kontrollere arbeidsavtalen."
+            );
+          }
+
+          const agreements = (
+            Array.isArray(overview.agreements)
+              ? overview.agreements
+              : []
+          ) as Array<{
+            offer_id: number | string;
+            document_sha256?: string | null;
+          }>;
+
+          const matching = agreements.filter(
+            agreement =>
+              approvedOfferIds.includes(Number(agreement.offer_id))
+          );
+
+          const matchedOffers = new Set(
+            matching.map(agreement => Number(agreement.offer_id))
+          );
+
+          if (matchedOffers.size > 1 || matching.length > 1) {
+            setDocumentAvailability("error");
+          } else if (
+            matching.length === 1 &&
+            matching[0].document_sha256
+          ) {
+            setDocumentAvailability("ready");
+          } else {
+            setDocumentAvailability("missing");
+          }
+        } catch (e) {
+          console.error("Kontroll av arbeidsavtale:", e);
+          setDocumentAvailability("error");
+        }
+      }
+
       setError("");
-    } catch (e) { setError(e instanceof Error ? e.message : "Kunne ikke hente dato."); }
+    } catch (e) {
+      onPendingChange?.(false);
+      setError(e instanceof Error ? e.message : "Kunne ikke hente dato.");
+    }
     finally { setLoading(false); }
   }
 
@@ -79,6 +180,8 @@ export default function CustomerAgreementSchedule({ inquiryId, sessionToken, end
   const approved = latest?.status === "approved";
   const wrapper = compact ? "mt-5 text-white" : "rounded-2xl border border-amber-500/30 bg-[#0b1422] p-5 text-white";
 
+  if (hideWhenEmpty && !loading && !error && !latest) return null;
+
   return (
     <section className={wrapper} data-start-date-pending={latest?.status === "pending_customer" ? "true" : undefined} aria-label="Oppstartsdato og varighet">
       {!compact && <h2 className="text-lg font-bold">Godkjenn oppstartsdato</h2>}
@@ -101,7 +204,7 @@ export default function CustomerAgreementSchedule({ inquiryId, sessionToken, end
           {latest.proposal_note && <p className="text-xs leading-5 text-slate-400">{latest.proposal_note}</p>}
           {previewMode ? (
             <div className="space-y-3">
-              <p className="text-xs font-semibold text-amber-200">{latest.status === "pending_customer" ? "Avventer kundens bekreftelse" : approved ? "Oppstart og varighet er bekreftet av kunden" : latest.status === "change_requested" ? "Kunden har bedt om endring" : `Status: ${latest.status}`}</p>
+              <p className="text-xs font-semibold text-amber-200">{latest.status === "pending_customer" ? "Avventer kundens bekreftelse" : approved ? null : latest.status === "change_requested" ? "Kunden har bedt om endring" : `Status: ${latest.status}`}</p>
               {latest.status === "pending_customer" && (
                 <div className="space-y-3">
                   <p className="text-[11px] leading-5 text-slate-400">Se gjennom oppstartsdatoen og forventet varighet. Velg om tidspunktet passer, eller be om en endring. Deretter kan du gå videre til arbeidsavtalen.</p>
@@ -122,7 +225,23 @@ export default function CustomerAgreementSchedule({ inquiryId, sessionToken, end
               )}
             </div>
           ) : approved ? (
-            <div className="space-y-3"><p className="flex items-start gap-2 text-xs font-bold text-emerald-300"><CheckCircle2 className="h-4 w-4 shrink-0" /> Oppstart og varighet bekreftet</p><button type="button" disabled={saving} onClick={() => void respond("retry_create", latest.id)} className="w-full rounded-lg border border-slate-600 px-3 py-2.5 text-xs text-slate-200 disabled:opacity-50">Kontroller arbeidsavtale</button>{onOpenAgreement && <button type="button" onClick={onOpenAgreement} className="w-full rounded-xl bg-amber-400 px-3 py-3 text-xs font-black text-slate-950">Gå videre til arbeidsavtalen</button>}</div>
+            <div className="space-y-3"><p className="flex items-start gap-2 text-xs font-bold text-emerald-300"><CheckCircle2 className="h-4 w-4 shrink-0" /> Oppstart og varighet bekreftet</p>{documentAvailability === "checking" && (
+  <p className="text-xs text-slate-300">
+    Kontrollerer arbeidsavtalen …
+  </p>
+)}
+{documentAvailability === "missing" && (
+  <p role="status" className="text-xs text-amber-200">
+    Oppstart er godkjent, men arbeidsavtalen er ikke klar ennå.
+    Kontakt oss dersom du trenger hjelp.
+  </p>
+)}
+{documentAvailability === "error" && (
+  <p role="alert" className="text-xs text-amber-200">
+    Vi kunne ikke kontrollere avtalen akkurat nå.
+    Prøv igjen senere eller kontakt oss.
+  </p>
+)}{documentAvailability === "ready" && onOpenAgreement && <button type="button" onClick={onOpenAgreement} className="w-full rounded-xl bg-amber-400 px-3 py-3 text-xs font-black text-slate-950">Les arbeidsavtalen</button>}</div>
           ) : <p className="text-xs text-amber-200">{latest.status === "change_requested" ? "Endring er etterspurt. Avventer nytt forslag." : `Status: ${latest.status}`}</p>}
         </div>
       )}

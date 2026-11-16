@@ -9,11 +9,12 @@ type Offer = {
   status?: string | null;
   offer_context?: string | null;
   pricing_mode?: string | null;
+  service?: string | null;
 };
 
-type Props = { inquiryId: number; onSaved: () => Promise<void> };
+type Props = { inquiryId: number; offerId?: number; previewMode?: boolean; onSaved: () => Promise<void> };
 
-export default function QuickAgreementPlanning({ inquiryId, onSaved }: Props) {
+export default function QuickAgreementPlanning({ inquiryId, offerId, previewMode = false, onSaved }: Props) {
   const [offer, setOffer] = useState<Offer | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -29,11 +30,11 @@ export default function QuickAgreementPlanning({ inquiryId, onSaved }: Props) {
     const load = async () => {
       try {
         const token = window.localStorage.getItem("taklekkasjevakten_project_manager_session");
-        if (!token) throw new Error("Prosjektleder må være innlogget for å planlegge arbeid.");
+        if (!previewMode && !token) throw new Error("Prosjektleder må være innlogget for å planlegge arbeid.");
         const response = await fetch(apiUrl(`/offers.php?inquiry_id=${inquiryId}&all=1`), {
           credentials: "include",
           cache: "no-store",
-          headers: { "X-TLV-PM-Session": token },
+          headers: previewMode ? {} : { "X-TLV-PM-Session": token || "" },
         });
         const data = await response.json();
         if (!response.ok || data.success !== true) {
@@ -44,8 +45,10 @@ export default function QuickAgreementPlanning({ inquiryId, onSaved }: Props) {
           .filter((item) =>
             Number(item.inquiry_id || inquiryId) === inquiryId &&
             String(item.status || "").toLowerCase() === "akseptert" &&
-            String(item.offer_context || "").toLowerCase() === "followup" &&
-            String(item.pricing_mode || "").toLowerCase() === "fixed"
+            String(item.pricing_mode || "").toLowerCase() === "fixed" &&
+            (String(item.offer_context || "").toLowerCase() === "followup" ||
+             String(item.service || "").toLowerCase() === "service") &&
+            (!offerId || Number(item.id) === offerId)
           )
           .sort((a, b) => Number(b.id) - Number(a.id))[0] || null;
         if (!accepted) throw new Error("Ingen akseptert fastprisavtale ble funnet for denne saken.");
@@ -58,22 +61,22 @@ export default function QuickAgreementPlanning({ inquiryId, onSaved }: Props) {
     };
     void load();
     return () => { cancelled = true; };
-  }, [inquiryId]);
+  }, [inquiryId, offerId, previewMode]);
 
   return (
     <section className="mt-4 rounded-2xl border border-amber-500/25 bg-[#1b1715] p-4 sm:p-5" aria-label="Planlegg arbeidsavtale">
       <h5 className="text-sm font-black text-white">Foreslå oppstartsdato</h5>
-      <p className="mt-1 text-xs text-slate-300">Forslaget sendes til styreleder for godkjenning før arbeidsavtalen opprettes.</p>
+      <p className="mt-1 text-xs text-slate-300">Forslaget sendes til kunden for godkjenning før arbeidsavtalen opprettes.</p>
       {loading && <p role="status" className="mt-3 text-xs text-slate-300">Kontrollerer tilbudet …</p>}
       {notice && <p role="status" className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-200">{notice}</p>}
-      {success && <p role="status" className="mt-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 p-3 text-xs text-emerald-200">Datoforslaget er registrert. Avventer styreleders godkjenning.</p>}
+      {success && <p role="status" className="mt-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 p-3 text-xs text-emerald-200">Datoforslaget er registrert. Avventer kundens godkjenning.</p>}
       {!loading && offer && !success && (
         <div className="mt-4">
-          <AgreementPlanning
+          <AgreementPlanning previewMode={previewMode}
             inquiryId={inquiryId}
             offerNumber={String(offer.offer_number || "")}
             onSubmit={async ({ start_date, estimated_duration }) => {
-              if (saving) return;
+              if (saving || previewMode) return;
               const token = window.localStorage.getItem("taklekkasjevakten_project_manager_session");
               if (!token) throw new Error("Prosjektlederinnlogging kreves.");
               setSaving(true);

@@ -1,3 +1,4 @@
+import { messageFetch } from "../../lib/messageApi";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
@@ -10,6 +11,9 @@ import {
   User,
 } from "lucide-react";
 import { apiUrl } from "../../lib/api";
+
+const messagesRequest = (url: string, init?: RequestInit) =>
+  messageFetch(url, init, window.localStorage.getItem("taklekkasjevakten_project_manager_session") ? "project_manager" : "admin");
 
 interface InquiryItem {
   id: number | string;
@@ -24,6 +28,7 @@ interface InquiryItem {
 interface MessageRow {
   id: number;
   thread_id: number;
+  thread_status?: string;
   inquiry_id: number;
   sender_type: "customer" | "admin" | "project_manager";
   sender_id?: number | null;
@@ -102,7 +107,7 @@ export default function ProjectManagerMessages({
           }
 
           try {
-            const res = await fetch(
+            const res = await messagesRequest(
               apiUrl(`/messages.php?inquiry_id=${inquiryId}`)
             );
             const data = await res.json();
@@ -244,7 +249,7 @@ export default function ProjectManagerMessages({
     try {
       await Promise.all(
         unreadMessages.map(async (message) => {
-          const res = await fetch(apiUrl("/messages.php"), {
+          const res = await messagesRequest(apiUrl("/messages.php"), {
             method: "PATCH",
             headers: {
               "Content-Type": "application/json",
@@ -312,6 +317,7 @@ export default function ProjectManagerMessages({
   };
 
   const sendMessage = async () => {
+    if (!window.localStorage.getItem("taklekkasjevakten_project_manager_session")) { setError("Administratorens forhåndsvisning er kun for lesing."); return; }
     if (!activeConversation) return;
 
     const text = messageText.trim();
@@ -327,13 +333,14 @@ export default function ProjectManagerMessages({
     setError("");
 
     try {
-      const res = await fetch(apiUrl("/messages.php"), {
+      const res = await messagesRequest(apiUrl("/messages.php"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           inquiry_id: inquiryId,
+          thread_id: [...activeConversation.messages].reverse().find((m) => m.thread_status === "open")?.thread_id,
           sender_type: "project_manager",
           sender_id: projectManagerId || undefined,
           sender_name: projectManagerName || undefined,

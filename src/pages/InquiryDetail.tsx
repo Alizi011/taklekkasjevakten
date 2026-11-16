@@ -1,11 +1,13 @@
 import AgreementPreviewButton from "@/components/AgreementPreviewButton";
 import AdminAgreementProgress from "../components/AdminAgreementProgress";
+import AdminAgreementSigningCaseNotice from "../components/AdminAgreementSigningCaseNotice";
 import { useEffect, useMemo, useState } from "react";
 import { 
   ArrowLeft,
   CalendarCheck,
   Clock3,
   Camera,
+  ChevronDown,
   CheckCircle2,
   Eye,
   FileText,
@@ -49,6 +51,11 @@ import AdminCaseContactEditor from "../components/AdminCaseContactEditor";
 import InquiryCommunicationLog from "../components/project-manager/InquiryCommunicationLog";
 import PropertyAndBuildingCase from "./PropertyAndBuildingCase";
 import BrregBoardAndSignature from "../components/BrregBoardAndSignature";
+import AdminInquiryPause from "../components/AdminInquiryPause";
+import AdminOfferDecision from "../components/AdminOfferDecision";
+import CasePhotoGallery from "../components/CasePhotoGallery";
+import CaseClosureControl from "../components/CaseClosureControl";
+import type { CoreCaseStatusView } from "../components/CoreCaseStatusBadge";
 export interface Inquiry {
   id: string;
   customer_id?: number | string | null;
@@ -98,6 +105,7 @@ interface BrregSearchResult {
 
 interface InquiryDetailProps {
   inquiry: Inquiry;
+  coreCaseStatus?: CoreCaseStatusView;
   onBack: () => void;
   onUpdateInquiry: (updated: Inquiry) => void;
   onPreviewCustomer?: (inquiryId: number) => void;
@@ -441,6 +449,7 @@ function DetailBlock({
 
 export default function InquiryDetail({
   inquiry,
+  coreCaseStatus = { state: "unavailable" },
   onBack,
   onUpdateInquiry,
   onPreviewCustomer,
@@ -778,8 +787,13 @@ export default function InquiryDetail({
     return () => controller.abort();
   }, [inquiryId]);
 
+  const [adminSignaturePending, setAdminSignaturePending] = useState(false);
   const [adminCaseTab, setAdminCaseTab] =
     useState<AdminCaseTab>("overview");
+  const [showBrregInline, setShowBrregInline] = useState(false);
+  const [showDocumentsInOverview, setShowDocumentsInOverview] = useState(false);
+  // Separate read-only tabs inside the existing case overview; do not switch adminCaseTab.
+  const [overviewInlineMedia, setOverviewInlineMedia] = useState<"overview" | "photos" | "report" | "offers" | "messages">("overview");
   const [rightPanelTab, setRightPanelTab] = useState<"process" | "activity" | "override" | "offers">("process");
   const [repairOfferTab, setRepairOfferTab] = useState<"akseptert" | "avvist" | "ovrige">("akseptert");
 
@@ -2281,7 +2295,7 @@ export default function InquiryDetail({
         fetch(apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)),
         fetch(apiUrl(`/photos.php?inquiry_id=${inquiryId}`)),
         fetch(apiUrl(`/reports.php?inquiry_id=${inquiryId}`)),
-        fetch(apiUrl(`/completion_reports.php?inquiry_id=${inquiryId}`)),
+        fetch(apiUrl(`/completion_reports.php?inquiry_id=${inquiryId}`), { credentials: "include" }),
       ]);
 
       const [checkData, photoData, reportData, completionData] =
@@ -2606,7 +2620,30 @@ export default function InquiryDetail({
     });
   };
 
-  const nextStepLabel = isFollowupDecided
+  const [adminPauseStatus, setAdminPauseStatus] = useState<{
+    inquiryId: number;
+    paused: boolean;
+    reason: string;
+    note: string;
+  } | null>(null);
+
+  const isAdminPaused =
+    adminPauseStatus?.inquiryId === Number(inquiry.id) &&
+    adminPauseStatus.paused === true;
+
+  const adminPauseReason = isAdminPaused
+    ? ({
+        insurance: "Avventer forsikring / ansvarsavklaring",
+        customer: "Avventer kunden",
+        third_parties: "Avventer andre involverte parter",
+        other: "Avventer videre avklaring",
+      } as Record<string, string>)[adminPauseStatus?.reason || ""] ||
+      "Avventer videre avklaring"
+    : "";
+
+  const nextStepLabel = isAdminPaused
+    ? "På vent – videre arbeid stanset"
+    : isFollowupDecided
     ? followupStageTitle
     : isReportPublished
     ? "Rapport 1 publisert – velg videre tiltak"
@@ -2624,7 +2661,9 @@ export default function InquiryDetail({
     ? "Opprett tilbud"
     : "Avklar neste steg";
 
-  const nextStepSubtitle = isFollowupDecided
+  const nextStepSubtitle = isAdminPaused
+    ? adminPauseReason
+    : isFollowupDecided
     ? followupStageDetail
     : isReportPublished
     ? "Oppfølgingsbeslutningen registreres i Perun Core."
@@ -2637,6 +2676,276 @@ export default function InquiryDetail({
       ? displayedSchedule
       : "Tidspunkt må avtales"
     : `Bestilt: ${orderedService}`;
+
+  const brregCaseTypes = [
+    String(inquiry.customer_type || "").trim().toLowerCase(),
+    String(customerProfileForm.customer_type || "").trim().toLowerCase(),
+  ].filter(Boolean);
+
+  const isExplicitPrivateCustomer = brregCaseTypes.some(type =>
+    /^(privatperson|privat|private|person)$/.test(type)
+  );
+
+  const showBrregTab =
+    !isExplicitPrivateCustomer &&
+    brregCaseTypes.some(type =>
+      /borettslag|sameie|bedrift|foretak|firma|aksjeselskap|organisasjon|næring|business|company|^as$|^asa$|b2b/.test(type)
+    );
+
+  const brregCaseOrgNumber = String(
+    brregOrgNumber ||
+    customerProfileForm.organization_number ||
+    overviewOrganizationNumber ||
+    ""
+  ).replace(/\s/g, "");
+  // Both placements share the existing offer data, cards and action handlers.
+  // Only the visible placement mounts invoice/agreement components.
+  const currentAcceptedOffer = caseOffers
+    .filter((item) => item.status === "akseptert")
+    .sort((a, b) => Number(b.offer_context === "followup") - Number(a.offer_context === "followup") || Number(b.id) - Number(a.id))[0];
+  const renderOfferHistory = (compact = false) => (
+          <section className={`rounded-2xl border border-rose-800/50 bg-[#2b111a] space-y-4 ${compact ? "min-w-0 p-3" : "p-5"}`}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-wide text-rose-300">Oppdragets tilbudshistorikk</p>
+                <h3 className="mt-1 text-base font-black text-white">Tilbud og avtaler</h3>
+                <p className="mt-1 text-xs text-rose-100/70">Hvert tilbud har sitt eget nummer og sin egen status. Den opprinnelige avtalen forblir historikk.</p>
+              </div>
+              {report?.status === "publisert" && <span className="rounded-lg border border-emerald-500/30 px-3 py-1.5 text-xs font-bold text-emerald-300">Rapport 1 publisert</span>}
+            </div>
+            {caseOffers.length === 0 ? (
+              <p className="text-xs text-slate-400">Ingen tilbud er registrert på saken.</p>
+            ) : (
+              <div className="space-y-5">
+                {(["initial", "followup"] as const).map((groupKey) => {
+                  const groupedOffers = caseOffers
+                    .filter((item) => groupKey === "followup"
+                      ? item.offer_context === "followup"
+                      : item.offer_context !== "followup")
+                    .sort((a, b) => Number(a.id) - Number(b.id));
+                  if (groupedOffers.length === 0) return null;
+                  const groupTitle = groupKey === "followup" ? "Utbedring" : orderedService;
+                  const Group = compact ? "details" : "section";
+                  const GroupHeading = compact ? "summary" : "div";
+                  return (
+                    <Group open={compact ? true : undefined} key={groupKey} className={`rounded-2xl border border-rose-800/40 bg-[#230e18] space-y-4 ${compact ? "min-w-0 p-3" : "p-4"}`}>
+                      <GroupHeading className={`flex flex-wrap items-center justify-between gap-2 border-b border-rose-800/40 pb-3 ${compact ? "cursor-pointer" : ""}`}>
+                        <div className="flex items-center gap-2">
+                          {groupKey === "followup" ? <Hammer className="h-5 w-5 text-amber-300" /> : <Search className="h-5 w-5 text-cyan-300" />}
+                          <h4 className="text-base font-black text-white">{groupKey === "followup" ? "2. " : "1. "}{groupTitle}</h4>
+                        </div>
+                        <span className="rounded-full border border-rose-700/50 bg-[#381724] px-3 py-1 text-[10px] font-bold text-rose-100">
+                          {groupedOffers.length} {groupedOffers.length === 1 ? "tilbud" : "tilbud/revisjoner"}
+                        </span>
+                        {compact && <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-rose-200" />}
+                      </GroupHeading>
+                      {!compact && groupKey === "followup" && (
+                        <div role="tablist" aria-label="Tilbudsstatus for utbedring" className="flex flex-wrap gap-2">
+                          {([
+                            { id: "akseptert", label: "Akseptert", count: groupedOffers.filter(item => item.status === "akseptert").length },
+                            { id: "avvist", label: "Avvist", count: groupedOffers.filter(item => item.status === "avvist").length },
+                            { id: "ovrige", label: "Øvrige", count: groupedOffers.filter(item => !["akseptert", "avvist"].includes(item.status)).length },
+                          ] as const).filter(tab => tab.id !== "ovrige" || tab.count > 0).map(tab => (
+                            <button key={tab.id} type="button" role="tab"
+                              aria-selected={repairOfferTab === tab.id}
+                              onClick={() => setRepairOfferTab(tab.id)}
+                              className={`rounded-xl border px-4 py-2.5 text-xs font-bold transition ${repairOfferTab === tab.id
+                                ? "border-amber-400/60 bg-amber-500/15 text-amber-200"
+                                : "border-rose-800/50 bg-[#170b12] text-rose-100/75 hover:border-amber-500/40"}`}>
+                              {tab.label} <span className="ml-1 opacity-70">({tab.count})</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div className={`grid gap-3 ${compact ? "" : "md:grid-cols-2"}`}>
+                        {groupedOffers.filter(item => compact || groupKey !== "followup" || (
+                          repairOfferTab === "ovrige"
+                            ? !["akseptert", "avvist"].includes(item.status)
+                            : item.status === repairOfferTab
+                        )).map(item => {
+                  const followup = item.offer_context === "followup";
+                  // DIRECT_OFFER_CARD_SAFETY_V1
+                  const directService =
+                    (item.offer_context || "initial") === "initial" &&
+                    item.service === "service" &&
+                    !item.source_report_id;
+                  const OfferCard = compact ? "details" : "div";
+                  const OfferHeading = compact ? "summary" : "div";
+                  return (
+                    <OfferCard key={item.id} open={compact && item.id === currentAcceptedOffer?.id ? true : undefined}
+                      className={`rounded-xl border bg-[#170b12] ${compact ? "min-w-0 break-words p-3" : "p-4"} ${compact && item.id === currentAcceptedOffer?.id ? "border-emerald-400/60" : "border-rose-800/40"}`}>
+                      <OfferHeading className={`flex items-start justify-between gap-3 ${compact ? "cursor-pointer" : ""}`}>
+                        <div>
+                          {compact && item.id === currentAcceptedOffer?.id && <p className="mb-1 text-[10px] font-bold text-emerald-300">Gjeldende akseptert tilbud</p>}
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-rose-300">{followup ? "Videre oppfølging" : "Opprinnelig tilbud"}</p>
+                          <p className="mt-1 text-sm font-extrabold text-white">{item.title}</p>
+                          <p className="mt-1 text-xs text-slate-300">{item.offer_number || `Internt tilbud #${item.id}`} · {item.status}</p><p className="mt-2 text-xs text-slate-400">{item.published_at || item.created_at || "Dato ikke registrert"}</p><p className="mt-1 text-xs font-bold text-white">{item.pricing_mode === "fixed" && Number(item.fixed_price ?? item.calculated_ex_vat) > 0 ? `kr ${Number(item.fixed_price ?? item.calculated_ex_vat).toLocaleString("nb-NO")} eks. mva.` : item.team_rate && Number(item.team_rate) > 0 ? `kr ${Number(item.team_rate).toLocaleString("nb-NO")} / time (team)` : "Se tilbud for pris"}</p>
+                        </div>
+                        {item.status === "akseptert" && <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-300" />}
+                        {compact && <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-rose-200" />}
+                      </OfferHeading>
+                      {/* DIRECT_OFFER_CARD_EDITOR_V3 */}
+<div className="mt-4 flex flex-wrap items-center gap-2">
+  {directService && item.status === "utkast" && (
+    Number(directDraftOffer?.id) === Number(item.id) ? (
+      <button
+        type="button"
+        onClick={() => setShowDirectOfferGenerator(true)}
+        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 text-xs font-bold text-cyan-200 hover:bg-cyan-500/20"
+      >
+        <FileText className="h-4 w-4" />
+        Rediger
+      </button>
+    ) : (
+      <span className="text-xs text-amber-300">
+        Redigering krever samsvarende tilbuds-ID.
+      </span>
+    )
+  )}
+
+  {item.pdf_url && (
+    <a
+      href={customerAttachmentUrl(item.pdf_url)}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-cyan-500/40 px-4 text-xs font-bold text-cyan-200 hover:bg-cyan-500/10"
+    >
+      <FileText className="h-4 w-4" />
+      Vis PDF
+    </a>
+  )}
+
+    {followup && item.pricing_mode === "fixed" &&
+    ["publisert", "akseptert"].includes(item.status) && (
+      <AgreementPreviewButton
+        inquiryId={inquiryId}
+        offer={item}
+        customerName={customerProfile?.name || inquiry.customer_name || inquiry.customerName}
+        address={inquiry.address}
+        customerOrgNumber={customerProfile?.organization_number || overviewOrganizationNumber || undefined}
+        customerPostalAddress={[
+          customerProfile?.address,
+          [customerProfile?.postal_code, customerProfile?.city]
+            .filter(Boolean).join(" ")
+        ].filter(Boolean).join(", ") || undefined}
+        customerPhone={customerProfile?.phone || inquiry.phone || undefined}
+        customerEmail={customerProfile?.email || inquiry.email || undefined}
+        customerContact={caseContactName || undefined}
+      />
+    )}
+
+
+
+  {/* DIRECT_OFFER_PUBLISH_CONTROL_V1 */}
+  {directService && directProcessOffer?.id === item.id && item.status === "utkast" && item.pdf_url && (
+    <div className="sm:ml-auto">
+      <DirectOfferPublishControl
+        offerId={Number(item.id)}
+        offerNumber={item.offer_number || `Tilbud #${item.id}`}
+        title={item.title || "Tilbud"}
+        amountLabel={
+          Number(item.fixed_price ?? item.calculated_ex_vat) > 0
+            ? `kr ${Number(item.fixed_price ?? item.calculated_ex_vat).toLocaleString("nb-NO")} eks. mva.`
+            : "Se PDF for avtalt pris"
+        }
+        pdfUrl={customerAttachmentUrl(item.pdf_url)}
+        onPublished={async () => {
+          await fetchOffer();
+        }}
+      />
+    </div>
+  )}
+  {followup && ["publisert", "avvist"].includes(item.status) && report?.status === "publisert" && (
+    <button type="button" disabled={revisionBusyId !== null}
+      onClick={() => void beginOfferRevision(item)}
+      className="inline-flex h-10 items-center justify-center rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 text-xs font-bold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50">
+      {revisionBusyId === item.id ? "Oppretter revisjon…" : "Opprett revisjon"}
+    </button>
+  )}</div>
+{item.status === "akseptert" && (
+  <StageInvoicing
+    inquiryId={inquiryId}
+    stageKey={followup
+      ? "varig_utbedring"
+      : item.service === "takkontroll"
+        ? "takkontroll"
+        : item.service === "service"
+          ? "service"
+          : "lekkasjesok"}
+  />
+)}
+
+                      {followup && item.status === "utkast" && report?.status === "publisert" && (
+                        <button type="button" onClick={() => {setFollowupOfferForGenerator(item);setShowFollowupOfferGenerator(true);}}
+                          className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/15 px-3 py-2 text-xs font-bold text-rose-100 hover:bg-rose-500/25">
+                          Rediger / kontroller og publiser →
+                        </button>
+                      )}
+                    </OfferCard>
+                  );
+                        })}
+                        {!compact && groupKey === "followup" && !groupedOffers.some(item => repairOfferTab === "ovrige"
+                          ? !["akseptert", "avvist"].includes(item.status)
+                          : item.status === repairOfferTab) && (
+                          <p className="col-span-full rounded-xl border border-rose-800/30 bg-[#170b12] p-4 text-xs text-rose-100/70">
+                            Ingen tilbud med denne statusen.
+                          </p>
+                        )}
+                      </div>
+                    </Group>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+  );
+
+  // ADMIN_CASE_INLINE_MESSAGES_V1: one shared message view, mounted in only one location.
+  const renderCaseMessages = () => (
+        <div
+          id="messages"
+          className="scroll-mt-6 space-y-4"
+        >
+          <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-800 bg-[#1b0b12] p-2">
+            <button
+              type="button"
+              onClick={() => setCommunicationView("messages")}
+              className={`rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${
+                communicationView === "messages"
+                  ? "bg-[#F5B800] text-slate-950"
+                  : "text-slate-400 hover:bg-slate-900 hover:text-white"
+              }`}
+            >
+              Samtaler
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setCommunicationView("log")}
+              className={`rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${
+                communicationView === "log"
+                  ? "bg-[#F5B800] text-slate-950"
+                  : "text-slate-400 hover:bg-slate-900 hover:text-white"
+              }`}
+            >
+              Kommunikasjonslogg
+            </button>
+          </div>
+
+          {communicationView === "messages" ? (
+            <InquiryMessages
+              inquiryId={inquiryId}
+              projectManagerName={
+                currentProjectManager?.name ||
+                inquiry.assigned_to ||
+                null
+              }
+            />
+          ) : (
+            <InquiryCommunicationLog inquiryId={inquiryId} />
+          )}
+        </div>
+  );
 
   return (
     <div className="min-h-screen bg-[#200910] text-white p-4 md:p-8">
@@ -3074,6 +3383,11 @@ export default function InquiryDetail({
           </div>
         </div>
 
+        <AdminAgreementSigningCaseNotice
+          inquiryId={inquiryId}
+          onPendingChange={setAdminSignaturePending}
+          onOpenAgreement={() => setAdminCaseTab("offer")}
+        />
         {adminCaseTab !== "overview" && (
           <nav aria-label="Saksnavigasjon" className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-700/50 bg-[#17111e] p-3">
             <button type="button" onClick={() => setAdminCaseTab("overview")}
@@ -3138,11 +3452,202 @@ export default function InquiryDetail({
               </div>
               <div className="overflow-hidden rounded-2xl border border-slate-700/70 bg-[#171020]">
                 <div className="flex flex-wrap gap-1 border-b border-slate-700/70 p-2" role="tablist" aria-label="Snarveier for saken">
-                  {([{ label:"Oversikt",icon:Building2,action:()=>setAdminCaseTab("overview") },{ label:"Dokumenter",icon:FileText,action:()=>setAdminCaseTab("documents") },{ label:"Bilder",icon:Camera,action:()=>setAdminCaseTab("field") },{ label:"Rapport",icon:FileCheck2,action:()=>setAdminCaseTab("reports") },{ label:"Tilbud",icon:ClipboardList,action:()=>setAdminCaseTab("offer") },{ label:"Meldinger",icon:Mail,action:openCustomerMessages }] as const).map(tab => <button key={tab.label} type="button" onClick={tab.action} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-200"><tab.icon className="h-4 w-4" />{tab.label}</button>)}
+                  {([{ label:"Oversikt",icon:Building2,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("overview"); setShowBrregInline(false); } },{ label:"Dokumenter",icon:FileText,action:()=>{ setShowDocumentsInOverview(true); setOverviewInlineMedia("overview"); setShowBrregInline(false); } },{ label:"Bilder",icon:Camera,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("photos"); setShowBrregInline(false); } },{ label:"Rapport",icon:FileCheck2,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("report"); setShowBrregInline(false); } },{ label:"Tilbud",icon:ClipboardList,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("offers"); setShowBrregInline(false); } },{ label:"Meldinger",icon:Mail,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("messages"); setShowBrregInline(false); setCommunicationView("messages"); } }] as const).map(tab => <button key={tab.label} type="button" onClick={tab.action} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-200"><tab.icon className="h-4 w-4" />{tab.label}</button>)}
+                  {showBrregTab && (
+                    <button type="button" onClick={() => setShowBrregInline(value => !value)}
+                      className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-200">
+                      <Building2 className="h-4 w-4" />BRREG
+                    </button>
+                  )}
                 </div>
-                <div className="grid gap-3 p-4 md:grid-cols-2">
-                  <div className="rounded-xl border border-slate-700/70 bg-slate-950/40 p-4"><div className="flex items-center justify-between"><h3 className="text-sm font-bold">Siste dokumenter</h3><button type="button" onClick={() => setAdminCaseTab("documents")} className="text-xs font-semibold text-cyan-300">Vis alle →</button></div><div className="mt-4 space-y-2">{report && <button type="button" onClick={() => setAdminCaseTab("reports")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" />Rapport 1 · {reportStatusLabel(report.status)}</button>}{caseOffers.slice().sort((a,b)=>b.id-a.id).slice(0,2).map(o=><button type="button" key={o.id} onClick={() => setAdminCaseTab("offer")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" /><span className="min-w-0 truncate">{o.offer_number || `Tilbud #${o.id}`} · {o.status}</span></button>)}{!report && caseOffers.length===0 && <p className="text-xs text-slate-400">Ingen dokumenter registrert</p>}</div></div>
-                  <div className="rounded-xl border border-slate-700/70 bg-slate-950/40 p-4"><div className="flex items-center justify-between"><h3 className="text-sm font-bold">Siste bilder fra saken</h3><button type="button" onClick={() => setAdminCaseTab("field")} className="text-xs font-semibold text-cyan-300">Vis alle →</button></div>{photos.length ? <div className="mt-4 grid grid-cols-3 gap-2">{photos.filter(p=>Boolean(p.photo_url)).slice(0,6).map(p=><button type="button" key={p.id} onClick={() => setAdminCaseTab("field")} className="aspect-square overflow-hidden rounded-lg border border-slate-700 bg-slate-900"><img src={apiAssetUrl(p.photo_url)} alt={p.caption_text || "Feltbilde"} className="h-full w-full object-cover" loading="lazy" /></button>)}</div> : <p className="mt-4 text-xs text-slate-400">Ingen feltbilder registrert</p>}</div>
+        {showBrregInline && showBrregTab && (
+          <section className="rounded-2xl border border-slate-800 bg-[#171020] p-5 space-y-4">
+            <div>
+              <h2 className="text-lg font-black text-white">
+                BRREG – styre og signaturrett
+              </h2>
+              <p className="mt-1 text-xs text-slate-400">
+                Registrerte rolleopplysninger gir ikke automatisk signaturfullmakt.
+              </p>
+            </div>
+            {/^\d{9}$/.test(brregCaseOrgNumber) ? (
+              <BrregBoardAndSignature orgnr={brregCaseOrgNumber} />
+            ) : (
+              <p className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 text-sm text-amber-200">
+                Organisasjonsnummer mangler eller er ugyldig. Kontroller kundeopplysningene.
+              </p>
+            )}
+          </section>
+        )}
+                {showDocumentsInOverview && !showBrregInline && (
+                  <section className="space-y-4 p-4" aria-label="Dokumenter i saksoversikten">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="flex items-center gap-2 text-sm font-extrabold text-white">
+                          <FileText className="h-4 w-4 text-cyan-300" /> Dokumenter for sak #{inquiry.id}
+                        </h3>
+                        <p className="mt-1 text-xs text-slate-400">Rapporter, tilbud og dokumenter sendt inn av kunden.</p>
+                      </div>
+                      <button type="button" onClick={() => setShowDocumentsInOverview(false)}
+                        className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800">
+                        Tilbake til oversikt
+                      </button>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="min-w-0 space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
+                        <h4 className="text-xs font-bold text-slate-100">Rapporter</h4>
+                        {report ? (
+                          <div className="space-y-2 rounded-lg border border-white/10 p-3 text-xs text-slate-200">
+                            <p className="font-semibold">Rapport 1 · {reportStatusLabel(report.status)}</p>
+                            {report.pdf_url ? (
+                              <a href={customerAttachmentUrl(report.pdf_url)} target="_blank" rel="noopener noreferrer"
+                                className="inline-flex items-center gap-2 text-cyan-300 hover:underline"><FileText className="h-4 w-4" /> Åpne Rapport 1 (PDF)</a>
+                            ) : <p className="text-slate-400">Ingen PDF tilgjengelig.</p>}
+                          </div>
+                        ) : <p className="text-xs text-slate-400">Ingen Rapport 1 registrert.</p>}
+                        {completionReport && (
+                          <div className="space-y-2 rounded-lg border border-white/10 p-3 text-xs text-slate-200">
+                            <p className="font-semibold">Rapport 2 · {reportStatusLabel(completionReport.status || undefined)}</p>
+                            {completionReport.pdf_url ? (
+                              <a href={customerAttachmentUrl(completionReport.pdf_url)} target="_blank" rel="noopener noreferrer"
+                                className="inline-flex items-center gap-2 text-cyan-300 hover:underline"><FileText className="h-4 w-4" /> Åpne Rapport 2 (PDF)</a>
+                            ) : <p className="text-slate-400">Ingen PDF tilgjengelig.</p>}
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0 space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
+                        <h4 className="text-xs font-bold text-slate-100">Tilbud og avtaler ({caseOffers.length})</h4>
+                        {caseOffers.length === 0 ? <p className="text-xs text-slate-400">Ingen tilbud registrert.</p> :
+                          [...caseOffers].sort((a, b) => b.id - a.id).map(item => (
+                            <div key={item.id} className="space-y-1 rounded-lg border border-white/10 p-3 text-xs text-slate-200">
+                              <p className="break-words font-semibold">{item.offer_number || `Tilbud #${item.id}`} · {item.status}</p>
+                              <p className="break-words text-slate-400">{item.title}</p>
+                              {item.pdf_url ? <a href={customerAttachmentUrl(item.pdf_url)} target="_blank" rel="noopener noreferrer"
+                                className="inline-flex items-center gap-2 text-cyan-300 hover:underline"><FileText className="h-4 w-4" /> Åpne tilbud (PDF)</a> :
+                                <p className="text-slate-400">Ingen PDF tilgjengelig.</p>}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                    <div className="space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
+                      <h4 className="text-xs font-bold text-slate-100">Kundens dokumentvedlegg</h4>
+                      {loadingPreinspection ? <p className="text-xs text-slate-400">Henter vedlegg …</p> :
+                        preinspectionError ? <p role="alert" className="text-xs text-amber-200">{preinspectionError}</p> :
+                        preinspectionFiles.filter(file => !isCustomerImage(file)).length === 0 ?
+                          <p className="text-xs text-slate-400">Ingen dokumentvedlegg registrert i kundeskjemaet.</p> :
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {preinspectionFiles.filter(file => !isCustomerImage(file)).map(file => (
+                              <CustomerAttachment key={file.id} file={file} />
+                            ))}
+                          </div>}
+                    </div>
+                  </section>
+                )}
+                {overviewInlineMedia === "photos" && !showBrregInline && !showDocumentsInOverview && (
+                  <section className="space-y-4 p-4" aria-label="Bilder i saksoversikten">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="flex items-center gap-2 text-sm font-extrabold text-white"><Camera className="h-4 w-4 text-cyan-300" /> Bilder fra sak #{inquiry.id}</h3>
+                        <p className="mt-1 text-xs text-slate-400">Feltbilder og bilder kunden har lagt ved.</p>
+                      </div>
+                      <button type="button" onClick={() => setOverviewInlineMedia("overview")} className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800">Tilbake til oversikt</button>
+                    </div>
+                    <div className="space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
+                      <h4 className="text-xs font-bold text-slate-100">Feltbilder ({photos.filter(photo => Boolean(photo.photo_url)).length})</h4>
+                      {loadingFieldStatus ? <p className="text-xs text-slate-400">Henter feltbilder …</p> :
+                        photos.filter(photo => Boolean(photo.photo_url)).length === 0 ? <p className="text-xs text-slate-400">Ingen feltbilder registrert.</p> :
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                          {photos.filter(photo => Boolean(photo.photo_url)).map(photo => (
+                            <a key={photo.id} href={apiAssetUrl(photo.photo_url)} target="_blank" rel="noopener noreferrer"
+                              className="group min-w-0 overflow-hidden rounded-xl border border-slate-700 bg-slate-950/70 hover:border-cyan-500/50">
+                              <img src={apiAssetUrl(photo.photo_url)} alt={photo.caption_text || `Feltbilde ${photo.id}`} loading="lazy" className="h-44 w-full object-cover" />
+                              <p className="break-words p-3 text-xs text-slate-300">{photo.caption_text || `Bilde #${photo.id}`}</p>
+                            </a>
+                          ))}
+                        </div>}
+                    </div>
+                    <div className="space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
+                      <h4 className="text-xs font-bold text-slate-100">Bilder sendt inn av kunden</h4>
+                      {loadingPreinspection ? <p className="text-xs text-slate-400">Henter kundevedlegg …</p> :
+                        preinspectionError ? <p role="alert" className="text-xs text-amber-200">{preinspectionError}</p> :
+                        preinspectionFiles.filter(isCustomerImage).length === 0 ? <p className="text-xs text-slate-400">Ingen bilder fra kundeskjemaet.</p> :
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                          {preinspectionFiles.filter(isCustomerImage).map(file => <CustomerAttachment key={file.id} file={file} />)}
+                        </div>}
+                    </div>
+                  </section>
+                )}
+                {overviewInlineMedia === "report" && !showBrregInline && !showDocumentsInOverview && (
+                  <section className="space-y-4 p-4" aria-label="Rapporter i saksoversikten">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="flex items-center gap-2 text-sm font-extrabold text-white"><FileCheck2 className="h-4 w-4 text-cyan-300" /> Rapporter for sak #{inquiry.id}</h3>
+                        <p className="mt-1 text-xs text-slate-400">Skrivebeskyttet status og PDF-visning i samme panel.</p>
+                      </div>
+                      <button type="button" onClick={() => setOverviewInlineMedia("overview")} className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800">Tilbake til oversikt</button>
+                    </div>
+                    {loadingFieldStatus ? <p className="text-xs text-slate-400">Henter rapporter …</p> : (
+                      <div className="space-y-4">
+                        {([ { key: "rapport-1", label: "Rapport 1 – Teknisk rapport", data: report }, { key: "rapport-2", label: "Rapport 2 – Utførelsesrapport", data: completionReport } ] as const).map(item => (
+                          <article key={item.key} className="space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <h4 className="text-sm font-bold text-white">{item.label}</h4>
+                              <span className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300">{item.data ? reportStatusLabel(item.data.status || undefined) : "Ikke registrert"}</span>
+                            </div>
+                            {!item.data ? <p className="text-xs text-slate-400">Rapporten er ikke opprettet.</p> :
+                              item.data.pdf_url ? (
+                                <div className="space-y-2">
+                                  <iframe src={customerAttachmentUrl(item.data.pdf_url)} title={`${item.label} for sak ${inquiry.id}`} loading="lazy" className="h-[520px] w-full rounded-lg border border-slate-700 bg-white" />
+                                  <a href={customerAttachmentUrl(item.data.pdf_url)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-xs font-semibold text-cyan-300 hover:underline"><FileText className="h-4 w-4" /> Åpne PDF i egen fane</a>
+                                </div>
+                              ) : <p className="text-xs text-slate-400">Rapportstatus er tilgjengelig, men PDF er ikke opprettet ennå.</p>}
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                )}
+                {overviewInlineMedia === "offers" && !showBrregInline && !showDocumentsInOverview && (
+                  <section className="min-w-0 space-y-4 p-4" aria-label="Tilbud og avtaler i saksoversikten">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="flex items-center gap-2 text-sm font-extrabold text-white">
+                          <ClipboardList className="h-4 w-4 text-cyan-300" /> Tilbud og avtaler for sak #{inquiry.id}
+                        </h3>
+                        <p className="mt-1 text-xs text-slate-400">Eksisterende tilbud, revisjoner, PDF-er og avtalefunksjoner vises her i saksoversikten.</p>
+                      </div>
+                      <button type="button" onClick={() => setOverviewInlineMedia("overview")}
+                        className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800">
+                        Tilbake til oversikt
+                      </button>
+                    </div>
+                    {loadingOffer ? (
+                      <p className="text-xs text-slate-400">Henter tilbud …</p>
+                    ) : (
+                      <div className="min-w-0">{renderOfferHistory()}</div>
+                    )}
+                  </section>
+                )}
+                {overviewInlineMedia === "messages" && !showBrregInline && !showDocumentsInOverview && (
+                  <section className="min-w-0 space-y-4 p-4" aria-label="Meldinger i saksoversikten">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="flex items-center gap-2 text-sm font-extrabold text-white">
+                          <Mail className="h-4 w-4 text-cyan-300" /> Meldinger for sak #{inquiry.id}
+                        </h3>
+                        <p className="mt-1 text-xs text-slate-400">Samtaler og kommunikasjonslogg for denne saken vises her.</p>
+                      </div>
+                      <button type="button" onClick={() => setOverviewInlineMedia("overview")}
+                        className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800">
+                        Tilbake til oversikt
+                      </button>
+                    </div>
+                    {renderCaseMessages()}
+                  </section>
+                )}
+                <div className={showBrregInline || showDocumentsInOverview || overviewInlineMedia !== "overview" ? "hidden" : "grid gap-3 p-4 md:grid-cols-2"}>
+                  <div className="rounded-xl border border-slate-700/70 bg-slate-950/40 p-4"><div className="flex items-center justify-between"><h3 className="text-sm font-bold">Siste dokumenter</h3><button type="button" onClick={() => { setShowDocumentsInOverview(true); setShowBrregInline(false); }} className="text-xs font-semibold text-cyan-300">Vis alle →</button></div><div className="mt-4 space-y-2">{report && <button type="button" onClick={() => setAdminCaseTab("reports")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" />Rapport 1 · {reportStatusLabel(report.status)}</button>}{caseOffers.slice().sort((a,b)=>b.id-a.id).slice(0,2).map(o=><button type="button" key={o.id} onClick={() => setAdminCaseTab("offer")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" /><span className="min-w-0 truncate">{o.offer_number || `Tilbud #${o.id}`} · {o.status}</span></button>)}{!report && caseOffers.length===0 && <p className="text-xs text-slate-400">Ingen dokumenter registrert</p>}</div></div>
+                  <CasePhotoGallery key={inquiryId} images={photos.filter((photo) => Boolean(photo.photo_url)).map((photo) => ({ id: photo.id, src: apiAssetUrl(photo.photo_url), caption: photo.caption_text }))} />
                 </div>
               </div>
             </div>
@@ -3163,8 +3668,37 @@ export default function InquiryDetail({
                   </button>
                 ))}
               </div>
-              {rightPanelTab === "process" && (
+              <div className={rightPanelTab === "override" ? "" : "hidden"}>
+                <AdminInquiryPause
+                  inquiryId={Number(inquiry.id)}
+                  endpoint={apiUrl("/admin_inquiry_pause.php")}
+                  onPauseChange={(paused, reason, note) =>
+                    setAdminPauseStatus({
+                      inquiryId: Number(inquiry.id),
+                      paused,
+                      reason,
+                      note,
+                    })
+                  }
+                />
+              </div>
+              {adminCaseTab === "overview" && rightPanelTab === "process" && (
                 <div role="tabpanel">
+                  {isAdminPaused && (
+                    <div role="status" className="mb-4 rounded-xl border-2 border-amber-400/50 bg-amber-400/10 p-4">
+                      <p className="text-sm font-black text-amber-200">
+                        Oppdraget er satt på vent
+                      </p>
+                      <p className="mt-2 text-xs text-slate-200">
+                        {adminPauseReason}
+                      </p>
+                      {adminPauseStatus?.note && (
+                        <p className="mt-2 whitespace-pre-wrap text-xs text-slate-300">
+                          {adminPauseStatus.note}
+                        </p>
+                      )}
+                    </div>
+                  )}
 {directProcessOffer ? (
   <DirectOfferCaseProcess
     offer={directProcessOffer}
@@ -3192,22 +3726,7 @@ export default function InquiryDetail({
                 
   </>
 )}
-</div>
-              )}
-              {rightPanelTab === "activity" && (
-                <div role="tabpanel">
-              <section className="rounded-2xl border border-slate-700/60 bg-[#17111d] p-4 md:p-5">
-                <h2 className="text-sm font-black text-white">Siste aktivitet</h2>
-                <div className="mt-3 divide-y divide-white/10">
-                  {latestCaseReport && <button type="button" onClick={() => setAdminCaseTab("reports")} className="flex w-full items-start justify-between gap-3 py-3 text-left hover:text-cyan-300"><span className="flex items-start gap-3"><FileCheck2 className="mt-0.5 h-4 w-4 text-emerald-300" /><span><span className="block text-xs font-bold">{caseReportType} – {reportStatusLabel(latestCaseReport.status || undefined)}</span><span className="mt-1 block text-[11px] text-slate-400">Åpne rapport og godkjenning</span></span></span><span className="shrink-0 text-[10px] text-slate-500">{caseReportUpdatedLabel || ""}</span></button>}
-                  {caseOffers.slice().sort((a,b) => Number(b.id)-Number(a.id)).slice(0,3).map(item => <button key={item.id} type="button" onClick={() => { setAdminCaseTab("offer"); if (item.offer_context === "followup" && item.status === "utkast") { setFollowupOfferForGenerator(item); setShowFollowupOfferGenerator(true); } }} className="flex w-full items-start justify-between gap-3 py-3 text-left hover:text-cyan-300"><span className="flex items-start gap-3"><FileText className="mt-0.5 h-4 w-4 text-cyan-300" /><span><span className="block text-xs font-bold">{item.offer_context === "followup" ? "Oppfølgingstilbud" : "Opprinnelig tilbud"} · {item.status}</span><span className="mt-1 block text-[11px] text-slate-400">{item.offer_number || `Internt tilbud #${item.id}`}</span></span></span><span className="shrink-0 text-[10px] text-slate-500">{item.created_at ? formatDate(item.created_at.slice(0,10)) : ""}</span></button>)}
-                  {(inquiry.created_at || inquiry.createdAt) && <div className="flex items-start justify-between gap-3 py-3"><span className="flex items-start gap-3"><ClipboardList className="mt-0.5 h-4 w-4 text-slate-400" /><span className="text-xs font-bold">Sak registrert</span></span><span className="text-[10px] text-slate-500">{formatDate(String(inquiry.created_at || inquiry.createdAt).slice(0,10))}</span></div>}
-                </div>
-              </section>
-                </div>
-              )}
-              {rightPanelTab === "offers" && (
-                <section role="tabpanel" className="space-y-4">
+                  <div className="mt-6 space-y-4 border-t border-white/10 pt-5">
                   {(() => {
                     const acceptedRepairs = caseOffers
                       .filter(item => item.offer_context === "followup" && item.status === "akseptert")
@@ -3237,13 +3756,48 @@ export default function InquiryDetail({
                       </>
                     ) : (
                       <div className="space-y-3">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-cyan-300">Tilbud og avtaler</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-cyan-300">Avtaleoppfølging</p>
                         <p className="text-sm font-bold text-white">Ingen akseptert utbedringstilbud registrert</p>
                         <p className="text-xs text-slate-400">{caseOffers.length} tilbud i historikken. Avtaleoppfølging aktiveres når et utbedringstilbud er akseptert.</p>
                         <button type="button" onClick={() => setAdminCaseTab("offer")} className="text-xs font-bold text-cyan-300 hover:underline">Åpne tilbudshistorikk →</button>
                       </div>
                     );
                   })()}
+                  </div>
+                  <CaseClosureControl key={inquiryId} inquiryId={inquiryId} coreStatus={coreCaseStatus} offers={caseOffers} pendingAdminSignature={adminSignaturePending} />
+</div>
+              )}
+              {rightPanelTab === "activity" && (
+                <div role="tabpanel">
+              <section className="rounded-2xl border border-slate-700/60 bg-[#17111d] p-4 md:p-5">
+                <h2 className="text-sm font-black text-white">Siste aktivitet</h2>
+                <div className="mt-3 divide-y divide-white/10">
+                  {latestCaseReport && <button type="button" onClick={() => setAdminCaseTab("reports")} className="flex w-full items-start justify-between gap-3 py-3 text-left hover:text-cyan-300"><span className="flex items-start gap-3"><FileCheck2 className="mt-0.5 h-4 w-4 text-emerald-300" /><span><span className="block text-xs font-bold">{caseReportType} – {reportStatusLabel(latestCaseReport.status || undefined)}</span><span className="mt-1 block text-[11px] text-slate-400">Åpne rapport og godkjenning</span></span></span><span className="shrink-0 text-[10px] text-slate-500">{caseReportUpdatedLabel || ""}</span></button>}
+                  {caseOffers.slice().sort((a,b) => Number(b.id)-Number(a.id)).slice(0,3).map(item => <button key={item.id} type="button" onClick={() => { setAdminCaseTab("offer"); if (item.offer_context === "followup" && item.status === "utkast") { setFollowupOfferForGenerator(item); setShowFollowupOfferGenerator(true); } }} className="flex w-full items-start justify-between gap-3 py-3 text-left hover:text-cyan-300"><span className="flex items-start gap-3"><FileText className="mt-0.5 h-4 w-4 text-cyan-300" /><span><span className="block text-xs font-bold">{item.offer_context === "followup" ? "Oppfølgingstilbud" : "Opprinnelig tilbud"} · {item.status}</span><span className="mt-1 block text-[11px] text-slate-400">{item.offer_number || `Internt tilbud #${item.id}`}</span></span></span><span className="shrink-0 text-[10px] text-slate-500">{item.created_at ? formatDate(item.created_at.slice(0,10)) : ""}</span></button>)}
+                  {(inquiry.created_at || inquiry.createdAt) && <div className="flex items-start justify-between gap-3 py-3"><span className="flex items-start gap-3"><ClipboardList className="mt-0.5 h-4 w-4 text-slate-400" /><span className="text-xs font-bold">Sak registrert</span></span><span className="text-[10px] text-slate-500">{formatDate(String(inquiry.created_at || inquiry.createdAt).slice(0,10))}</span></div>}
+                </div>
+              </section>
+                </div>
+              )}
+              {adminCaseTab === "overview" && rightPanelTab === "offers" && (
+                <section role="tabpanel" className="space-y-4">
+                  {renderOfferHistory(true)}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-black text-amber-300">
+                      Administrativ godkjenning
+                    </h3>
+                    {caseOffers
+                      .filter((item) => ["publisert", "akseptert"].includes(item.status))
+                      .sort((a, b) => Number(b.id) - Number(a.id))
+                      .map((item) => (
+                        <AdminOfferDecision
+                          key={item.id}
+                          inquiryId={Number(inquiryId)}
+                          offer={item}
+                          onUpdated={fetchOffer}
+                        />
+                      ))}
+                  </div>
                   {quickReminderTemplate && !isReportPublished && (
                     <button type="button" onClick={() => void sendQuickReminder()} disabled={sendingQuickReminder}
                       className="text-xs font-bold text-amber-300 hover:underline disabled:opacity-40">
@@ -3255,6 +3809,7 @@ export default function InquiryDetail({
               )}
               {rightPanelTab === "override" && (
                 <div role="tabpanel">
+
         {inquiry.stage !== "digital_befaring" &&
           ["lekkasjesok", "takkontroll", "service"].includes(
             String(
@@ -4288,191 +4843,12 @@ export default function InquiryDetail({
           )}
         </section>
 
-        {adminCaseTab === "offer" && (
-          <section className="rounded-2xl border border-rose-800/50 bg-[#2b111a] p-5 space-y-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-wide text-rose-300">Oppdragets tilbudshistorikk</p>
-                <h3 className="mt-1 text-base font-black text-white">Tilbud og avtaler</h3>
-                <p className="mt-1 text-xs text-rose-100/70">Hvert tilbud har sitt eget nummer og sin egen status. Den opprinnelige avtalen forblir historikk.</p>
-              </div>
-              {report?.status === "publisert" && <span className="rounded-lg border border-emerald-500/30 px-3 py-1.5 text-xs font-bold text-emerald-300">Rapport 1 publisert</span>}
-            </div>
-            {caseOffers.length === 0 ? (
-              <p className="text-xs text-slate-400">Ingen tilbud er registrert på saken.</p>
-            ) : (
-              <div className="space-y-5">
-                {(["initial", "followup"] as const).map((groupKey) => {
-                  const groupedOffers = caseOffers
-                    .filter((item) => groupKey === "followup"
-                      ? item.offer_context === "followup"
-                      : item.offer_context !== "followup")
-                    .sort((a, b) => Number(a.id) - Number(b.id));
-                  if (groupedOffers.length === 0) return null;
-                  const groupTitle = groupKey === "followup" ? "Utbedring" : orderedService;
-                  return (
-                    <section key={groupKey} className="rounded-2xl border border-rose-800/40 bg-[#230e18] p-4 space-y-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rose-800/40 pb-3">
-                        <div className="flex items-center gap-2">
-                          {groupKey === "followup" ? <Hammer className="h-5 w-5 text-amber-300" /> : <Search className="h-5 w-5 text-cyan-300" />}
-                          <h4 className="text-base font-black text-white">{groupKey === "followup" ? "2. " : "1. "}{groupTitle}</h4>
-                        </div>
-                        <span className="rounded-full border border-rose-700/50 bg-[#381724] px-3 py-1 text-[10px] font-bold text-rose-100">
-                          {groupedOffers.length} {groupedOffers.length === 1 ? "tilbud" : "tilbud/revisjoner"}
-                        </span>
-                      </div>
-                      {groupKey === "followup" && (
-                        <div role="tablist" aria-label="Tilbudsstatus for utbedring" className="flex flex-wrap gap-2">
-                          {([
-                            { id: "akseptert", label: "Akseptert", count: groupedOffers.filter(item => item.status === "akseptert").length },
-                            { id: "avvist", label: "Avvist", count: groupedOffers.filter(item => item.status === "avvist").length },
-                            { id: "ovrige", label: "Øvrige", count: groupedOffers.filter(item => !["akseptert", "avvist"].includes(item.status)).length },
-                          ] as const).filter(tab => tab.id !== "ovrige" || tab.count > 0).map(tab => (
-                            <button key={tab.id} type="button" role="tab"
-                              aria-selected={repairOfferTab === tab.id}
-                              onClick={() => setRepairOfferTab(tab.id)}
-                              className={`rounded-xl border px-4 py-2.5 text-xs font-bold transition ${repairOfferTab === tab.id
-                                ? "border-amber-400/60 bg-amber-500/15 text-amber-200"
-                                : "border-rose-800/50 bg-[#170b12] text-rose-100/75 hover:border-amber-500/40"}`}>
-                              {tab.label} <span className="ml-1 opacity-70">({tab.count})</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      <div className="grid gap-3 md:grid-cols-2">
-                        {groupedOffers.filter(item => groupKey !== "followup" || (
-                          repairOfferTab === "ovrige"
-                            ? !["akseptert", "avvist"].includes(item.status)
-                            : item.status === repairOfferTab
-                        )).map(item => {
-                  const followup = item.offer_context === "followup";
-                  // DIRECT_OFFER_CARD_SAFETY_V1
-                  const directService =
-                    (item.offer_context || "initial") === "initial" &&
-                    item.service === "service" &&
-                    !item.source_report_id;
-                  return (
-                    <div key={item.id} className="rounded-xl border border-rose-800/40 bg-[#170b12] p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-[10px] font-bold uppercase tracking-wide text-rose-300">{followup ? "Videre oppfølging" : "Opprinnelig tilbud"}</p>
-                          <p className="mt-1 text-sm font-extrabold text-white">{item.title}</p>
-                          <p className="mt-1 text-xs text-slate-300">{item.offer_number || `Internt tilbud #${item.id}`} · {item.status}</p><p className="mt-2 text-xs text-slate-400">{item.published_at || item.created_at || "Dato ikke registrert"}</p><p className="mt-1 text-xs font-bold text-white">{item.pricing_mode === "fixed" && Number(item.fixed_price ?? item.calculated_ex_vat) > 0 ? `kr ${Number(item.fixed_price ?? item.calculated_ex_vat).toLocaleString("nb-NO")} eks. mva.` : item.team_rate && Number(item.team_rate) > 0 ? `kr ${Number(item.team_rate).toLocaleString("nb-NO")} / time (team)` : "Se tilbud for pris"}</p>
-                        </div>
-                        {item.status === "akseptert" && <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-300" />}
-                      </div>
-                      {/* DIRECT_OFFER_CARD_EDITOR_V3 */}
-<div className="mt-4 flex flex-wrap items-center gap-2">
-  {directService && item.status === "utkast" && (
-    Number(directDraftOffer?.id) === Number(item.id) ? (
-      <button
-        type="button"
-        onClick={() => setShowDirectOfferGenerator(true)}
-        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 text-xs font-bold text-cyan-200 hover:bg-cyan-500/20"
-      >
-        <FileText className="h-4 w-4" />
-        Rediger
-      </button>
-    ) : (
-      <span className="text-xs text-amber-300">
-        Redigering krever samsvarende tilbuds-ID.
-      </span>
-    )
-  )}
-
-  {item.pdf_url && (
-    <a
-      href={customerAttachmentUrl(item.pdf_url)}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-cyan-500/40 px-4 text-xs font-bold text-cyan-200 hover:bg-cyan-500/10"
-    >
-      <FileText className="h-4 w-4" />
-      Vis PDF
-    </a>
-  )}
-
-    {followup && item.pricing_mode === "fixed" &&
-    ["publisert", "akseptert"].includes(item.status) && (
-      <AgreementPreviewButton
-        offer={item}
-        customerName={customerProfile?.name || inquiry.customer_name || inquiry.customerName}
-        address={inquiry.address}
-        customerOrgNumber={customerProfile?.organization_number || overviewOrganizationNumber || undefined}
-        customerPostalAddress={[
-          customerProfile?.address,
-          [customerProfile?.postal_code, customerProfile?.city]
-            .filter(Boolean).join(" ")
-        ].filter(Boolean).join(", ") || undefined}
-        customerPhone={customerProfile?.phone || inquiry.phone || undefined}
-        customerEmail={customerProfile?.email || inquiry.email || undefined}
-        customerContact={caseContactName || undefined}
-      />
-    )}
-
-  {/* DIRECT_OFFER_PUBLISH_CONTROL_V1 */}
-  {directService && directProcessOffer?.id === item.id && item.status === "utkast" && item.pdf_url && (
-    <div className="sm:ml-auto">
-      <DirectOfferPublishControl
-        offerId={Number(item.id)}
-        offerNumber={item.offer_number || `Tilbud #${item.id}`}
-        title={item.title || "Tilbud"}
-        amountLabel={
-          Number(item.fixed_price ?? item.calculated_ex_vat) > 0
-            ? `kr ${Number(item.fixed_price ?? item.calculated_ex_vat).toLocaleString("nb-NO")} eks. mva.`
-            : "Se PDF for avtalt pris"
-        }
-        pdfUrl={customerAttachmentUrl(item.pdf_url)}
-        onPublished={async () => {
-          await fetchOffer();
-        }}
-      />
-    </div>
-  )}
-  {followup && ["publisert", "avvist"].includes(item.status) && report?.status === "publisert" && (
-    <button type="button" disabled={revisionBusyId !== null}
-      onClick={() => void beginOfferRevision(item)}
-      className="inline-flex h-10 items-center justify-center rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 text-xs font-bold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50">
-      {revisionBusyId === item.id ? "Oppretter revisjon…" : "Opprett revisjon"}
-    </button>
-  )}</div>
-{item.status === "akseptert" && (
-  <StageInvoicing
-    inquiryId={inquiryId}
-    stageKey={followup
-      ? "varig_utbedring"
-      : item.service === "takkontroll"
-        ? "takkontroll"
-        : item.service === "service"
-          ? "service"
-          : "lekkasjesok"}
-  />
-)}
-
-                      {followup && item.status === "utkast" && report?.status === "publisert" && (
-                        <button type="button" onClick={() => {setFollowupOfferForGenerator(item);setShowFollowupOfferGenerator(true);}}
-                          className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/15 px-3 py-2 text-xs font-bold text-rose-100 hover:bg-rose-500/25">
-                          Rediger / kontroller og publiser →
-                        </button>
-                      )}
-                    </div>
-                  );
-                        })}
-                        {groupKey === "followup" && !groupedOffers.some(item => repairOfferTab === "ovrige"
-                          ? !["akseptert", "avvist"].includes(item.status)
-                          : item.status === repairOfferTab) && (
-                          <p className="col-span-full rounded-xl border border-rose-800/30 bg-[#170b12] p-4 text-xs text-rose-100/70">
-                            Ingen tilbud med denne statusen.
-                          </p>
-                        )}
-                      </div>
-                    </section>
-                  );
-                })}
-              </div>
-            )}
+        {adminCaseTab === "offer" && adminSignaturePending && (
+          <section aria-label="Signeringsoppfølging" className="rounded-2xl border border-amber-500/30 bg-slate-950/60 p-4">
+            <AdminAgreementProgress inquiryId={inquiryId} />
           </section>
         )}
+        {adminCaseTab === "offer" && renderOfferHistory()}
 
         {adminCaseTab === "offer" &&
           !(offer || isOfferAccepted || ["venter_pa_tilbud", "tilbud_sendt", "tilbud_avvist"].includes(inquiryStatus)) && (
@@ -4973,49 +5349,7 @@ export default function InquiryDetail({
           </div>
         </section>
 
-        <div
-          id="messages"
-          className={`${adminCaseTab === "messages" ? "" : "hidden"} scroll-mt-6 space-y-4`}
-        >
-          <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-800 bg-[#1b0b12] p-2">
-            <button
-              type="button"
-              onClick={() => setCommunicationView("messages")}
-              className={`rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${
-                communicationView === "messages"
-                  ? "bg-[#F5B800] text-slate-950"
-                  : "text-slate-400 hover:bg-slate-900 hover:text-white"
-              }`}
-            >
-              Samtaler
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setCommunicationView("log")}
-              className={`rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${
-                communicationView === "log"
-                  ? "bg-[#F5B800] text-slate-950"
-                  : "text-slate-400 hover:bg-slate-900 hover:text-white"
-              }`}
-            >
-              Kommunikasjonslogg
-            </button>
-          </div>
-
-          {communicationView === "messages" ? (
-            <InquiryMessages
-              inquiryId={inquiryId}
-              projectManagerName={
-                currentProjectManager?.name ||
-                inquiry.assigned_to ||
-                null
-              }
-            />
-          ) : (
-            <InquiryCommunicationLog inquiryId={inquiryId} />
-          )}
-        </div>
+        {adminCaseTab === "messages" && renderCaseMessages()}
 
         {!isDigitalBefaring && (
           <>
@@ -5423,6 +5757,7 @@ export default function InquiryDetail({
           sourceReportId={null}
           initialOffer={directDraftOffer ? {
             id: directDraftOffer.id,
+            offer_number: directDraftOffer.offer_number,
             status: directDraftOffer.status,
             service: "service",
             title: directDraftOffer.title,
@@ -5438,11 +5773,12 @@ export default function InquiryDetail({
               ? undefined
               : Number(directDraftOffer.fixed_price),
           } : null}
-          allowPublish={false}
+          allowPublish={true}
           onDraftSaved={async () => {
             await fetchOffer();
             setAdminCaseTab("offer");
           }}
+          onPublished={async () => { await fetchOffer(); }}
           onClose={() => {
             setShowDirectOfferGenerator(false);
             void fetchOffer();

@@ -1,3 +1,4 @@
+import { messageFetch } from "../../lib/messageApi";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowUpRight,
@@ -19,6 +20,9 @@ import {
   Activity,
 } from "lucide-react";
 import { apiUrl } from "../../lib/api";
+
+const messagesRequest = (url: string, init?: RequestInit) =>
+  messageFetch(url, init, window.localStorage.getItem("taklekkasjevakten_project_manager_session") ? "project_manager" : "admin");
 
 interface InquiryItem {
   id: number | string;
@@ -252,6 +256,7 @@ export default function ProjectManagerCustomers({
   };
 
   const sendMessageToCustomer = async () => {
+    if (!window.localStorage.getItem("taklekkasjevakten_project_manager_session")) { setMessageError("Administratorens forhåndsvisning er kun for lesing."); return; }
     if (!messageCustomer) return;
 
     const latestInquiry = messageCustomer.latestInquiry;
@@ -273,7 +278,7 @@ export default function ProjectManagerCustomers({
     setMessageSuccess("");
 
     try {
-      const res = await fetch(apiUrl("/messages.php"), {
+      const res = await messagesRequest(apiUrl("/messages.php"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -8,6 +8,8 @@ type Props = {
   amountLabel: string;
   pdfUrl: string;
   onPublished: () => Promise<void>;
+  disabled?: boolean;
+  buttonLabel?: string;
 };
 
 export default function DirectOfferPublishControl({
@@ -17,6 +19,8 @@ export default function DirectOfferPublishControl({
   amountLabel,
   pdfUrl,
   onPublished,
+  disabled = false,
+  buttonLabel = "Kontroller og publiser",
 }: Props) {
   const [open, setOpen] = useState(false);
   const [checked, setChecked] = useState(false);
@@ -24,7 +28,7 @@ export default function DirectOfferPublishControl({
   const [error, setError] = useState("");
 
   async function publish() {
-    if (!checked || busy || !pdfUrl) return;
+    if (!checked || busy || disabled || !pdfUrl || !offerId || !offerNumber) return;
 
     setBusy(true);
     setError("");
@@ -86,7 +90,7 @@ export default function DirectOfferPublishControl({
       <div className="space-y-2">
         <button
           type="button"
-          disabled={!pdfUrl}
+          disabled={disabled || !pdfUrl || !offerId || !offerNumber || busy}
           onClick={() => {
             setChecked(false);
             setError("");
@@ -94,7 +98,7 @@ export default function DirectOfferPublishControl({
           }}
           className="inline-flex h-10 items-center justify-center rounded-xl bg-purple-600 px-4 text-xs font-bold text-white hover:bg-purple-500 disabled:opacity-50"
         >
-          Kontroller og publiser
+          {buttonLabel}
         </button>
 
         {error && (

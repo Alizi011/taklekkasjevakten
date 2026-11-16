@@ -632,7 +632,7 @@ export default function AdminReportReview({
     try {
       const [reportRes, completionRes, checklistRes, photoRes] = await Promise.all([
         fetch(apiUrl(`/reports.php?inquiry_id=${inquiryId}`), { credentials: "include" }),
-        fetch(apiUrl(`/completion_reports.php?inquiry_id=${inquiryId}`)),
+        fetch(apiUrl(`/completion_reports.php?inquiry_id=${inquiryId}`), { credentials: "include" }),
         fetch(apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)),
         fetch(apiUrl(`/photos.php?inquiry_id=${inquiryId}`)),
       ]);
@@ -838,6 +838,7 @@ export default function AdminReportReview({
     successMessage = ""
   ): Promise<CompletionReportData> => {
     const res = await fetch(apiUrl("/completion_reports.php"), {
+      credentials: "include",
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1069,6 +1070,7 @@ export default function AdminReportReview({
 
       const res = await fetch(apiUrl("/close_inquiry.php"), {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });

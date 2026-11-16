@@ -1,3 +1,4 @@
+import { messageFetch } from "../lib/messageApi";
 import AgreementPlanning from "@/components/project-manager/AgreementPlanning";
 import CustomerCancellation from "@/components/project-manager/CustomerCancellation";
 import QuickAgreementPlanning from "@/components/project-manager/QuickAgreementPlanning";
@@ -58,6 +59,7 @@ import {
   type StandardService,
 } from "../config/serviceOfferTemplates";
 type View = "oversikt" | "felt" | "eiendom" | "meldinger" | "kunder" | "rapporter" | "sjekklister" | "dokumenter" | "team";
+
 
 interface PreviewEmployee {
   id?: number;
@@ -297,6 +299,20 @@ interface FollowUpOffer {
   updated_at?: string | null;
 }
 
+interface CaseCardScheduleProposal {
+  id: number;
+  offer_number?: string | null;
+  proposed_start_date?: string | null;
+  estimated_duration?: string | null;
+  status: string;
+}
+
+interface CaseCardWorkflow {
+  offer: FollowUpOffer | null;
+  proposal: CaseCardScheduleProposal | null;
+  scheduleChecked: boolean;
+}
+
 interface WorkCompletionSnapshot {
   id: number;
   inquiry_id?: number;
@@ -343,6 +359,7 @@ const FIELD_STAGES = new Set([
 
 type CalendarView = "maaned" | "uke" | "dag";
 type FieldWorkspaceTab = "oversikt" | "kontroll" | "oppsummering" | "dokumentasjon" | "rapport";
+type CasePanelTab = "oversikt" | "sjekklister" | "bilder" | "rapporter" | "dokumenter" | "meldinger" | "team";
 
 type PostReportAction =
   | "service"
@@ -822,6 +839,52 @@ function projectNextAction(inquiry: Inquiry, booking: Date | null): string {
   return "Kontroller kundeopplysningene";
 }
 
+
+// PM_OVERVIEW_PROPERTY_CARDS_V1: Read-only property imagery for active case cards.
+// Uses the existing property_image.php endpoint; missing/unavailable images retain the plain gradient.
+function ProjectManagerCasePhoto({ inquiryId }: { inquiryId: number }) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setImageUrl(null);
+    setImageFailed(false);
+    if (inquiryId <= 0) return;
+
+    void (async () => {
+      try {
+        const response = await fetch(apiUrl(`/property_image.php?inquiry_id=${inquiryId}`), {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const result = await response.json();
+        const candidate = result?.success && typeof result.image_url === "string"
+          ? result.image_url.trim()
+          : "";
+        if (!cancelled && candidate) setImageUrl(apiAssetUrl(candidate));
+      } catch {
+        // Property imagery is optional; never block the case card.
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [inquiryId]);
+
+  if (!imageUrl || imageFailed) return null;
+
+  return (
+    <img
+      src={imageUrl}
+      alt=""
+      aria-hidden="true"
+      loading="lazy"
+      onError={() => setImageFailed(true)}
+      className="pointer-events-none absolute inset-x-0 top-0 h-[72%] w-full object-cover opacity-70"
+    />
+  );
+}
 
 function InquiryPhotosManager({ inquiryId }: { inquiryId: number }) {
   const [photos, setPhotos] = useState<PhotoData[]>([]);
@@ -1999,9 +2062,11 @@ export default function ProjectManagerDashboard({
   previewEmployee,
   onBackToAdmin,
 }: ProjectManagerDashboardProps) {
+  const messagesRequest = (url: string, init?: RequestInit) => messageFetch(url, init, onBackToAdmin ? "admin" : "project_manager");
   const [view, setView] = useState<View>("oversikt");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const [unansweredCustomerMessages, setUnansweredCustomerMessages] = useState<Array<{ inquiryId: number; threadId: number; oldestAt: string; count: number }>>([]);
 
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [teamOverview, setTeamOverview] = useState<Record<string, InquiryTeam>>({});
@@ -2030,6 +2095,11 @@ export default function ProjectManagerDashboard({
   // Dashboard V3: separate read-only photo previews, no changes to uploads.
   const [dashboardPhotos, setDashboardPhotos] = useState<PhotoData[]>([]);
   const [dashboardPhotosLoading, setDashboardPhotosLoading] = useState(false);
+  // PM_CASE_INLINE_TABS_V1: Read-only case information, independent of work editor pages.
+  const [casePanelTab, setCasePanelTab] = useState<CasePanelTab>("oversikt");
+  const [casePanelFiles, setCasePanelFiles] = useState<PreinspectionFile[]>([]);
+  const [casePanelFilesBusy, setCasePanelFilesBusy] = useState(false);
+  const [casePanelFilesError, setCasePanelFilesError] = useState("");
   const [fullCustomerRequestOpen, setFullCustomerRequestOpen] = useState(false);
   const [heritagePanelOpen, setHeritagePanelOpen] = useState(false);
   const [legacyInfoOpen, setLegacyInfoOpen] = useState(false);
@@ -2055,6 +2125,9 @@ export default function ProjectManagerDashboard({
   const [approvalRefresh, setApprovalRefresh] = useState(0);
   const [approvalLoadError, setApprovalLoadError] = useState("");
   const [offerOverview, setOfferOverview] = useState<Record<string, FollowUpOffer | null>>({});
+  // Separate read-only card status: current remediation offer and Core agreement date.
+  // Never derive remediation status from the original leak-search booking.
+  const [caseCardWorkflow, setCaseCardWorkflow] = useState<Record<string, CaseCardWorkflow>>({});
   const [fieldScheduleOverview, setFieldScheduleOverview] = useState<
     Record<string, FieldSchedule | null>
   >({});
@@ -2199,7 +2272,7 @@ export default function ProjectManagerDashboard({
             data.success === true &&
             data.requires_v2 === true &&
             data.work_allowed === true &&
-            data.agreement_status === "signed" &&
+            (data.agreement_status === "signed" || data.work_authorization === "admin_release") &&
             Number(data.tlv_offer_id) === offerId,
           status: String(data.agreement_status || "unknown"),
         });
@@ -2249,35 +2322,40 @@ export default function ProjectManagerDashboard({
   const [coreTasks, setCoreTasks] = useState<Array<{
     id: number;
     inquiry_id: number;
+    offer_id?: number;
+    offer_number?: string;
     title: string;
     status: string;
+    on_hold?: boolean;
   }>>([]);
   const [quickAgreementTaskId, setQuickAgreementTaskId] = useState<number | null>(null);
   const [coreTasksError, setCoreTasksError] = useState("");
   const [coreTasksLoading, setCoreTasksLoading] = useState(true);
 
   useEffect(() => {
-    if (onBackToAdmin) {
-      setCoreTasks([]);
-      setCoreTasksLoading(false);
-      return;
-    }
-
     let cancelled = false;
 
     const load = async () => {
       setCoreTasksLoading(true);
       try {
-        const token = window.localStorage.getItem(
+        const adminPreview = Boolean(onBackToAdmin);
+        const previewEmployeeId = Number(previewEmployee?.id || 0);
+        const token = adminPreview ? null : window.localStorage.getItem(
           "taklekkasjevakten_project_manager_session"
         );
-        if (!token) throw new Error("Prosjektlederinnlogging kreves.");
+        if (adminPreview && previewEmployeeId <= 0) {
+          throw new Error("Velg en prosjektansvarlig med gyldig ansatt-ID i forhåndsvisningen.");
+        }
+        if (!adminPreview && !token) throw new Error("Prosjektlederinnlogging kreves.");
 
         const response = await fetch(apiUrl("/project_manager_tasks.php"), {
           method: "POST",
           cache: "no-store",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_token: token }),
+          body: JSON.stringify(adminPreview
+            ? { admin_preview_employee_id: previewEmployeeId }
+            : { session_token: token }),
         });
 
         const data = await response.json();
@@ -2310,7 +2388,7 @@ export default function ProjectManagerDashboard({
       cancelled = true;
       window.removeEventListener("focus", refresh);
     };
-  }, [onBackToAdmin, view]);
+  }, [onBackToAdmin, previewEmployee?.id, view]);
   const approvalQueue = useMemo(
     () => inquiries.filter((item) => approvalStates[String(normalizeInquiryId(item.id))] === "awaiting_pm"),
     [inquiries, approvalStates]
@@ -2396,6 +2474,7 @@ export default function ProjectManagerDashboard({
   useEffect(() => {
     let cancelled = false;
     setDashboardPhotos([]);
+    setCasePanelTab("oversikt");
     setFullCustomerRequestOpen(false);
     if (!activeInquiryId) return;
     setDashboardPhotosLoading(true);
@@ -2411,6 +2490,27 @@ export default function ProjectManagerDashboard({
     })();
     return () => { cancelled = true; };
   }, [activeInquiryId]);
+
+  useEffect(() => {
+    if (!activeInquiryId || casePanelTab !== "dokumenter") return;
+    let cancelled = false;
+    setCasePanelFiles([]);
+    setCasePanelFilesBusy(true);
+    setCasePanelFilesError("");
+    void (async () => {
+      try {
+        const res = await fetch(apiUrl(`/preinspection.php?inquiry_id=${activeInquiryId}`), { credentials: "include", cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.message || "Vedlegg kunne ikke hentes.");
+        if (!cancelled) setCasePanelFiles(Array.isArray(data.files) ? data.files : []);
+      } catch (error) {
+        if (!cancelled) setCasePanelFilesError(error instanceof Error ? error.message : "Vedlegg kunne ikke hentes.");
+      } finally {
+        if (!cancelled) setCasePanelFilesBusy(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeInquiryId, casePanelTab]);
 
   useEffect(() => {
     setPostReportAction(null);
@@ -3443,6 +3543,76 @@ export default function ProjectManagerDashboard({
     }
   };
 
+  const fetchCaseCardWorkflow = async (items: Inquiry[]) => {
+    const sessionToken = onBackToAdmin
+      ? null
+      : window.localStorage.getItem("taklekkasjevakten_project_manager_session");
+    const entries = await Promise.all(items.map(async (inquiry) => {
+      const id = normalizeInquiryId(inquiry.id);
+      if (!id) return [String(id), { offer: null, proposal: null, scheduleChecked: false }] as const;
+
+      // Offers must be read with all=1: a single latest/initial offer can hide
+      // the accepted follow-up or fixed-price service remediation stage.
+      let current: FollowUpOffer | null = null;
+      try {
+        const response = await fetch(pmOfferReadUrl(id, true), pmOfferReadOptions());
+        const data = await response.json();
+        if (response.ok && data.success) {
+          const offers: FollowUpOffer[] = Array.isArray(data.offers)
+            ? data.offers : data.offer ? [data.offer] : [];
+          const byLatest = [...offers].sort((a, b) => Number(b.id) - Number(a.id));
+          const relevant = (offer: FollowUpOffer) =>
+            ["akseptert", "publisert", "sendt", "sendt_til_kunde", "tilbud_sendt"].includes(
+              String(offer.status || "").toLowerCase()
+            );
+          current = byLatest.find((offer) =>
+            String(offer.offer_context || "").toLowerCase() === "followup" && relevant(offer)
+          ) || byLatest.find((offer) =>
+            String(offer.service || "").toLowerCase() === "service" &&
+            String(offer.pricing_mode || "").toLowerCase() === "fixed" && relevant(offer)
+          ) || null;
+        }
+      } catch {
+        // Missing offers must not be misrepresented as an accepted agreement.
+      }
+
+      let proposal: CaseCardScheduleProposal | null = null;
+      let scheduleChecked = false;
+      if (current && String(current.status || "").toLowerCase() === "akseptert") {
+        try {
+          const isAdmin = Boolean(onBackToAdmin);
+          const response = await fetch(apiUrl(isAdmin
+            ? "/admin_agreement_schedule_read.php"
+            : "/project_manager_agreement_schedule.php"), {
+            method: "POST",
+            credentials: "include",
+            cache: "no-store",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(isAdmin
+              ? { inquiry_id: id }
+              : { action: "list", inquiry_id: id, session_token: sessionToken }),
+          });
+          const data = await response.json();
+          if (response.ok && data.success && Array.isArray(data.proposals)) {
+            scheduleChecked = true;
+            const rows = (data.proposals as CaseCardScheduleProposal[])
+              .sort((a, b) => Number(b.id) - Number(a.id));
+            const offerNumber = String(current.offer_number || "").trim();
+            // Project-manager API includes Core offer_number. Admin endpoint
+            // does not yet include it; only use an unambiguous single row.
+            proposal = isAdmin
+              ? rows.length === 1 ? rows[0] : null
+              : offerNumber ? rows.find((row) => String(row.offer_number || "") === offerNumber) || null : null;
+          }
+        } catch {
+          // Do not guess that customer approval is pending when data is missing.
+        }
+      }
+      return [String(id), { offer: current, proposal, scheduleChecked }] as const;
+    }));
+    setCaseCardWorkflow(Object.fromEntries(entries));
+  };
+
   const fetchFieldScheduleOverview = async (items: Inquiry[]) => {
     const entries = await Promise.all(
       items.map(async (inquiry) => {
@@ -3544,6 +3714,7 @@ export default function ProjectManagerDashboard({
   const fetchUnreadMessageCount = async (items: Inquiry[]) => {
     if (!Array.isArray(items) || items.length === 0) {
       setUnreadMessageCount(0);
+      setUnansweredCustomerMessages([]);
       return;
     }
 
@@ -3551,33 +3722,62 @@ export default function ProjectManagerDashboard({
       const results = await Promise.all(
         items.map(async (inquiry) => {
           const inquiryId = normalizeInquiryId(inquiry.id);
-          if (!inquiryId) return 0;
+          if (!inquiryId) return { unread: 0, unanswered: [] as Array<{ inquiryId: number; threadId: number; oldestAt: string; count: number }> };
 
           try {
-            const res = await fetch(
+            const res = await messagesRequest(
               apiUrl(`/messages.php?inquiry_id=${inquiryId}`)
             );
             const data = await res.json();
 
             if (!res.ok || !data.success || !Array.isArray(data.messages)) {
-              return 0;
+              return { unread: 0, unanswered: [] as Array<{ inquiryId: number; threadId: number; oldestAt: string; count: number }> };
             }
 
-            return data.messages.filter(
-              (message: any) =>
-                !Boolean(Number(message.is_internal)) &&
-                message.sender_type === "customer" &&
-                message.recipient_type === "project_manager" &&
-                !message.read_at
+            // A reply closes only the same thread, not another conversation in the case.
+            const visible = data.messages.filter(
+              (message: any) => !Boolean(Number(message.is_internal))
+            );
+            const lastReplyByThread = new Map<number, number>();
+            for (const message of visible) {
+              const threadId = Number(message.thread_id) || 0;
+              if (!threadId) continue;
+              if ((message.sender_type === "project_manager" || message.sender_type === "admin") &&
+                  message.recipient_type === "customer") {
+                lastReplyByThread.set(threadId, Math.max(lastReplyByThread.get(threadId) || 0, Number(message.id) || 0));
+              }
+            }
+            const pendingByThread = new Map<number, Array<any>>();
+            for (const message of visible) {
+              const threadId = Number(message.thread_id) || 0;
+              if (threadId && message.sender_type === "customer" &&
+                  message.recipient_type === "project_manager" &&
+                  Number(message.id) > (lastReplyByThread.get(threadId) || 0)) {
+                pendingByThread.set(threadId, [...(pendingByThread.get(threadId) || []), message]);
+              }
+            }
+            const unread = visible.filter(
+              (message: any) => message.sender_type === "customer" &&
+                message.recipient_type === "project_manager" && !message.read_at
             ).length;
+            return {
+              unread,
+              unanswered: [...pendingByThread.entries()].map(([threadId, pending]) => ({
+                inquiryId,
+                threadId,
+                count: pending.length,
+                oldestAt: String(pending[0]?.created_at || ""),
+              })),
+            };
           } catch {
-            return 0;
+            return { unread: 0, unanswered: [] as Array<{ inquiryId: number; threadId: number; oldestAt: string; count: number }> };
           }
         })
       );
 
-      setUnreadMessageCount(
-        results.reduce((sum, count) => sum + Number(count || 0), 0)
+      setUnreadMessageCount(results.reduce((sum, item) => sum + item.unread, 0));
+      setUnansweredCustomerMessages(
+        results.flatMap((item) => item.unanswered)
       );
     } catch (err) {
       console.error("Kunne ikke hente uleste kundemeldinger:", err);
@@ -3638,6 +3838,7 @@ export default function ProjectManagerDashboard({
       await Promise.all([
         fetchReportOverview(assignedInquiries),
         fetchOfferOverview(assignedInquiries),
+        fetchCaseCardWorkflow(assignedInquiries),
         fetchFieldScheduleOverview(assignedInquiries),
         fetchChecklistOverview(assignedInquiries),
         fetchDocumentOverview(assignedInquiries),
@@ -4593,7 +4794,7 @@ if (from < earliestDate) {
     try {
       const [workRes, report2Res] = await Promise.all([
         fetch(apiUrl(`/work_completion.php?inquiry_id=${inquiryId}`)),
-        fetch(apiUrl(`/completion_reports.php?inquiry_id=${inquiryId}`)),
+        fetch(apiUrl(`/completion_reports.php?inquiry_id=${inquiryId}`), { credentials: "include", headers: onBackToAdmin ? {} : { "X-TLV-PM-Session": window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "" } }),
       ]);
 
       const workData = await workRes.json();
@@ -4688,8 +4889,9 @@ if (from < earliestDate) {
         completionReportDraft.trim()
       ) {
         const saveRes = await fetch(apiUrl("/completion_reports.php"), {
+          credentials: "include",
+          headers: { "Content-Type": "application/json", ...(onBackToAdmin ? {} : { "X-TLV-PM-Session": window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "" }) },
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             inquiry_id: activeInquiryId,
             ai_draft: completionReportDraft,
@@ -4737,7 +4939,8 @@ if (from < earliestDate) {
     try {
       const res = await fetch(apiUrl("/completion_reports.php"), {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...(onBackToAdmin ? {} : { "X-TLV-PM-Session": window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "" }) },
         body: JSON.stringify({
           inquiry_id: activeInquiryId,
           ai_draft: completionReportDraft,
@@ -4782,7 +4985,8 @@ if (from < earliestDate) {
     try {
       const res = await fetch(apiUrl("/completion_reports.php"), {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...(onBackToAdmin ? {} : { "X-TLV-PM-Session": window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "" }) },
         body: JSON.stringify({
           inquiry_id: activeInquiryId,
           ai_draft: completionReportDraft,
@@ -6056,9 +6260,9 @@ if (from < earliestDate) {
                             setOverviewTopTab("actions");
                             document.getElementById("pm-top-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
                           }}
-                          className="group flex min-h-[92px] items-center gap-3 rounded-2xl border border-rose-500/20 bg-[#241923] p-4 text-left transition hover:border-rose-400/50 hover:bg-[#30202c]"
+                          className="group flex min-h-[92px] items-center gap-3 rounded-2xl border border-[#79505c] bg-[#36202a] p-4 text-left transition hover:border-[#a36b7b] hover:bg-[#452a35]"
                         >
-                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-red-500/25 bg-red-500/10 text-red-400">
+                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[#976676] bg-[#5a303d]/55 text-[#f4b0b8]">
                             <AlertTriangle className="h-5 w-5" />
                           </div>
                           <div className="min-w-0 flex-1">
@@ -6066,7 +6270,7 @@ if (from < earliestDate) {
                               Krever handling
                             </p>
                             <p className="mt-1 text-2xl font-black text-white">
-                              {coreTasksLoading ? "…" : coreTasksError ? "—" : actionableTasks.length}
+                              {coreTasksLoading ? "…" : coreTasksError ? "—" : actionableTasks.length + unansweredCustomerMessages.length}
                             </p>
                             <p className="mt-1 text-xs text-slate-300">
                               Saker som bør følges opp
@@ -6078,9 +6282,9 @@ if (from < earliestDate) {
                         <button
                           type="button"
                           onClick={() => setOverviewDisplay("kalender")}
-                          className="group flex min-h-[92px] items-center gap-3 rounded-2xl border border-teal-500/20 bg-[#142927] p-4 text-left transition hover:border-teal-400/50 hover:bg-[#1c3431]"
+                          className="group flex min-h-[92px] items-center gap-3 rounded-2xl border border-[#79505c] bg-[#35242b] p-4 text-left transition hover:border-[#a36b7b] hover:bg-[#462e37]"
                         >
-                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-teal-400/40 bg-teal-500/20 text-teal-200">
+                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[#93717a] bg-[#60414b]/45 text-[#edc5cc]">
                             <CalendarDays className="h-5 w-5" />
                           </div>
                           <div className="min-w-0 flex-1">
@@ -6100,9 +6304,9 @@ if (from < earliestDate) {
                         <button
                           type="button"
                           onClick={() => setView("meldinger")}
-                          className="group flex min-h-[92px] items-center gap-3 rounded-2xl border border-purple-500/20 bg-[#241b31] p-4 text-left transition hover:border-purple-400/50 hover:bg-[#2e2340]"
+                          className="group flex min-h-[92px] items-center gap-3 rounded-2xl border border-[#79505c] bg-[#36232e] p-4 text-left transition hover:border-[#a36b7b] hover:bg-[#482d3a]"
                         >
-                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-purple-400/40 bg-purple-500/20 text-purple-200">
+                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[#93717a] bg-[#60414b]/45 text-[#edc5cc]">
                             <Mail className="h-5 w-5" />
                           </div>
                           <div className="min-w-0 flex-1">
@@ -6141,7 +6345,7 @@ if (from < earliestDate) {
                           </div>
                         </section>
                       )}
-                      {coreTasksError && !onBackToAdmin && (
+                      {coreTasksError && (
   <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">
     Kunne ikke hente prosjektoppgaver: {coreTasksError}
   </p>
@@ -6151,7 +6355,7 @@ if (from < earliestDate) {
     {unmatchedCoreTasks} oppgave(r) mangler en tilgjengelig TLV-sak i oppdragslisten.
   </p>
 )}
-{coreTasksLoading && !onBackToAdmin && (
+{coreTasksLoading && (
   <p role="status" className="text-xs text-slate-300">
     Henter oppgaver fra Perun Core...
   </p>
@@ -6173,7 +6377,7 @@ if (from < earliestDate) {
                         </div>
                       ) : (
                         <>
-                          <section id="pm-top-tabs" className="overflow-hidden rounded-2xl border border-orange-900/45 bg-gradient-to-br from-[#302019] to-[#211510] shadow-[0_10px_30px_rgba(0,0,0,0.12)]">
+                          <section id="pm-top-tabs" className="overflow-hidden rounded-2xl border border-[#754957] bg-gradient-to-br from-[#38212c] to-[#291721] shadow-[0_10px_30px_rgba(0,0,0,0.12)]">
                             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3 sm:px-5">
                               <div className="flex flex-wrap gap-2" role="tablist" aria-label="Oppdrag og oppfølging">
                                 <button type="button" role="tab" aria-selected={overviewTopTab === "upcoming"}
@@ -6186,7 +6390,7 @@ if (from < earliestDate) {
                                   onClick={() => setOverviewTopTab("actions")}
                                   className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${overviewTopTab === "actions" ? "border border-amber-500/40 bg-amber-500/10 text-orange-300" : "border border-transparent text-slate-200 hover:bg-slate-900 hover:text-white"}`}>
                                   <AlertTriangle className="h-4 w-4" /> Krever handling
-                                  <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-xs text-red-300">{coreTasksLoading ? "…" : coreTasksError ? "—" : actionableTasks.length}</span>
+                                  <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-xs text-red-300">{coreTasksLoading ? "…" : coreTasksError ? "—" : actionableTasks.length + unansweredCustomerMessages.length}</span>
                                 </button>
                               </div>
                               {overviewTopTab === "upcoming" && (
@@ -6262,6 +6466,33 @@ if (from < earliestDate) {
                             <div role="tabpanel" hidden={overviewTopTab !== "actions"}>
                               <p className="px-5 pt-4 text-[13px] text-slate-300">Oppgaver prosjektleder bør ta tak i nå.</p>
 <div className="divide-y divide-slate-800/80">
+                                {unansweredCustomerMessages.map((pending) => {
+                                  const inquiry = inquiries.find(
+                                    (item) => normalizeInquiryId(item.id) === pending.inquiryId
+                                  );
+                                  if (!inquiry) return null;
+                                  return (
+                                    <article key={`customer-reply-${pending.inquiryId}-${pending.threadId}`} className="px-5 py-5">
+                                      <p className="text-xs font-black uppercase tracking-wider text-orange-300">
+                                        Sak #{pending.inquiryId} · Samtale #{pending.threadId} krever svar
+                                      </p>
+                                      <p className="mt-1 text-sm font-black text-white">{customerName(inquiry)}</p>
+                                      <p className="mt-1 text-xs text-slate-300">
+                                        {pending.count} ubesvart{pending.count === 1 ? "" : "e"} melding{pending.count === 1 ? "" : "er"}
+                                        {pending.oldestAt ? ` · Eldste melding: ${pending.oldestAt}` : ""}
+                                      </p>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setView("meldinger");
+                                        }}
+                                        className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#ff951a] px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-orange-400"
+                                      >
+                                        Åpne kundemeldinger <ArrowUpRight className="h-3.5 w-3.5" />
+                                      </button>
+                                    </article>
+                                  );
+                                })}
                                 {actionableTasks.map(({ task, inquiry }) => {
                                   const tone = actionTone(inquiry);
                                   const ActionIcon = tone.icon;
@@ -6284,7 +6515,7 @@ if (from < earliestDate) {
                                           <div className="flex flex-wrap items-start justify-between gap-3">
                                             <div className="min-w-0">
                                               <p className="text-xs font-black uppercase tracking-wider text-slate-300">
-                                                Sak #{inquiry.id} · Oppgave #{task.id}
+                                                Sak #{inquiry.id} · {task.offer_number ? `Tilbud ${task.offer_number}` : `Oppgave #${task.id}`}
                                               </p>
                                               <h4 className="mt-1 truncate text-sm font-black text-white">
                                                 {customerName(inquiry)}
@@ -6301,7 +6532,12 @@ if (from < earliestDate) {
                                             </span>
                                           </div>
 
-                                          <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/35 px-4 py-3">
+                                          {task.on_hold === true && (
+  <div role="status" className="mt-4 rounded-xl border border-amber-400/50 bg-amber-400/10 px-4 py-3 text-xs font-bold text-amber-200">
+    På vent – videre arbeid avventer administratorens gjenopptakelse.
+  </div>
+)}
+<div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/35 px-4 py-3">
                                             <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">
                                               Neste handling
                                             </p>
@@ -6309,12 +6545,18 @@ if (from < earliestDate) {
                                               {nextAction}
                                             </p>
                                             <p className="mt-1 text-xs text-slate-300">
-                                              {inquiry.stage === "digital_befaring"
-                                                ? "Digital befaring"
-                                                : serviceLabel(inquiry.recommended_service)}
-                                              {booking
-                                                ? ` · ${formatBooking(booking)}`
-                                                : " · Tidspunkt ikke satt"}
+                                              {task.title === "Arbeidsavtale: fastsett oppstartsdato" ? (
+                                                "Utbedringsarbeid · Oppstartsdato ikke fastsatt"
+                                              ) : (
+                                                <>
+                                                  {inquiry.stage === "digital_befaring"
+                                                    ? "Digital befaring"
+                                                    : serviceLabel(inquiry.recommended_service)}
+                                                  {booking
+                                                    ? ` · ${formatBooking(booking)}`
+                                                    : " · Tidspunkt ikke satt"}
+                                                </>
+                                              )}
                                             </p>
                                           </div>
 
@@ -6322,6 +6564,11 @@ if (from < earliestDate) {
                                             <button
                                               type="button"
                                               onClick={() => {
+                                                 if (task.on_hold === true) return;
+                                                 if (onBackToAdmin) {
+                                                   setQuickAgreementTaskId((current) => current === task.id ? null : task.id);
+                                                   return;
+                                                 }
                                                  if (task.title.startsWith("Arbeidsavtale:") && /fastsett oppstartsdato/i.test(task.title)) {
                                                     setQuickAgreementTaskId((current) => current === task.id ? null : task.id);
                                                   } else if (
@@ -6332,9 +6579,9 @@ if (from < earliestDate) {
                                                     openInquiry(inquiry);
                                                   }
                                                }}
-                                              className="inline-flex items-center gap-2 rounded-xl bg-[#ff951a] px-4 py-2.5 text-xs font-black text-slate-950 transition hover:bg-orange-400"
+                                              disabled={task.on_hold === true} className="inline-flex items-center gap-2 rounded-xl bg-[#ff951a] px-4 py-2.5 text-xs font-black text-slate-950 transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-40"
                                             >
-                                              {nextAction}
+                                              {task.on_hold === true ? "Oppdrag på vent" : nextAction}
                                               <ArrowUpRight className="h-3.5 w-3.5" />
                                             </button>
 
@@ -6347,10 +6594,11 @@ if (from < earliestDate) {
                                               <ChevronRight className="h-3.5 w-3.5" />
                                             </button>
                                           </div>
-                                            {quickAgreementTaskId === task.id && /fastsett oppstartsdato/i.test(task.title) && (
+                                            {task.on_hold !== true && quickAgreementTaskId === task.id && /fastsett oppstartsdato/i.test(task.title) && (
                                               <QuickAgreementPlanning
                                                 key={`${task.id}-${inquiry.id}`}
                                                 inquiryId={normalizeInquiryId(inquiry.id)}
+                                                offerId={task.offer_id} previewMode={Boolean(onBackToAdmin)}
                                                 onSaved={async () => {
                                                   const token = window.localStorage.getItem("taklekkasjevakten_project_manager_session");
                                                   if (!token) return;
@@ -6385,7 +6633,7 @@ if (from < earliestDate) {
                             </div>
                           </section>
 
-                          <section className="overflow-hidden rounded-2xl border border-[#383145] bg-[#171321] shadow-[0_12px_38px_rgba(0,0,0,0.10)]">
+                          <section className="overflow-hidden rounded-2xl border border-[#754957] bg-[#2b1924] shadow-[0_12px_38px_rgba(0,0,0,0.10)]">
                             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3 sm:px-5">
                               <div className="flex gap-2" role="tablist" aria-label="Saksoversikt">
                                 <button type="button" role="tab" aria-selected={overviewBottomTab === "active"}
@@ -6401,7 +6649,7 @@ if (from < earliestDate) {
                                 </button>
                               </div>
                               <button type="button" onClick={() => setOverviewStatusFilter(null)}
-                                className="text-[13px] font-bold text-blue-400 hover:text-blue-300">Se alle saker →</button>
+                                className="text-[13px] font-bold text-[#e1a7b6] hover:text-white">Se alle saker →</button>
                             </div>
                             <div className="px-5 py-3 text-[13px] text-slate-300">
                               {overviewBottomTab === "active" ? "Åpne en sak for kontroll, rapport og oppfølging." : "Nyeste registrerte hendelser for planlagte oppdrag."}
@@ -6410,72 +6658,125 @@ if (from < earliestDate) {
                             {overviewBottomTab === "active" && (
                             <div>
 
-                              <div className="divide-y divide-slate-800/80">
+                              {/* Responsive active-case cards, preserving current workflow calculations. */}
+                              <div className="grid gap-4 px-4 pb-5 pt-2 lg:grid-cols-2 2xl:grid-cols-3 sm:px-5">
                                 {visibleActive.map(({ inquiry }) => {
                                   const booking = parseInquiryBooking(inquiry);
                                   const progress = inquiryProgress(inquiry);
-                                  const inquiryKey =
-                                    normalizeInquiryId(inquiry.id).toString();
-                                  const scheduleForInquiry =
-                                    fieldScheduleOverview[inquiryKey] || null;
+                                  const inquiryKey = normalizeInquiryId(inquiry.id).toString();
+                                  const scheduleForInquiry = fieldScheduleOverview[inquiryKey] || null;
 
-                                  const initials = customerName(inquiry)
-                                    .split(/\s+/)
-                                    .filter(Boolean)
-                                    .slice(0, 2)
-                                    .map((part) => part.charAt(0).toUpperCase())
-                                    .join("");
-
-                                  // Presenter siste relevante publiserte tilbud separat fra
-                                  // eldre avviste tidsforslag. Endrer ikke arbeidsflytstatus.
-                                  const currentOffer = offerOverview[inquiryKey] || null;
+                                  // New remediation agreement supersedes the original inspection booking.
+                                  const currentWorkflow = caseCardWorkflow[inquiryKey];
+                                  const currentOffer = currentWorkflow?.offer || null;
+                                  const agreementProposal = currentWorkflow?.proposal || null;
                                   const currentOfferStatus = String(currentOffer?.status || "").toLowerCase();
-                                  const pendingFollowupOffer =
-                                    String(currentOffer?.offer_context || "").toLowerCase() === "followup" &&
+                                  const agreementStatus = String(agreementProposal?.status || "").toLowerCase();
+                                  const hasCurrentRemediation = Boolean(currentOffer);
+                                  const pendingOffer = hasCurrentRemediation &&
                                     ["publisert", "sendt", "sendt_til_kunde", "tilbud_sendt"].includes(currentOfferStatus);
-                                  const displayStatus = pendingFollowupOffer ? "Tilbud sendt" : progress.label;
-                                  const displayNextAction = pendingFollowupOffer
-                                    ? "Avventer kundens svar på oppfølgingstilbudet"
+                                  const acceptedOffer = hasCurrentRemediation && currentOfferStatus === "akseptert";
+                                  const statusFromAgreement = agreementStatus === "pending_customer"
+                                    ? "Venter på kundens svar på oppstartsdato"
+                                    : agreementStatus === "approved" ? "Oppstartsdato godkjent"
+                                    : agreementStatus === "change_requested" ? "Kunden ønsker ny dato"
+                                    : "";
+                                  const displayStatus = statusFromAgreement || (
+                                    pendingOffer ? "Tilbud sendt · venter på kunde" :
+                                    acceptedOffer ? "Utbedringstilbud akseptert" : progress.label
+                                  );
+                                  const displayNextAction = agreementStatus === "pending_customer"
+                                    ? "Avventer at kunden godkjenner eller foreslår en annen oppstartsdato"
+                                    : agreementStatus === "approved"
+                                    ? "Arbeidsdato godkjent · følg opp arbeidsavtalen"
+                                    : agreementStatus === "change_requested"
+                                    ? "Behandle kundens ønske om ny oppstartsdato"
+                                    : pendingOffer ? "Avventer kundens svar på utbedringstilbudet"
+                                    : acceptedOffer && !currentWorkflow?.scheduleChecked
+                                    ? "Arbeidsdatoens godkjenningsstatus kan ikke bekreftes"
+                                    : acceptedOffer ? "Fastsett oppstartsdato og send til kunden for godkjenning"
                                     : progressNextAction(inquiry, booking);
-                                  const progressClass = pendingFollowupOffer
-                                    ? "border-amber-500/25 bg-amber-500/10 text-amber-200"
-                                    : ["planned", "report_done", "completed", "followup_confirmed"].includes(progress.key)
-                                    ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
+                                  const progressClass = pendingOffer || agreementStatus === "pending_customer" ||
+                                    acceptedOffer && agreementStatus !== "approved"
+                                    ? "border-amber-400/40 bg-amber-500/20 text-amber-100"
+                                    : agreementStatus === "approved" ||
+                                    ["planned", "report_done", "completed", "followup_confirmed"].includes(progress.key)
+                                    ? "border-emerald-400/35 bg-emerald-500/20 text-emerald-100"
                                     : ["today", "report_review"].includes(progress.key)
-                                    ? "border-blue-500/20 bg-blue-500/10 text-blue-300"
+                                    ? "border-blue-400/35 bg-blue-500/20 text-blue-100"
                                     : ["planning", "followup_waiting", "waiting", "followup_customer"].includes(progress.key)
-                                    ? "border-amber-500/20 bg-amber-500/10 text-amber-300"
+                                    ? "border-amber-400/35 bg-amber-500/20 text-amber-100"
                                     : progress.key === "followup_declined"
-                                    ? "border-red-500/20 bg-red-500/10 text-red-300"
-                                    : "border-slate-700 bg-slate-900 text-slate-300";
+                                    ? "border-red-400/35 bg-red-500/20 text-red-100"
+                                    : "border-white/20 bg-black/25 text-slate-100";
+                                  const appointmentLabel = hasCurrentRemediation
+                                    ? agreementProposal?.proposed_start_date
+                                      ? new Date(`${agreementProposal.proposed_start_date}T12:00:00`).toLocaleDateString("nb-NO")
+                                      : "Ikke fastsatt"
+                                    : confirmedBooking(inquiry)
+                                      ? formatBooking(confirmedBooking(inquiry))
+                                      : booking ? formatBooking(booking) : "Ikke fastsatt";
+                                  const workStageLabel = hasCurrentRemediation
+                                    ? String(currentOffer?.offer_context || "").toLowerCase() === "followup"
+                                      ? "Varig utbedring"
+                                      : "Service / utbedring"
+                                    : serviceLabel(scheduleForInquiry?.service || inquiry.recommended_service || inquiry.inquiry_type);
+                                  const workStatusLabel = hasCurrentRemediation ? displayStatus : progress.subtitle || displayStatus;
 
                                   return (
                                     <button
                                       key={inquiry.id}
                                       type="button"
                                       onClick={() => openInquiry(inquiry)}
-                                      className="group flex w-full flex-col gap-2 border-b border-[#343047] bg-[#171321] px-4 py-4 text-left transition hover:bg-[#211b2d] last:border-b-0 sm:px-5"
+                                      aria-label={`Åpne oppdrag ${inquiry.id} for ${customerName(inquiry)}`}
+                                      className="group relative flex min-h-[340px] w-full flex-col overflow-hidden rounded-[22px] border border-[#9c6270]/60 bg-[#462731] text-left text-white shadow-[0_14px_34px_rgba(0,0,0,0.18)] transition-all hover:-translate-y-0.5 hover:border-rose-300/60 hover:shadow-[0_18px_40px_rgba(0,0,0,0.26)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-300"
                                     >
-                                      <div className="flex w-full min-w-0 items-start gap-3">
-                                        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[#40364e] bg-[#272137] text-xs font-black text-slate-200">
-                                          {initials || "—"}
+                                      <ProjectManagerCasePhoto inquiryId={normalizeInquiryId(inquiry.id)} />
+                                      <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(29,11,20,.52)_0%,rgba(35,14,25,.70)_37%,rgba(48,24,36,.97)_72%,#35202b_100%)]" />
+                                      <div className="relative z-10 flex h-full w-full flex-1 flex-col gap-3 p-4 sm:p-5">
+                                        <div className="flex items-start justify-between gap-3">
+                                          <span className="inline-flex items-center rounded-full border border-orange-300/40 bg-[#2a111c]/75 px-3 py-1 text-[11px] font-black text-white backdrop-blur">Sak #{inquiry.id}</span>
+                                          <ArrowUpRight className="h-5 w-5 shrink-0 text-rose-100 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                                         </div>
-                                        <div className="min-w-0 flex-1 space-y-2">
-                                          <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <div className="min-w-0">
+                                          <h4 className="break-words text-base font-black leading-6 tracking-tight text-white drop-shadow-[0_1px_3px_rgba(0,0,0,.5)]">
+                                            {customerName(inquiry)}
+                                          </h4>
+                                          <p className="mt-1 text-xs leading-5 text-rose-50/95 drop-shadow-[0_1px_2px_rgba(0,0,0,.65)]">
+                                            {fullAddress(inquiry) || "Adresse ikke registrert"}
+                                          </p>
+                                          <p className="mt-1 text-[11px] text-rose-100/80">
+                                            {[inquiry.roof_type || inquiry.roofType, inquiry.building_type].filter(Boolean).join(" · ") || "Eiendomsinformasjon ikke registrert"}
+                                          </p>
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-orange-400/40 bg-orange-500/15 px-2.5 py-1 text-[11px] font-bold text-orange-100 backdrop-blur">
+                                            <Wrench className="h-3.5 w-3.5 shrink-0" />
+                                            {workStageLabel}
+                                          </span>
+                                          <span className={`inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-[11px] font-bold backdrop-blur ${progressClass}`}>
+                                            {displayStatus}
+                                          </span>
+                                        </div>
+                                        <div className="mt-auto space-y-3 border-t border-rose-200/20 pt-3">
+                                          <div className="grid grid-cols-2 gap-3 text-xs">
                                             <div className="min-w-0">
-                                              <p className="text-sm font-black leading-5 text-white">{customerName(inquiry)}</p>
-                                              <p className="mt-0.5 text-[11px] text-slate-400">Sak #{inquiry.id} · {serviceLabel(scheduleForInquiry?.service || inquiry.recommended_service)}</p>
+                                              <p className="text-[10px] font-semibold text-rose-100/75">Avtale / dato</p>
+                                              <p className="mt-1 break-words font-bold text-white">{appointmentLabel}</p>
                                             </div>
-                                            <span className={`inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${progressClass}`}>
-                                              {displayStatus}
-                                            </span>
+                                            <div className="min-w-0">
+                                              <p className="text-[10px] font-semibold text-rose-100/75">Arbeidsstatus</p>
+                                              <p className="mt-1 break-words font-bold text-white">{workStatusLabel}</p>
+                                            </div>
                                           </div>
-                                          <div className="flex flex-wrap items-start gap-x-2 gap-y-1 text-[11px] leading-5">
-                                            <span className="shrink-0 font-bold text-slate-400">Neste handling:</span>
-                                            <span className="min-w-0 flex-1 text-slate-200">{displayNextAction}</span>
+                                          <div className="rounded-xl border border-white/15 bg-[#24121b]/65 px-3 py-2.5 backdrop-blur-sm">
+                                            <p className="text-[10px] font-bold uppercase tracking-wide text-orange-200">Neste handling</p>
+                                            <p className="mt-1 text-xs font-semibold leading-5 text-white">{displayNextAction}</p>
                                           </div>
+                                          <span className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-300/40 bg-[#783b53]/80 px-4 py-2.5 text-xs font-black text-white transition-colors group-hover:bg-[#94506a]">
+                                            Åpne oppdrag <ArrowUpRight className="h-4 w-4" />
+                                          </span>
                                         </div>
-                                        <ChevronRight className="mt-3 h-4 w-4 shrink-0 text-slate-500 group-hover:text-cyan-300" />
                                       </div>
                                     </button>
                                   );
@@ -6844,17 +7145,29 @@ if (from < earliestDate) {
                       </button>)}
                     </div>}
                     <section className="overflow-hidden rounded-2xl border border-slate-700/50 bg-[#111526]">
-                      <div className="flex flex-wrap gap-1 border-b border-slate-700/50 p-2">
-                        <span className="rounded-lg border-b-2 border-cyan-400 bg-cyan-500/10 px-3 py-2 text-xs font-bold text-cyan-200">Oversikt</span>
-                        {!isDigitalInspection && <>
-                          <button type="button" onClick={() => setFieldWorkspaceTab("kontroll")} className="rounded-lg px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">Sjekklister</button>
-                          <button type="button" onClick={() => setFieldWorkspaceTab("dokumentasjon")} className="rounded-lg px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">Bilder</button>
-                          <button type="button" onClick={() => setFieldWorkspaceTab("rapport")} className="rounded-lg px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">Rapporter</button>
-                        </>}
-                        <button type="button" onClick={() => setView("dokumenter")} className="rounded-lg px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">Dokumenter</button>
-                        <button type="button" onClick={() => setView("meldinger")} className="rounded-lg px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">Meldinger</button>
-                        <button type="button" onClick={() => setView("team")} className="rounded-lg px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">Team</button>
+                      <div className="flex flex-wrap gap-1 border-b border-slate-700/50 p-2" role="tablist" aria-label="Informasjon for valgt oppdrag">
+                        {([
+                          { id: "oversikt", label: "Oversikt" },
+                          ...(!isDigitalInspection ? [
+                            { id: "sjekklister", label: "Sjekklister" },
+                            { id: "bilder", label: "Bilder" },
+                            { id: "rapporter", label: "Rapporter" },
+                          ] : []),
+                          { id: "dokumenter", label: "Dokumenter" },
+                          { id: "meldinger", label: "Meldinger" },
+                          { id: "team", label: "Team" },
+                        ] as { id: CasePanelTab; label: string }[]).map(tab => (
+                          <button key={tab.id} type="button" role="tab"
+                            aria-selected={casePanelTab === tab.id}
+                            onClick={() => setCasePanelTab(tab.id)}
+                            className={`rounded-lg px-3 py-2 text-xs font-bold transition ${casePanelTab === tab.id
+                              ? "border-b-2 border-rose-400 bg-rose-500/10 text-rose-100"
+                              : "text-slate-300 hover:bg-slate-800 hover:text-white"}`}>
+                            {tab.label}
+                          </button>
+                        ))}
                       </div>
+                      {casePanelTab === "oversikt" && (
                       <div className="grid gap-3 p-3 xl:grid-cols-2">
                         <article className="min-w-0 rounded-xl border border-slate-700/50 bg-[#130f21] p-4">
                           <h3 className="flex items-center gap-2 text-sm font-bold"><FileText className="h-4 w-4 text-slate-300"/> Kundens henvendelse</h3>
@@ -6869,6 +7182,99 @@ if (from < earliestDate) {
                           </div>}
                         </article>
                       </div>
+                      )}
+                      {casePanelTab === "sjekklister" && (
+                        <div className="space-y-3 p-4" role="tabpanel">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div><h3 className="text-sm font-bold text-white">Registrerte kontrollpunkter</h3>
+                              <p className="mt-1 text-xs text-slate-400">Skrivebeskyttet oversikt over lagrede vurderinger. Ingen kontrollpunkt endres her.</p></div>
+                            <button type="button" onClick={() => setFieldWorkspaceTab("kontroll")} className="rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-200">Åpne arbeidskontroll</button>
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs">
+                            {(["tg0", "tg1", "tg2", "tg3"] as const).map(tg => <span key={tg} className="rounded-lg border border-slate-700 bg-[#1e1520] px-3 py-2 text-slate-200">{tg.toUpperCase()}: {checklistRows.filter(item => (item.status || "").toLowerCase() === tg).length}</span>)}
+                            <span className="rounded-lg border border-slate-700 px-3 py-2 text-slate-200">{checklistRows.length} registrert</span>
+                          </div>
+                          {checklistRows.length === 0 ? <p className="rounded-xl border border-slate-700 p-4 text-xs text-slate-400">Ingen kontrollpunkter returnert for denne saken.</p> : (
+                            <div className="space-y-2">{checklistRows.map(item => (
+                              <article key={item.id} className="rounded-xl border border-slate-700/60 bg-[#130f21] p-3">
+                                <div className="flex items-start justify-between gap-3"><p className="text-xs font-semibold text-white">{item.item_title}</p>
+                                  <span className="shrink-0 rounded border border-slate-600 px-2 py-1 text-[10px] font-bold uppercase text-amber-200">{item.status || "Ikke vurdert"}</span></div>
+                                {item.comment && <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-slate-300">{item.comment}</p>}
+                                <div className="mt-2 flex flex-wrap gap-3 text-xs">
+                                  {item.photo_url && <a href={apiAssetUrl(item.photo_url)} target="_blank" rel="noreferrer" className="text-rose-200 underline">Bilde</a>}
+                                  {item.audio_url && <a href={apiAssetUrl(item.audio_url)} target="_blank" rel="noreferrer" className="text-rose-200 underline">Lydnotat</a>}
+                                </div>
+                              </article>
+                            ))}</div>
+                          )}
+                        </div>
+                      )}
+                      {casePanelTab === "bilder" && (
+                        <div className="space-y-3 p-4" role="tabpanel">
+                          <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-sm font-bold text-white">Bilder fra oppdraget ({dashboardPhotos.length})</h3>
+                            <button type="button" onClick={() => setFieldWorkspaceTab("dokumentasjon")} className="rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-200">Åpne bildedokumentasjon</button></div>
+                          {dashboardPhotosLoading ? <p className="text-xs text-slate-400">Henter bilder …</p> : dashboardPhotos.length === 0 ? <p className="rounded-xl border border-slate-700 p-4 text-xs text-slate-400">Ingen bilder registrert på dette oppdraget.</p> : (
+                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{dashboardPhotos.map(photo => (
+                              <a key={photo.id} href={apiAssetUrl(photo.photo_url)} target="_blank" rel="noopener noreferrer" className="overflow-hidden rounded-xl border border-slate-700/60 bg-[#130f21]">
+                                <img loading="lazy" src={apiAssetUrl(photo.photo_url)} alt={photo.caption_text || `Feltbilde ${photo.id}`} className="aspect-[4/3] w-full object-cover" />
+                                <p className="px-3 py-2 text-xs text-slate-300">{photo.caption_text || (photo.documentation_phase ? `Dokumentasjonsfase ${photo.documentation_phase}` : "Bilde fra oppdraget")}</p>
+                              </a>
+                            ))}</div>
+                          )}
+                        </div>
+                      )}
+                      {casePanelTab === "rapporter" && (
+                        <div className="space-y-3 p-4" role="tabpanel">
+                          <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-bold text-white">Rapporter</h3><button type="button" onClick={() => setFieldWorkspaceTab("rapport")} className="rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-200">Åpne rapportarbeid</button></div>
+                          {([ { label: "Rapport 1 · Teknisk rapport", row: report }, { label: "Rapport 2 · Utførelsesrapport", row: completionReport } ]).map(({label,row}) => (
+                            <article key={label} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-700/60 bg-[#130f21] p-4">
+                              <div><p className="text-xs font-bold text-white">{label}</p><p className="mt-1 text-xs text-slate-400">{row ? reportStatusLabel(row.status as ReportStatus) : "Ingen rapport registrert"}</p></div>
+                              {row?.pdf_url && <a href={apiAssetUrl(row.pdf_url)} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-200">Vis PDF</a>}
+                            </article>
+                          ))}
+                          {(loadingReport || loadingCompletionReport) && <p className="text-xs text-slate-400">Oppdaterer rapportstatus …</p>}
+                          {(reportError || completionReportError) && <p className="text-xs text-amber-200">{reportError || completionReportError}</p>}
+                        </div>
+                      )}
+                      {casePanelTab === "dokumenter" && (
+                        <div className="space-y-4 p-4" role="tabpanel">
+                          <h3 className="text-sm font-bold text-white">Sakens dokumenter og vedlegg</h3>
+                          <div className="space-y-2">
+                            {report?.pdf_url && <a href={apiAssetUrl(report.pdf_url)} target="_blank" rel="noopener noreferrer" className="block rounded-xl border border-slate-700 bg-[#130f21] p-3 text-xs text-rose-200">Rapport 1 – PDF</a>}
+                            {completionReport?.pdf_url && <a href={apiAssetUrl(completionReport.pdf_url)} target="_blank" rel="noopener noreferrer" className="block rounded-xl border border-slate-700 bg-[#130f21] p-3 text-xs text-rose-200">Rapport 2 – PDF</a>}
+                            {offerOverview[String(normalizeInquiryId(overviewInquiry.id))]?.title && <div className="rounded-xl border border-slate-700 bg-[#130f21] p-3"><p className="text-xs font-semibold text-white">Nyeste tilbud: {offerOverview[String(normalizeInquiryId(overviewInquiry.id))]?.title}</p><p className="mt-1 text-xs text-slate-400">{offerOverview[String(normalizeInquiryId(overviewInquiry.id))]?.status || "Status ukjent"}</p></div>}
+                          </div>
+                          <h4 className="text-xs font-bold text-slate-200">Vedlegg fra kundens forhåndskartlegging</h4>
+                          {casePanelFilesBusy ? <p className="text-xs text-slate-400">Henter vedlegg …</p> : casePanelFilesError ? <p className="text-xs text-amber-200">{casePanelFilesError}</p> : casePanelFiles.length === 0 ? <p className="text-xs text-slate-400">Ingen vedlegg returnert fra kundeskjemaet.</p> : (
+                            <div className="grid gap-2 sm:grid-cols-2">{casePanelFiles.map(file => <a key={file.id} href={apiAssetUrl(file.file_url)} target="_blank" rel="noopener noreferrer" className="min-w-0 break-words rounded-lg border border-slate-700 bg-[#130f21] px-3 py-3 text-xs text-rose-200">{file.original_name || `Vedlegg #${file.id}`}</a>)}</div>
+                          )}
+                          <p className="text-[11px] text-slate-500">Bilder vises separat under Bilder. Tilbudsposter uten dokumentlenke er ikke PDF-er.</p>
+                        </div>
+                      )}
+                      {casePanelTab === "meldinger" && (
+                        <div className="min-w-0 p-3" role="tabpanel">
+                          <ProjectManagerCommunication
+                            inquiries={[overviewInquiry]}
+                            projectManagerId={previewEmployee?.id ? Number(previewEmployee.id) : null}
+                            projectManagerName={previewEmployee?.name || null}
+                            onUnreadCountChange={() => { /* Sidebar count is managed by its own fetch. */ }}
+                            onOpenInquiry={(id) => { if (id === normalizeInquiryId(overviewInquiry.id)) setCasePanelTab("oversikt"); }}
+                          />
+                        </div>
+                      )}
+                      {casePanelTab === "team" && (
+                        <div className="space-y-3 p-4" role="tabpanel">
+                          <h3 className="text-sm font-bold text-white">Team og planlegging</h3>
+                          {(() => { const team = teamOverview[String(normalizeInquiryId(overviewInquiry.id))]; const schedule = fieldScheduleOverview[String(normalizeInquiryId(overviewInquiry.id))]; return (
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <article className="rounded-xl border border-slate-700 bg-[#130f21] p-4"><p className="text-xs text-slate-400">Prosjektansvarlig</p><p className="mt-2 text-sm font-semibold text-white">{team?.project_manager?.name || overviewInquiry.assigned_to || "Ikke tildelt"}</p></article>
+                              <article className="rounded-xl border border-slate-700 bg-[#130f21] p-4"><p className="text-xs text-slate-400">Tekniker</p><p className="mt-2 text-sm font-semibold text-white">{team?.technician?.name || "Ikke tildelt"}</p></article>
+                              <article className="rounded-xl border border-slate-700 bg-[#130f21] p-4 sm:col-span-2"><p className="text-xs text-slate-400">Registrert tidsforslag</p><p className="mt-2 text-sm font-semibold text-white">{schedule ? formatFieldScheduleDateTime(schedule) : "Ikke registrert"}</p><p className="mt-1 text-xs text-slate-400">{schedule?.status || "Ingen status"}</p></article>
+                            </div>
+                          ); })()}
+                          <button type="button" onClick={() => setView("team")} className="rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-200">Åpne teamplanlegging for endringer</button>
+                        </div>
+                      )}
                     </section>
                   </div>
                   <aside className="min-w-0 space-y-4">

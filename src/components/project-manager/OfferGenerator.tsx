@@ -17,6 +17,7 @@ import OfferWorkTemplates, { appendWorkSuggestions } from "./OfferWorkTemplates"
 import OfferQuantityCalculator from "./OfferQuantityCalculator";
 import OfferWorkDescriptionEditor from "./OfferWorkDescriptionEditor";
 import { API_BASE, apiAssetUrl } from "../../lib/api";
+import DirectOfferPublishControl from "../DirectOfferPublishControl";
 export type OfferService = "lekkasjesok" | "takkontroll" | "service";
 export type FollowUpType = "service" | "varig_utbedring";
 interface OfferInquiry {
@@ -33,6 +34,7 @@ interface OfferEmployee {
 }
 interface OfferDraft {
   id?: number;
+  offer_number?: string | null;
   service: OfferService;
   title: string;
   description: string;
@@ -427,53 +429,6 @@ export default function OfferGenerator({
       setGeneratingAi(false);
     }
   };
-  // Aktiveres først etter godkjent backend-integrasjon.
-  const DIRECT_PUBLISH_BACKEND_READY = false;
-
-  const publishDirectOffer = async () => {
-    if (!DIRECT_PUBLISH_BACKEND_READY || !allowPublish) {
-      setError("Direkte publisering er ikke aktivert ennå.");
-      return;
-    }
-
-    if (!draft.id || !pdfUrl || pdfDirty) {
-      setError("Lagre utkastet og generer en oppdatert PDF før publisering.");
-      return;
-    }
-
-    setPublishing(true);
-    setError("");
-    setMessage("");
-
-    try {
-      const response = await fetch(
-        `${API_BASE}/admin_direct_offer_publish.php`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ offer_id: Number(draft.id) }),
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok || !data.success || !data.published) {
-        throw new Error(data.message || "Kunne ikke publisere tilbudet.");
-      }
-
-      setMessage("Tilbudet er publisert til kunden.");
-
-      await onPublished?.();
-      onClose();
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Publisering mislyktes."
-      );
-    } finally {
-      setPublishing(false);
-    }
-  };
   const saveDraft = async (publish = false) => {
     if (initialOffer?.id && initialOffer.status && initialOffer.status !== "utkast") {
       setError("Tilbudet er ikke et utkast og kan ikke redigeres her.");
@@ -564,7 +519,11 @@ export default function OfferGenerator({
           );
         }
         offerId = Number(createData.offer.id);
-        setDraft((current) => ({ ...current, id: offerId }));
+        setDraft((current) => ({
+          ...current,
+          id: offerId,
+          offer_number: String(createData.offer.offer_number || ""),
+        }));
       } else {
         const updateRes = await fetch(`${API_BASE}/offers.php`, {
           method: "PUT",
@@ -598,6 +557,9 @@ export default function OfferGenerator({
           throw new Error(
             updateData.message || "Kunne ikke oppdatere tilbudsutkastet."
           );
+        }
+        if (typeof updateData.offer?.offer_number === "string") {
+          setDraft(current => ({ ...current, offer_number: updateData.offer.offer_number }));
         }
       }
       if (!publish) {
@@ -1162,10 +1124,26 @@ export default function OfferGenerator({
                 </span>
               )}
             </button>
-            {allowPublish && (publicationFlow !== "direct" || DIRECT_PUBLISH_BACKEND_READY) ? (
+            {publicationFlow === "direct" && allowPublish ? (
+              <DirectOfferPublishControl
+                offerId={Number(draft.id || 0)}
+                offerNumber={String(draft.offer_number || "")}
+                title={draft.title}
+                amountLabel={calculation.pricingMode === "fixed"
+                  ? `kr ${calculateOffer(calculation).exclVat.toLocaleString("nb-NO")} eks. mva.`
+                  : "Arbeid etter medgått tid – se PDF for pris"}
+                pdfUrl={pdfUrl && !pdfDirty ? apiAssetUrl(pdfUrl) : ""}
+                disabled={!draft.id || !draft.offer_number || !pdfUrl || pdfDirty || saving || generatingPdf}
+                buttonLabel="Publiser til kunde"
+                onPublished={async () => {
+                  await onPublished?.();
+                  onClose();
+                }}
+              />
+            ) : allowPublish && publicationFlow !== "direct" ? (
               <button
                 type="button"
-                onClick={() => publicationFlow === "direct" ? publishDirectOffer() : saveDraft(true)}
+                onClick={() => saveDraft(true)}
                 disabled={saving || publishing || !pdfUrl || pdfDirty}
                 className="rounded-xl bg-[#F5B800] px-5 py-2.5 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:opacity-50"
               >

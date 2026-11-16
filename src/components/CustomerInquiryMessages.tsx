@@ -1,3 +1,4 @@
+import { messageFetch } from "../lib/messageApi";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
@@ -8,9 +9,11 @@ import {
 } from "lucide-react";
 import { apiUrl } from "../lib/api";
 
+
 interface MessageRow {
   id: number;
   thread_id: number;
+  thread_status?: string;
   inquiry_id: number;
   sender_type: "customer" | "admin" | "project_manager";
   sender_id?: number | null;
@@ -33,6 +36,7 @@ interface CustomerInquiryMessagesProps {
   customerName?: string | null;
   showComposer?: boolean;
   refreshKey?: number;
+  previewMode?: boolean;
 }
 
 export default function CustomerInquiryMessages({
@@ -41,7 +45,9 @@ export default function CustomerInquiryMessages({
   customerName,
   showComposer = true,
   refreshKey = 0,
+  previewMode = false,
 }: CustomerInquiryMessagesProps) {
+  const messagesRequest = (url: string, init?: RequestInit) => messageFetch(url, init, previewMode ? "admin" : "customer");
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [messageText, setMessageText] = useState("");
   const [loading, setLoading] = useState(true);
@@ -66,7 +72,7 @@ export default function CustomerInquiryMessages({
     setError("");
 
     try {
-      const res = await fetch(
+      const res = await messagesRequest(
         apiUrl(`/messages.php?inquiry_id=${inquiryId}`)
       );
       const data = await res.json();
@@ -95,10 +101,10 @@ export default function CustomerInquiryMessages({
           !item.read_at
       );
 
-      if (unreadIncoming.length > 0) {
+      if (unreadIncoming.length > 0 && !previewMode) {
         await Promise.all(
           unreadIncoming.map((item) =>
-            fetch(apiUrl("/messages.php"), {
+            messagesRequest(apiUrl("/messages.php"), {
               method: "PATCH",
               headers: {
                 "Content-Type": "application/json",
@@ -133,6 +139,7 @@ export default function CustomerInquiryMessages({
   };
 
   const sendMessage = async () => {
+    if (previewMode) { setError("Administratorens forhåndsvisning er kun for lesing."); return; }
     const text = messageText.trim();
     if (!text || sending || !inquiryId) return;
 
@@ -140,13 +147,14 @@ export default function CustomerInquiryMessages({
     setError("");
 
     try {
-      const res = await fetch(apiUrl("/messages.php"), {
+      const res = await messagesRequest(apiUrl("/messages.php"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           inquiry_id: inquiryId,
+          thread_id: [...visibleMessages].reverse().find((m) => m.thread_status === "open")?.thread_id,
           sender_type: "customer",
           sender_id: customerId || undefined,
           sender_name: customerName || "Kunde",
