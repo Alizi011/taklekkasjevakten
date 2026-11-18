@@ -1,3 +1,4 @@
+import AdminCaseOrganizations from "../components/AdminCaseOrganizations";
 import MarketingPhotoLibrary from "./MarketingPhotoLibrary";
 import NewManualInquiryModal from '../components/NewManualInquiryModal';
 import { useState, useEffect, useRef } from "react";
@@ -2226,6 +2227,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
   if (selectedInquiry) {
     return (
+      <>
+        <AdminCaseOrganizations inquiryId={Number(selectedInquiry.id)} />
       <InquiryDetail
         inquiry={selectedInquiry}
         coreCaseStatus={coreStatusForRow(selectedInquiry)}
@@ -2261,6 +2264,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           setPreviewEmployee(projectManager);
         }}
       />
+      </>
     );
   }
 
