@@ -1,4 +1,4 @@
-import AdminHistoricalCoreProjects from "../components/AdminHistoricalCoreProjects";
+import AdminHistoricalCoreProjects, { type HistoricalProject } from "../components/AdminHistoricalCoreProjects";
 import MarketingPhotoLibrary from "./MarketingPhotoLibrary";
 import NewManualInquiryModal from '../components/NewManualInquiryModal';
 import { useState, useEffect, useRef } from "react";
@@ -352,6 +352,9 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   
   const [showNewManualInquiry, setShowNewManualInquiry] = useState(false);
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
+  const [historicalCoreProjects, setHistoricalCoreProjects] = useState<HistoricalProject[]>([]);
+  const [historicalLoading, setHistoricalLoading] = useState(true);
+  const [historicalError, setHistoricalError] = useState("");
   const [pausedInquiryIds, setPausedInquiryIds] = useState<number[]>([]);
   const [pauseListError, setPauseListError] = useState("");
   const [loading, setLoading] = useState<boolean>(true);
@@ -1789,6 +1792,26 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     setPreviewCustomerInquiryId(Number(latestInquiry.id));
   };
 
+  // Historical TLV projects are read-only in Core and do not create inquiries.
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    fetch(apiUrl("/admin_historical_tlv_projects.php"), {
+      credentials: "include", cache: "no-store", signal: controller.signal,
+    }).then(async res => {
+      const body = await res.json().catch(() => null);
+      if (!res.ok || body?.success !== true || !Array.isArray(body.projects)) {
+        throw new Error(body?.message || "Historiske Core-prosjekter kunne ikke hentes.");
+      }
+      if (!cancelled) setHistoricalCoreProjects(body.projects);
+    }).catch(err => {
+      if (!cancelled && !controller.signal.aborted) {
+        setHistoricalError(err instanceof Error ? err.message : "Historikk er utilgjengelig.");
+      }
+    }).finally(() => { if (!cancelled) setHistoricalLoading(false); });
+    return () => { cancelled = true; controller.abort(); };
+  }, []);
+
   const isCompletedInquiry = (inq: Inquiry): boolean => {
     const core = coreCaseStatusForInquiry(coreCaseStatuses, inq.id);
 
@@ -2058,7 +2081,16 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const coreStatusSourceAvailable = coreCaseStatuses.state === "ready";
   const coreStatusForRow = (inquiry: Inquiry): CoreCaseStatusView =>
     coreCaseStatusForInquiry(coreCaseStatuses, inquiry.id);
-  const coreStatusCounts = countCoreStatusRows(dashboardRows, coreStatusForRow, coreStatusSourceAvailable);
+  // Avoid counting completed Core projects already represented by a TLV inquiry.
+  const knownInquiryIds = new Set(inquiries.map(i => Number(i.id)));
+  const unlinkedHistorical = historicalCoreProjects.filter(project => {
+    const match = /^inquiry:(\\d+)$/.exec(project.source_reference || "");
+    return !match || !knownInquiryIds.has(Number(match[1]));
+  });
+  const baseStatusCounts = countCoreStatusRows(dashboardRows, coreStatusForRow, coreStatusSourceAvailable);
+  const coreStatusCounts = baseStatusCounts && !historicalLoading && !historicalError
+    ? { ...baseStatusCounts, completed: baseStatusCounts.completed + unlinkedHistorical.length }
+    : baseStatusCounts;
   const coreFilteredRows = filterCoreStatusRows(dashboardRows, coreStatusFilter, coreStatusForRow, coreStatusCounts !== null);
 
   const openDashboardView = (tab: "aktive" | "handling" | "rapporter" | "avsluttede", filter = "alle") => {
@@ -2878,6 +2910,15 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           </div>
         )}
 
+        {activeTab === "oppdrag" && activeSubTab === "aktive" && coreStatusFilter === "completed" && (
+          <AdminHistoricalCoreProjects
+            existingInquiryIds={inquiries.map(i => Number(i.id))}
+            projects={historicalCoreProjects}
+            loadingExternal={historicalLoading}
+            errorExternal={historicalError}
+          />
+        )}
+
         {activeTab === "oppdrag" &&
           activeSubTab === "avsluttede" &&
           completedInquiries.length > 0 && (
@@ -2942,7 +2983,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         )}
 
         {activeTab === "oppdrag" && activeSubTab === "avsluttede" && (
-          <AdminHistoricalCoreProjects existingInquiryIds={inquiries.map(i => Number(i.id))} />
+          <AdminHistoricalCoreProjects
+            existingInquiryIds={inquiries.map(i => Number(i.id))}
+            projects={historicalCoreProjects}
+            loadingExternal={historicalLoading}
+            errorExternal={historicalError}
+          />
         )}
 
         {activeTab === "oppdrag" &&
