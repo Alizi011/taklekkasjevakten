@@ -2,6 +2,7 @@ import AdminHistoricalCoreProjects, { type HistoricalProject } from "../componen
 import HistoricalCoreCaseDetail from "./HistoricalCoreCaseDetail";
 import MarketingPhotoLibrary from "./MarketingPhotoLibrary";
 import NewManualInquiryModal from '../components/NewManualInquiryModal';
+import NewPriceOfferChooser from "../components/NewPriceOfferChooser";
 import { useState, useEffect, useRef } from "react";
 import {
   Inbox,
@@ -352,6 +353,9 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   >(null);
   
   const [showNewManualInquiry, setShowNewManualInquiry] = useState(false);
+  const [showNewPriceOffer, setShowNewPriceOffer] = useState(false);
+  const [offerAfterNewInquiry, setOfferAfterNewInquiry] = useState(false);
+  const [selectedInquiryOpensOffer, setSelectedInquiryOpensOffer] = useState(false);
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [historicalCoreProjects, setHistoricalCoreProjects] = useState<HistoricalProject[]>([]);
   const [historicalLoading, setHistoricalLoading] = useState(true);
@@ -2276,10 +2280,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   if (selectedInquiry) {
     return (
       <InquiryDetail
+        key={Number(selectedInquiry.id)}
+        initialTab={selectedInquiryOpensOffer ? "offer" : "overview"}
         inquiry={selectedInquiry}
         coreCaseStatus={coreStatusForRow(selectedInquiry)}
         onBack={() => {
           setSelectedInquiry(null);
+          setSelectedInquiryOpensOffer(false);
           fetchInquiries();
         }}
         onUpdateInquiry={(updated) => {
@@ -2648,11 +2655,15 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setShowNewManualInquiry(true)}
+                  onClick={() => { setOfferAfterNewInquiry(false); setShowNewManualInquiry(true); }}
                   className="rounded-xl bg-rose-700 px-4 py-3 text-sm font-bold text-white hover:bg-rose-600"
                 >
                   <Plus className="mr-1 inline h-4 w-4" />
                   Nytt oppdrag
+                </button>
+                <button type="button" onClick={() => setShowNewPriceOffer(true)}
+                  className="inline-flex items-center rounded-xl border border-rose-400/50 bg-[#54263a] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#6c3049]">
+                  <FileText className="mr-2 h-4 w-4" /> Nytt pristilbud
                 </button>
                 <div className="flex items-center gap-2 rounded-xl border border-[#673344] bg-[#290f19] px-4 py-3 text-xs font-semibold text-[#e9cbd3]">
                   <Calendar className="h-4 w-4 text-rose-300" />
@@ -2661,13 +2672,45 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               </div>
             )}
             {activeTab === "oppdrag" && (
+              <NewPriceOfferChooser open={showNewPriceOffer} inquiries={inquiries}
+                onClose={() => setShowNewPriceOffer(false)}
+                onChoose={(id) => {
+                  const inquiry = inquiries.find(item => Number(item.id) === id);
+                  if (!inquiry) { window.alert("Saken finnes ikke i den lastede oversikten. Oppdater siden."); return; }
+                  setShowNewPriceOffer(false);
+                  setSelectedInquiryOpensOffer(true);
+                  setSelectedInquiry(inquiry);
+                }}
+                onNewCase={() => {
+                  setShowNewPriceOffer(false);
+                  setOfferAfterNewInquiry(true);
+                  setShowNewManualInquiry(true);
+                }}
+              />
+            )}
+            {activeTab === "oppdrag" && (
               <NewManualInquiryModal
                 open={showNewManualInquiry}
                 onClose={() => setShowNewManualInquiry(false)}
                 endpoint={apiUrl("/admin_manual_inquiry.php")}
-                onCreated={async () => {
+                onCreated={async (id) => {
+                  const fromOffer = offerAfterNewInquiry;
+                  setShowNewManualInquiry(false);
+                  setOfferAfterNewInquiry(false);
                   await fetchInquiries();
                   setActiveSubTab("aktive");
+                  if (fromOffer) {
+                    try {
+                      const response = await fetch(apiUrl("/inquiries.php"), { cache: "no-store", credentials: "include" });
+                      const rows = await response.json();
+                      const created = Array.isArray(rows) ? rows.find((item: Inquiry) => Number(item.id) === Number(id)) : null;
+                      if (!created) throw new Error("Oppdraget ble opprettet, men kunne ikke åpnes automatisk.");
+                      setSelectedInquiryOpensOffer(true);
+                      setSelectedInquiry(created);
+                    } catch (error) {
+                      window.alert(error instanceof Error ? error.message : "Kunne ikke åpne det nye oppdraget.");
+                    }
+                  }
                 }}
               />
             )}
