@@ -1,4 +1,5 @@
 import AdminHistoricalCoreProjects, { type HistoricalProject } from "../components/AdminHistoricalCoreProjects";
+import HistoricalCoreCaseDetail from "./HistoricalCoreCaseDetail";
 import MarketingPhotoLibrary from "./MarketingPhotoLibrary";
 import NewManualInquiryModal from '../components/NewManualInquiryModal';
 import { useState, useEffect, useRef } from "react";
@@ -364,6 +365,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [serviceFilter, setServiceFilter] = useState<string>("alle");
   const [sortNewest, setSortNewest] = useState(true);
   const [selectedInquiry, setSelectedInquiry] = useState<Inquiry | null>(null);
+  const [selectedHistoricalProject, setSelectedHistoricalProject] = useState<HistoricalProject | null>(null);
   const [previewCustomerInquiryId, setPreviewCustomerInquiryId] = useState<number | null>(null);
   const [previewBusinessCustomerId, setPreviewBusinessCustomerId] = useState<number | null>(null);
   const [previewEmployee, setPreviewEmployee] = useState<Employee | null>(null);
@@ -2267,6 +2269,10 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     );
   }
 
+  if (selectedHistoricalProject) {
+    return <HistoricalCoreCaseDetail project={selectedHistoricalProject} onBack={() => setSelectedHistoricalProject(null)} />;
+  }
+
   if (selectedInquiry) {
     return (
       <InquiryDetail
@@ -2841,6 +2847,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         projects={matchingHistorical}
                         query=""
                         sortNewest={sortNewest}
+                        onOpen={setSelectedHistoricalProject}
                       />
                     )}
                     {coreFilteredRows.map((inq) => {
