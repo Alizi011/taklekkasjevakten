@@ -49,7 +49,7 @@ export default function AdminHistoricalCoreProjects({ existingInquiryIds }: Prop
 
   const existing = useMemo(() => new Set(existingInquiryIds.map(Number)), [existingInquiryIds]);
   const archived = useMemo(() => items.filter(project => {
-    const match = /^inquiry:(\\d+)$/.exec(project.source_reference || "");
+    const match = /^inquiry:(\d+)$/.exec(project.source_reference || "");
     return !match || !existing.has(Number(match[1]));
   }), [items, existing]);
   const visible = archived.filter(project => (
