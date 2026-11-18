@@ -795,7 +795,7 @@ export default function InquiryDetail({
   const [showBrregInline, setShowBrregInline] = useState(false);
   const [showDocumentsInOverview, setShowDocumentsInOverview] = useState(false);
   // Separate read-only tabs inside the existing case overview; do not switch adminCaseTab.
-  const [overviewInlineMedia, setOverviewInlineMedia] = useState<"overview" | "photos" | "report" | "offers" | "messages">("overview");
+  const [overviewInlineMedia, setOverviewInlineMedia] = useState<"overview" | "photos" | "report" | "offers" | "messages" | "organisations">("overview");
   const [rightPanelTab, setRightPanelTab] = useState<"process" | "activity" | "override" | "offers">("process");
   const [repairOfferTab, setRepairOfferTab] = useState<"akseptert" | "avvist" | "ovrige">("akseptert");
 
