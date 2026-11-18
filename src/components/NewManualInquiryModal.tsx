@@ -160,6 +160,12 @@ export default function NewManualInquiryModal({ open, onClose, onCreated, endpoi
     e.preventDefault();
     if (saving) return;
     setError('');
+    if (!['lekkasjesok','takkontroll','reparasjon','vedlikehold','annet'].includes(form.inquiry_type)) {
+      setError('Velg oppdragstype øverst i skjemaet før du oppretter oppdraget.'); return;
+    }
+    if (!['telefon','epost','direkte','befaring','annet'].includes(form.source)) {
+      setError('Velg en gyldig kilde under «Mottatt via».'); return;
+    }
     if (!form.customer_name.trim() || !form.phone.trim() || !form.address.trim() || !form.city.trim()) {
       setError('Kundenavn, telefon, adresse og sted må fylles ut.'); return;
     }
@@ -197,8 +203,8 @@ export default function NewManualInquiryModal({ open, onClose, onCreated, endpoi
         </div>
         <form onSubmit={submit} className="space-y-5">
           <div className="grid gap-4 sm:grid-cols-2">
-            <div><label className={label} htmlFor="manual-service">Oppdragstype</label><select id="manual-service" className={field} value={form.inquiry_type} onChange={e => update('inquiry_type', e.target.value as ManualInquiryPayload['inquiry_type'])}><option value="" disabled>Velg oppdragstype</option><option value="lekkasjesok">Lekkasjesøk</option><option value="takkontroll">Takkontroll</option><option value="reparasjon">Reparasjon / utbedring</option><option value="vedlikehold">Vedlikehold</option><option value="annet">Annet</option></select></div>
-            <div><label className={label} htmlFor="manual-source">Mottatt via</label><select id="manual-source" className={field} value={form.source} onChange={e => update('source', e.target.value as ManualInquiryPayload['source'])}><option value="telefon">Telefon</option><option value="epost">E-post</option><option value="direkte">Direkte kunde</option><option value="befaring">Befaring</option><option value="vedlikehold">Vedlikehold</option><option value="annet">Annet</option></select></div>
+            <div><label className={label} htmlFor="manual-service">Oppdragstype</label><select id="manual-service" required className={field} value={form.inquiry_type} onChange={e => update('inquiry_type', e.target.value as ManualInquiryPayload['inquiry_type'])}><option value="" disabled>Velg oppdragstype</option><option value="lekkasjesok">Lekkasjesøk</option><option value="takkontroll">Takkontroll</option><option value="reparasjon">Reparasjon / utbedring</option><option value="vedlikehold">Vedlikehold</option><option value="annet">Annet</option></select></div>
+            <div><label className={label} htmlFor="manual-source">Mottatt via</label><select id="manual-source" className={field} value={form.source} onChange={e => update('source', e.target.value as ManualInquiryPayload['source'])}><option value="telefon">Telefon</option><option value="epost">E-post</option><option value="direkte">Direkte kunde</option><option value="befaring">Befaring</option><option value="annet">Annet</option></select></div>
           </div>
           {customerError && <p role="alert" className="text-sm text-amber-300">{customerError}</p>}
                     <div className="space-y-2">
