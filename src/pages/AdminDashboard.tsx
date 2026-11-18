@@ -2092,6 +2092,16 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     ? { ...baseStatusCounts, completed: baseStatusCounts.completed + unlinkedHistorical.length }
     : baseStatusCounts;
   const coreFilteredRows = filterCoreStatusRows(dashboardRows, coreStatusFilter, coreStatusForRow, coreStatusCounts !== null);
+  const historicalCompletedVisible = activeSubTab === "aktive" &&
+    coreStatusFilter === "completed" && !historicalLoading && !historicalError;
+  const historicalSearch = searchQuery.trim().toLocaleLowerCase("nb-NO");
+  const matchingHistorical = historicalCompletedVisible
+    ? unlinkedHistorical.filter(project =>
+        !historicalSearch || [project.project_number, project.title, project.customer_name,
+          project.description, String(project.id)].some(v =>
+          (v || "").toLocaleLowerCase("nb-NO").includes(historicalSearch)))
+    : [];
+  const completedGridCount = coreFilteredRows.length + matchingHistorical.length;
 
   const openDashboardView = (tab: "aktive" | "handling" | "rapporter" | "avsluttede", filter = "alle") => {
     setActiveSubTab(tab);
@@ -2809,7 +2819,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     {(workTab !== "alle" || activeSubTab === "handling" || activeSubTab === "rapporter") && (
                       <h3 className="mt-2 text-base font-black text-white">{workTab !== "alle" ? workTabOptions.find((tab) => tab.id === workTab)?.label : activeSubTab === "handling" ? "Oppdrag som krever handling" : "Rapporter til behandling"}</h3>
                     )}
-                    <p className="mt-1 text-xs text-[#d9b8c3]">{!coreStatusSourceAvailable && coreStatusFilter !== "all" ? "Antall for valgt hovedstatus er ukjent." : `${coreFilteredRows.length} oppdrag vises · åpne en rad for full saksinformasjon`}</p>
+                    <p className="mt-1 text-xs text-[#d9b8c3]">{!coreStatusSourceAvailable && coreStatusFilter !== "all" ? "Antall for valgt hovedstatus er ukjent." : `${completedGridCount} oppdrag vises · åpne et kort for full saksinformasjon`}</p>
                   </div>
                   <button type="button" onClick={() => setSortNewest((v) => !v)} className="inline-flex items-center gap-2 rounded-lg border border-[#693546] bg-[#391a27] px-3 py-2 text-xs font-semibold text-[#ecd0d8]"><ArrowUpDown className="h-3.5 w-3.5" /> Nummer {sortNewest ? "nyeste først" : "eldste først"}</button>
                 </div>
@@ -2822,10 +2832,17 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   <div className="flex items-center justify-center gap-2 p-12 text-sm text-[#e2c3cd]"><Loader2 className="h-4 w-4 animate-spin" /> Henter oppdrag…</div>
                 ) : !coreStatusSourceAvailable && coreStatusFilter !== "all" ? (
                   <div role="alert" className="p-8 text-sm text-amber-200">Core-status kunne ikke hentes. Kan ikke vise valgt hovedstatus. Oppdater data eller velg «Alle oppdrag» for å vise saker uten statusfiltrering.</div>
-                ) : coreFilteredRows.length === 0 ? (
+                ) : completedGridCount === 0 ? (
                   <div className="p-12 text-center text-sm text-[#d9b8c3]">Ingen oppdrag samsvarer med filtrene.</div>
                 ) : (
                   <div className="grid grid-cols-1 gap-3 p-3 sm:p-4 lg:grid-cols-2 2xl:grid-cols-3">
+                    {historicalCompletedVisible && (
+                      <AdminHistoricalCoreProjects
+                        projects={matchingHistorical}
+                        query=""
+                        sortNewest={sortNewest}
+                      />
+                    )}
                     {coreFilteredRows.map((inq) => {
                       const id = inq.id.toString();
                       const responsible = String((inq as any).assigned_to || "").trim();
@@ -2910,15 +2927,6 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           </div>
         )}
 
-        {activeTab === "oppdrag" && activeSubTab === "aktive" && coreStatusFilter === "completed" && (
-          <AdminHistoricalCoreProjects
-            existingInquiryIds={inquiries.map(i => Number(i.id))}
-            projects={historicalCoreProjects}
-            loadingExternal={historicalLoading}
-            errorExternal={historicalError}
-          />
-        )}
-
         {activeTab === "oppdrag" &&
           activeSubTab === "avsluttede" &&
           completedInquiries.length > 0 && (
@@ -2980,15 +2988,6 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               ))}
             </div>
           </section>
-        )}
-
-        {activeTab === "oppdrag" && activeSubTab === "avsluttede" && (
-          <AdminHistoricalCoreProjects
-            existingInquiryIds={inquiries.map(i => Number(i.id))}
-            projects={historicalCoreProjects}
-            loadingExternal={historicalLoading}
-            errorExternal={historicalError}
-          />
         )}
 
         {activeTab === "oppdrag" &&
