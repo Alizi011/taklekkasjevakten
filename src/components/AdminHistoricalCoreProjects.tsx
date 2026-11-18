@@ -3,7 +3,7 @@ import { Archive, ChevronDown, ChevronUp, RefreshCw, Search } from "lucide-react
 import { apiUrl } from "../lib/api";
 
 // Core is source of truth. Historical projects are read-only, never converted into inquiries.
-type HistoricalProject = {
+export type HistoricalProject = {
   id: number;
   project_number: string | null;
   title: string;
@@ -19,9 +19,9 @@ type HistoricalProject = {
   updated_at: string | null;
   historical: number | string | null;
 };
-type Props = { existingInquiryIds: number[] };
+type Props = { existingInquiryIds: number[]; projects?: HistoricalProject[]; loadingExternal?: boolean; errorExternal?: string };
 const fmtDate = (v: string | null) => v ? v.slice(0, 10).split("-").reverse().join(".") : "Ikke registrert";
-export default function AdminHistoricalCoreProjects({ existingInquiryIds }: Props) {
+export default function AdminHistoricalCoreProjects({ existingInquiryIds, projects, loadingExternal, errorExternal }: Props) {
   const [items, setItems] = useState<HistoricalProject[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -30,6 +30,7 @@ export default function AdminHistoricalCoreProjects({ existingInquiryIds }: Prop
   const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
+    if (projects !== undefined) return;
     const controller = new AbortController();
     setLoading(true);
     setError("");
@@ -45,18 +46,21 @@ export default function AdminHistoricalCoreProjects({ existingInquiryIds }: Prop
       if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "Ukjent feil.");
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [refresh]);
+  }, [refresh, projects]);
 
   const existing = useMemo(() => new Set(existingInquiryIds.map(Number)), [existingInquiryIds]);
-  const archived = useMemo(() => items.filter(project => {
+  const sourceItems = projects ?? items;
+  const archived = useMemo(() => sourceItems.filter(project => {
     const match = /^inquiry:(\d+)$/.exec(project.source_reference || "");
     return !match || !existing.has(Number(match[1]));
-  }), [items, existing]);
+  }), [sourceItems, existing]);
   const visible = archived.filter(project => (
     [project.project_number, project.title, project.customer_name, project.description]
       .some(v => (v || "").toLowerCase().includes(search.toLowerCase().trim()))
   ));
-  const linked = items.length - archived.length;
+  const linked = sourceItems.length - archived.length;
+  const isLoading = projects === undefined ? loading : Boolean(loadingExternal);
+  const currentError = projects === undefined ? error : errorExternal || "";
 
   return <section className="mt-5 overflow-hidden rounded-2xl border border-slate-800/75 bg-[#32121d] text-white">
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/70 px-5 py-4">
@@ -65,14 +69,14 @@ export default function AdminHistoricalCoreProjects({ existingInquiryIds }: Prop
         <p className="mt-1 text-xs text-[#cbb2bd]">Viser avsluttede Taklekkasjevakten-prosjekter uten eget TLV-sakskort. Data leses direkte fra Core; ingen ny henvendelse opprettes.</p>
         <p className="mt-1 text-[11px] text-[#cbb2bd]">{archived.length} historiske prosjekter · {linked} allerede koblet til eksisterende TLV-saker</p>
       </div>
-      <button type="button" onClick={() => setRefresh(v => v + 1)} disabled={loading}
+      <button type="button" onClick={() => projects === undefined ? setRefresh(v => v + 1) : window.location.reload()} disabled={isLoading}
         className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold hover:bg-white/5 disabled:opacity-50">
         <RefreshCw size={14}/> Oppdater fra Core
       </button>
     </div>
-    {error && <p role="alert" className="m-4 rounded-lg border border-rose-600/50 bg-rose-950/40 p-3 text-xs text-rose-200">{error}</p>}
-    {loading && <p className="p-5 text-xs text-slate-300">Henter historiske prosjekter …</p>}
-    {!loading && !error && <>
+    {currentError && <p role="alert" className="m-4 rounded-lg border border-rose-600/50 bg-rose-950/40 p-3 text-xs text-rose-200">{currentError}</p>}
+    {isLoading && <p className="p-5 text-xs text-slate-300">Henter historiske prosjekter …</p>}
+    {!isLoading && !currentError && <>
       <div className="relative mx-5 my-4">
         <Search size={15} className="absolute left-3 top-3 text-slate-400"/>
         <input aria-label="Søk historiske prosjekter" value={search} onChange={e => setSearch(e.target.value)}
