@@ -1,3 +1,4 @@
+import AdminHistoricalCoreProjects from "../components/AdminHistoricalCoreProjects";
 import MarketingPhotoLibrary from "./MarketingPhotoLibrary";
 import NewManualInquiryModal from '../components/NewManualInquiryModal';
 import { useState, useEffect, useRef } from "react";
@@ -2938,6 +2939,10 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               ))}
             </div>
           </section>
+        )}
+
+        {activeTab === "oppdrag" && activeSubTab === "avsluttede" && (
+          <AdminHistoricalCoreProjects existingInquiryIds={inquiries.map(i => Number(i.id))} />
         )}
 
         {activeTab === "oppdrag" &&
