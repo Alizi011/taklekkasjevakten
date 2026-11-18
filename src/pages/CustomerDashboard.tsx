@@ -1,3 +1,5 @@
+import CustomerCasePhotoGallery from "../components/CustomerCasePhotoGallery";
+import CustomerMyCases from "../components/CustomerMyCases";
 import { messageFetch } from "../lib/messageApi";
 import CustomerAgreementSchedule from "@/components/CustomerAgreementSchedule";
 import CustomerFollowupTimeline from "@/components/CustomerFollowupTimeline";
@@ -58,6 +60,7 @@ interface CustomerDashboardProps {
   previewInquiryId?: number;
   previewMode?: boolean;
   onOpenBusinessPreview?: (customerId: number) => void;
+  onPreviewCase?: (inquiryId: number) => void;
 }
 
 type ReportStatus =
@@ -678,6 +681,7 @@ export default function CustomerDashboard({
   previewInquiryId,
   previewMode = false,
   onOpenBusinessPreview,
+  onPreviewCase,
 }: CustomerDashboardProps) {
   const messagesRequest = (url: string, init?: RequestInit) => messageFetch(url, init, previewMode ? "admin" : "customer");
   const [showSubmittedSummary, setShowSubmittedSummary] = useState(false);
@@ -717,6 +721,11 @@ export default function CustomerDashboard({
   const [agreementPdfOpen, setAgreementPdfOpen] = useState(false);
   const [resolvedSignerAgreement, setResolvedSignerAgreement] = useState<{ inquiryId: number; agreementId: number; documentSha256: string } | null>(null);
   const [customerStartDateApproved, setCustomerStartDateApproved] = useState(false);
+  // TLV_SIMPLE_ORDER_DASHBOARD_V1
+  const [simpleOrderView, setSimpleOrderView] = useState<{
+    inquiryId: number;
+    simplified: boolean;
+  } | null>(null);
   const [customerStartDatePending, setCustomerStartDatePending] = useState(false);
   const [expandedOfferId, setExpandedOfferId] = useState<number | null>(null);
   const [offersTab, setOffersTab] = useState<"current" | "accepted" | "declined" | "history" | "appointments">("current");
@@ -732,6 +741,7 @@ export default function CustomerDashboard({
     | "offers"
     | "schedule"
     | "documents"
+    | "photos"
     | "messages";
 
   const [customerPortalView, setCustomerPortalView] =
@@ -2868,7 +2878,10 @@ export default function CustomerDashboard({
     followupStatus === "akseptert" || nextStepStatus === "offer_accepted"
   );
   const followupOfferRejected = reportPublished && followupStatus === "avvist";
-  const currentFollowupHeadline = followupOfferAccepted && customerStartDateApproved ? "Gå videre til arbeidsavtalen"
+  const simplifiedBusinessOrder =
+    simpleOrderView?.inquiryId === Number(inq.id) &&
+    simpleOrderView.simplified === true;
+  const currentFollowupHeadline = followupOfferAccepted && customerStartDateApproved ? "Utbedring avtalt"
     : followupOfferAccepted ? "Bekreft oppstartsdato"
     : followupOfferReady ? "Nytt tilbud på utbedring er klart"
     : followupOfferRejected ? "Tilbud på videre utbedring er avslått"
@@ -3361,7 +3374,7 @@ export default function CustomerDashboard({
                 aria-label="Vis prosjektansvarlig"
               >
                 <PhoneCall className="h-4 w-4" />
-                <span className="hidden lg:inline">Kontakt</span>
+                <span className="hidden sm:inline">Kontakt din prosjektansvarlig</span>
               </summary>
 
               <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-slate-700 bg-[#111d2c] p-4 shadow-2xl">
@@ -3404,16 +3417,13 @@ export default function CustomerDashboard({
 
             <button
               type="button"
-              onClick={() => {
-                openCustomerPortalView("overview");
-                setBoardViewOpen(true);
-              }}
+              onClick={() => setBoardViewOpen(true)}
               className="flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/[0.06] px-3 py-2.5 text-xs font-bold text-cyan-200 hover:bg-cyan-500/10"
-              title="Styret og tilganger"
-              aria-label="Åpne styret og tilganger"
+              title="Personer og tilganger"
+              aria-label="Personer og tilganger"
             >
               <UsersRound className="h-4 w-4" />
-              <span className="hidden lg:inline">Styret</span>
+              <span className="hidden sm:inline">Personer og tilganger</span>
             </button>
 
             {/* TLV_CUSTOMER_ACCOUNT_HEADER_V1 */}
@@ -3465,16 +3475,17 @@ export default function CustomerDashboard({
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-[1440px] grid-cols-1 md:grid-cols-[190px_minmax(0,1fr)]">
-        <aside className="hidden min-h-[calc(100vh-73px)] border-r border-slate-800/80 bg-[#071321] px-3 py-6 md:block">
 
+<div className="border-b border-slate-800/70 bg-[#071321]">
+  <div className="mx-auto flex max-w-[1440px] items-center gap-2 overflow-x-auto px-3 py-3 sm:px-6 lg:pl-[230px] lg:pr-10">
 
-<nav className="space-y-2">
+    <nav className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto" aria-label="Kundemeny">
             {[
               { key: "overview" as const, label: "Oversikt", icon: Home },
               { key: "offers" as const, label: "Tilbud og avtaler", icon: ShieldCheck },
               { key: "schedule" as const, label: "Avtalt service", icon: CalendarCheck },
               { key: "documents" as const, label: "Dokumenter", icon: Paperclip },
+              { key: "photos" as const, label: "Bilder", icon: ImagePlus },
               { key: "messages" as const, label: "Meldinger", icon: Mail },
             ].map(({ key, label, icon: Icon }) => {
               const active = customerPortalView === key;
@@ -3484,7 +3495,7 @@ export default function CustomerDashboard({
                   key={key}
                   type="button"
                   onClick={() => { setBoardViewOpen(false); openCustomerPortalView(key); }}
-                  className={`flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3 text-left text-xs font-bold transition ${
+                  className={`flex shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-xl px-3 py-2.5 text-left text-xs font-bold transition ${
                     active
                       ? "border border-amber-500/15 bg-amber-500/10 text-amber-300"
                       : key === "messages" && customerUnreadMessages > 0
@@ -3512,8 +3523,31 @@ export default function CustomerDashboard({
               );
             })}
           </nav>
+<CustomerMyCases
+  inquiryId={Number(inq.id)}
+  previewMode={previewMode}
+  onPreviewCase={onPreviewCase}
+/>
+  </div>
+</div>
+<div className="mx-auto grid max-w-[1440px] grid-cols-1 lg:grid-cols-[190px_minmax(0,1fr)]">
+        <aside className="hidden min-h-[calc(100vh-73px)] border-r border-slate-800/80 bg-[#071321] px-3 py-6 lg:block">
 
-                    {/* TLV_SIDEBAR_SERVICES_V1 */}
+
+
+
+                    <div className="mb-6 rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+            <p className="text-xs font-black">Trenger du hjelp?</p>
+            <p className="mt-1 text-[10px] text-slate-500">Ring oss gjerne</p>
+            <a
+              href="tel:92029090"
+              className="mt-3 block text-sm font-black text-amber-400"
+            >
+              92 02 90 90
+            </a>
+          </div>
+
+          {/* TLV_SIDEBAR_SERVICES_V1 */}
           <section
             aria-label="Våre tjenester"
             className="mt-8 min-w-0 border-t border-slate-800 pt-5"
@@ -3674,28 +3708,33 @@ export default function CustomerDashboard({
             })()}
           </section>
 
-          <div className="mt-12 rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
-            <p className="text-xs font-black">Trenger du hjelp?</p>
-            <p className="mt-1 text-[10px] text-slate-500">Ring oss gjerne</p>
-            <a
-              href="tel:92029090"
-              className="mt-3 block text-sm font-black text-amber-400"
-            >
-              92 02 90 90
-            </a>
-          </div>
+
         </aside>
 
         <main className="space-y-8 px-4 py-6 md:px-7 lg:px-10">
         {boardViewOpen && (
-          <section className="space-y-5">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-label="Personer og tilganger"
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/80 p-3 backdrop-blur-sm sm:p-6"
+          >
+            <div className="relative max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-slate-700 bg-[#0d1929] p-5 shadow-2xl sm:p-8">
+              <button
+                type="button"
+                onClick={() => setBoardViewOpen(false)}
+                aria-label="Lukk invitasjonsvindu"
+                className="absolute right-4 top-4 rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800"
+              >
+                Lukk
+              </button>
             <div>
               <h1 className="text-2xl font-black text-white">
-                Styret og tilganger
+                Personer og tilganger
               </h1>
               <p className="mt-2 text-sm text-slate-400">
-                Hent styremedlemmer fra Brreg, administrer tilganger
-                og inviter medlemmer til kundeportalen.
+                Se registrerte personer, legg til kontaktpersoner
+                og administrer tilgangene til oppdraget.
               </p>
             </div>
 
@@ -3709,10 +3748,11 @@ export default function CustomerDashboard({
               previewMode={previewMode}
               embedded
             />
+                      </div>
           </section>
         )}
 
-        <div className={boardViewOpen ? "hidden" : "contents"}>
+        <div className="contents">
         
 
           {customerPortalView !== "overview" && (
@@ -3731,6 +3771,8 @@ export default function CustomerDashboard({
                       ? "Avtalt service"
                       : customerPortalView === "documents"
                       ? "Dokumenter"
+                      : customerPortalView === "photos"
+                      ? "Bilder"
                       : "Meldinger"}
                   </h1>
                   <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-400">
@@ -3742,6 +3784,8 @@ export default function CustomerDashboard({
                       ? "Gjeldende avtale, tidspunkt og status for oppdraget."
                       : customerPortalView === "documents"
                       ? "Dokumenter, vedlegg og rapporter som tilhører saken."
+                      : customerPortalView === "photos"
+                      ? "Bilder som Taklekkasjevakten har delt fra denne saken."
                       : "All kommunikasjon med prosjektansvarlig samlet på ett sted."}
                   </p>
                 </div>
@@ -3862,6 +3906,12 @@ export default function CustomerDashboard({
                       onStatusChange={() => setAgreementSignerRefresh(n => n + 1)}
                       onPendingChange={setCustomerStartDatePending}
                       onApprovalChange={setCustomerStartDateApproved}
+                      onSimplifiedChange={(simplified) =>
+                        setSimpleOrderView({
+                          inquiryId: Number(inq.id),
+                          simplified
+                        })
+                      }
                       onOpenAgreement={() => setAgreementPdfOpen(true)}
                     />
                   )}
@@ -4080,6 +4130,21 @@ export default function CustomerDashboard({
                       </p>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* TLV_CUSTOMER_GALLERY_V1 */}
+              {customerPortalView === "photos" && (
+                <div className="mt-6">
+                  <CustomerCasePhotoGallery
+                    inquiryId={Number(inq.id)}
+                    sessionToken={
+                      window.localStorage.getItem(
+                        CUSTOMER_PORTAL_SESSION_STORAGE_KEY
+                      ) || ""
+                    }
+                    previewMode={previewMode}
+                  />
                 </div>
               )}
 
@@ -4446,7 +4511,7 @@ export default function CustomerDashboard({
           </div>
 
               <div className="mt-0 min-w-0">
-                          {followupOfferAccepted && (
+                          {followupOfferAccepted && !simplifiedBusinessOrder && (
             <CustomerFollowupTimeline
               inquiryId={Number(inq.id)}
               sessionToken={previewMode ? "" : (window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY) || "")}
@@ -4487,7 +4552,7 @@ export default function CustomerDashboard({
               <p className="text-[9px] font-black uppercase tracking-[0.16em] text-amber-400">Neste steg</p>
               <h3 className="mt-2 text-lg font-black text-white">
                 {acceptedDirectFixedOffer && !followupOfferAccepted && customerStartDatePending ? "Godkjenn foreslått oppstartsdato"
-                  : followupOfferAccepted && customerStartDateApproved ? "Gå videre til arbeidsavtalen"
+                  : (followupOfferAccepted || acceptedDirectFixedOffer) && customerStartDateApproved ? "Utbedring avtalt"
                   : followupOfferAccepted ? "Bekreft oppstart" : originalWorkFinished
                   ? currentFollowupHeadline
                   : offer?.status === "publisert" && !offerExpired(offer) ? "Godkjenn oppdraget"
@@ -4498,7 +4563,7 @@ export default function CustomerDashboard({
               <p className="mt-2 text-xs leading-5 text-slate-400">
                 {acceptedDirectFixedOffer && !followupOfferAccepted && customerStartDatePending
                   ? "Prosjektansvarlig har foreslått oppstartsdato og varighet. Godkjenn datoen nedenfor, eller be om endring."
-                  : followupOfferAccepted && customerStartDateApproved
+                  : (followupOfferAccepted || acceptedDirectFixedOffer) && customerStartDateApproved
                   ? "Oppstart og varighet er bekreftet. Gå til Tilbud og avtaler for å lese arbeidsavtalen og bekrefte signatar."
                   : followupOfferAccepted ? "Prosjektansvarlig har registrert oppstartsdato og forventet varighet. Kontroller og svar nedenfor." : originalWorkFinished
                   ? currentFollowupDescription
@@ -4522,6 +4587,12 @@ export default function CustomerDashboard({
                   onAgreementCreated={() => setAgreementSignerRefresh(n => n + 1)}
                   onStatusChange={() => setAgreementSignerRefresh(n => n + 1)}
                   onApprovalChange={setCustomerStartDateApproved}
+                      onSimplifiedChange={(simplified) =>
+                        setSimpleOrderView({
+                          inquiryId: Number(inq.id),
+                          simplified
+                        })
+                      }
                   onOpenAgreement={() => setAgreementPdfOpen(true)}
                 />
               ) : originalWorkFinished ? null : followupSchedule?.schedule_date ? (
@@ -4531,7 +4602,7 @@ export default function CustomerDashboard({
                 </div>
               ) : null}
 
-              {followupOfferAccepted && customerStartDateApproved && (
+              {(followupOfferAccepted || acceptedDirectFixedOffer) && customerStartDateApproved && !simplifiedBusinessOrder && (
                 <div className="mt-5 rounded-2xl border border-amber-500/40 bg-amber-500/[0.06] p-4">
                   <div className="flex items-center gap-3">
                     <FileText className="h-6 w-6 text-amber-400" />
@@ -6853,7 +6924,7 @@ export default function CustomerDashboard({
         </div>
       )}
 
-      {agreementPdfOpen && inquiryData?.inquiry?.id && (
+      {agreementPdfOpen && !simplifiedBusinessOrder && inquiryData?.inquiry?.id && (
         <CustomerAgreementPdfViewer
           inquiryId={Number(inquiryData.inquiry.id)}
           expectedTlvOfferId={String(newestFollowupOffer?.status || "").toLowerCase() === "akseptert" ? Number(newestFollowupOffer?.id) : undefined}

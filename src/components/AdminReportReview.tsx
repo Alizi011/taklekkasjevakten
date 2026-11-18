@@ -524,7 +524,7 @@ export default function AdminReportReview({
   }, [photos]);
 
   // Eget Core-endepunkt: endrer aldri kildedata i TLV eller eksisterende AI-utkast.
-  const documentationUrl = "https://api.taklekkasjevakten.no/api/tlv_report_documentation.php";
+  const documentationUrl = apiUrl("/tlv_report_documentation.php");
 
   const loadDocumentation = async (tlvReportId: number) => {
     setDocumentationLoading(true);

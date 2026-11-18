@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { apiUrl } from "../lib/api";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import type { CoreCaseStatusView } from "./CoreCaseStatusBadge";
@@ -18,13 +19,63 @@ export default function CaseClosureControl({ inquiryId, coreStatus, offers, pend
   const [maintenance, setMaintenance] = useState("");
   const [note, setNote] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [previewDate, setPreviewDate] = useState(closurePreviewDate);
   const outstandingOffers = offers.filter((offer) => ["utkast", "publisert"].includes(offer.status));
   const errors = validateClosureDraft(status, maintenance, note);
   const existingClosure = coreStatus.state === "available" && closureStatuses.some((item) => item.value === coreStatus.status);
-  const blockId = `case-closure-block-${inquiryId}`;
   const fieldId = `case-closure-${inquiryId}`;
   const dateLabel = (value: string | null) => value ? value.split("-").reverse().join(".") : "Må beregnes i Core";
+
+  const submitClosure = async () => {
+    if (
+      saving ||
+      !confirmed ||
+      existingClosure ||
+      coreStatus.state !== "available" ||
+      errors.length > 0
+    ) return;
+
+    setSaving(true);
+    setSaveError("");
+
+    try {
+      const response = await fetch(
+        apiUrl("/admin_case_closure.php"),
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            inquiry_id: inquiryId,
+            status,
+            maintenance,
+            note: note.trim()
+          })
+        }
+      );
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || result?.success !== true) {
+        throw new Error(
+          result?.message ||
+          `Lagring feilet (HTTP ${response.status}).`
+        );
+      }
+
+      window.location.reload();
+    } catch (error) {
+      setSaveError(
+        error instanceof Error
+          ? error.message
+          : "Kunne ikke lagre avslutningen."
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="mt-6 border-t border-white/10 pt-5">
@@ -40,11 +91,17 @@ export default function CaseClosureControl({ inquiryId, coreStatus, offers, pend
               <Dialog.Title className="text-lg font-bold">Avslutt sak #{inquiryId}</Dialog.Title>
               <Dialog.Close asChild><button type="button" aria-label="Lukk avslutningsdialog" className="rounded-lg p-2 hover:bg-slate-800"><X className="h-5 w-5" /></button></Dialog.Close>
             </div>
-            <Dialog.Description className="mt-2 text-xs text-slate-300">Velg avslutning og videre oppfølging. Valgene er foreløpig bare et lokalt utkast og er ikke lagret.</Dialog.Description>
-            <p id={blockId} role="alert" className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100">
-              Lagring er sperret: eksisterende avslutnings-API endrer TLV-steg og beregner kontroll fra rapportdato. Core-historikk og den inkluderte vedlikeholdstjenesten må være kontrollert før denne avslutningen kan lagres. Ingen sak, plan, avtale, faktura eller kundevarsling endres her.
+            <Dialog.Description className="mt-2 text-xs text-slate-300">Velg avslutning og videre oppfølging. Registrer begrunnelse og bekreft avslutningen.</Dialog.Description>
+                        {saveError && (
+              <p role="alert" className="mt-4 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-100">
+                {saveError}
+              </p>
+            )}
+            <p className="mt-4 text-xs text-slate-300">
+              Avslutningen registreres i Core. Eksisterende tilbud,
+              rapporter, fakturaer og avtaler beholdes.
             </p>
-            <form className="mt-4 space-y-4" onSubmit={(event) => event.preventDefault()}>
+            <form className="mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); void submitClosure(); }}>
               <p className="text-xs text-slate-300">Nåværende hovedstatus (Core): {coreStatus.state === "available" ? coreStatus.status : "Ukjent/utilgjengelig"}</p>
               {existingClosure && <p role="status" className="text-xs text-amber-200">Core viser allerede en avslutningsstatus. Saken skal ikke avsluttes på nytt.</p>}
               <label htmlFor={`${fieldId}-status`} className="block text-xs font-bold">Avslutningsstatus
@@ -76,7 +133,19 @@ export default function CaseClosureControl({ inquiryId, coreStatus, offers, pend
               {errors.length > 0 && <ul className="list-inside list-disc text-xs text-slate-400">{errors.map((error) => <li key={error}>{error}</li>)}</ul>}
               <div className="flex flex-wrap justify-end gap-2">
                 <Dialog.Close asChild><button type="button" className="rounded-lg border border-slate-600 px-4 py-3 text-xs font-bold">Lukk uten lagring</button></Dialog.Close>
-                <button type="button" disabled aria-describedby={blockId} title="Core-lagring er ikke verifisert" className="rounded-lg bg-rose-600 px-4 py-3 text-xs font-bold opacity-40">Bekreft avslutning – utilgjengelig</button>
+                <button
+                  type="submit"
+                  disabled={
+                    saving ||
+                    !confirmed ||
+                    existingClosure ||
+                    coreStatus.state !== "available" ||
+                    errors.length > 0
+                  }
+                  className="rounded-lg bg-rose-600 px-4 py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {saving ? "Lagrer avslutning…" : "Bekreft avslutning"}
+                </button>
               </div>
             </form>
           </Dialog.Content>

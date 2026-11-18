@@ -6,6 +6,7 @@ import AgreementScheduleStatus from "@/components/project-manager/AgreementSched
 import ProjectManagerHeritage from "../components/project-manager/ProjectManagerHeritage";
 import InquiryWorkflowOverview from "../components/project-manager/InquiryWorkflowOverview";
 import ProjectManagerReportApproval from "../components/ProjectManagerReportApproval";
+import NewManualInquiryModal from "../components/NewManualInquiryModal";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
@@ -2065,6 +2066,8 @@ export default function ProjectManagerDashboard({
   const messagesRequest = (url: string, init?: RequestInit) => messageFetch(url, init, onBackToAdmin ? "admin" : "project_manager");
   const [view, setView] = useState<View>("oversikt");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // TLV_PM_NEW_INQUIRY_V1
+  const [newManualInquiryOpen, setNewManualInquiryOpen] = useState(false);
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [unansweredCustomerMessages, setUnansweredCustomerMessages] = useState<Array<{ inquiryId: number; threadId: number; oldestAt: string; count: number }>>([]);
 
@@ -5079,7 +5082,9 @@ if (from < earliestDate) {
     const id = normalizeInquiryId(inquiry.id);
     if (!id) return;
 
+    // PM_OPEN_INQUIRY_OVERVIEW_V1
     setActiveInquiryId(id);
+    setFieldWorkspaceTab("oversikt");
     setView("felt");
   };
 
@@ -6075,14 +6080,9 @@ if (from < earliestDate) {
 
                     <button
                       type="button"
-                      onClick={onBackToAdmin}
-                      disabled={!onBackToAdmin}
-                      className="flex items-center justify-center gap-2 rounded-xl bg-[#ff951a] px-4 py-3 text-xs font-black text-slate-950 shadow-[0_8px_30px_rgba(245,184,0,0.12)] transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
-                      title={
-                        onBackToAdmin
-                          ? "Gå til admin for å opprette oppdrag"
-                          : "Opprett oppdrag er tilgjengelig fra admin"
-                      }
+                      onClick={() => setNewManualInquiryOpen(true)}
+                      className="flex items-center justify-center gap-2 rounded-xl bg-[#ff951a] px-4 py-3 text-xs font-black text-slate-950 shadow-[0_8px_30px_rgba(245,184,0,0.12)] transition hover:bg-orange-400"
+                      title="Opprett nytt oppdrag"
                     >
                       <Plus className="h-4 w-4" />
                       Nytt oppdrag
@@ -7288,31 +7288,121 @@ if (from < earliestDate) {
                     <section className="rounded-2xl border border-cyan-500/25 bg-[#141526] p-4">
                       <h3 className="text-sm font-extrabold text-white">Tilbud og oppdragsstatus</h3>
                       {(() => {
-                        const latest = offerOverview[String(normalizeInquiryId(overviewInquiry.id))];
-                        const latestIsFollowup = String(latest?.offer_context || "").toLowerCase() === "followup";
-                        const currentStatus = latestIsFollowup ? String(latest?.status || "").toLowerCase() : "";
-                        const scheduleStatus = String(fieldScheduleOverview[String(normalizeInquiryId(overviewInquiry.id))]?.status || "").toLowerCase();
-                        return <div className="mt-3 space-y-3">
-                          <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-cyan-300">Nyeste oppfølgingstilbud</p>
-                            <p className="mt-1 text-sm font-bold text-white">{latestIsFollowup ? (latest?.title || `Tilbud #${latest?.id}`) : "Ikke registrert i tilbudsoversikten"}</p>
-                            <p className="mt-1 text-xs text-slate-300">{latestIsFollowup ? currentStatus === "publisert" ? "Publisert – avventer kundesvar" : currentStatus === "akseptert" ? "Akseptert av kunden" : currentStatus === "avvist" ? "Dette tilbudet er avslått" : `Status: ${latest?.status || "ukjent"}` : "Se tilbudshistorikken for tidligere tilbud"}</p>
-                          </div>
-                          {!(latestIsFollowup && currentStatus === "akseptert") && (["avvist","avlyst"].includes(scheduleStatus)) && <p className="rounded-lg border border-amber-500/25 px-3 py-2 text-xs leading-5 text-amber-200">Tidligere tidsavtale/oppfølging er registrert som {scheduleStatus}. Dette betyr ikke at det nyeste tilbudet er avslått.</p>}
-                          <div className="border-t border-slate-700/50 pt-3">
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-amber-300">Neste handling</p>
-                            {latestIsFollowup && currentStatus === "akseptert" && !onBackToAdmin ? (
-                              <AgreementScheduleStatus
-                                inquiryId={normalizeInquiryId(overviewInquiry.id)}
-                                offerNumber={String(latest?.offer_number || "")}
-                              />
-                            ) : (
-                              <p className="mt-1 text-xs leading-5 text-white">{latestIsFollowup && currentStatus === "publisert" ? "Avventer svar på det publiserte oppfølgingstilbudet." : progressNextAction(overviewInquiry, parseInquiryBooking(overviewInquiry))}</p>
+                        const inquiryKey = String(normalizeInquiryId(overviewInquiry.id));
+                        const workflow = caseCardWorkflow[inquiryKey];
+                        const previous = offerOverview[inquiryKey];
+
+                        const offer = workflow?.offer ??
+                          (String(previous?.offer_context || "").toLowerCase() === "followup"
+                            ? previous : null);
+
+                        const status = String(offer?.status || "").toLowerCase();
+                        const proposal = workflow?.proposal;
+                        const dateStatus = String(proposal?.status || "").toLowerCase();
+
+                        return (
+                          <div className="mt-3 space-y-3">
+                            <div className="rounded-xl border border-slate-700/50 p-3">
+                              <p className="text-[10px] font-bold uppercase text-cyan-300">
+                                Opprinnelig lekkasjesøk
+                              </p>
+                              <p className="mt-1 text-xs text-white">
+                                {report?.status === "publisert"
+                                  ? "Rapport 1 publisert"
+                                  : `Rapportstatus: ${report?.status || "Ukjent"}`}
+                              </p>
+                            </div>
+
+                            <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
+                              <p className="text-[10px] font-bold uppercase text-cyan-300">
+                                Nytt utbedringstilbud
+                              </p>
+                              <p className="mt-1 text-sm font-bold text-white">
+                                {offer?.title || offer?.offer_number ||
+                                  "Oppfølgingstilbud ikke funnet"}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-300">
+                                {status === "akseptert" ? "Akseptert av kunden" :
+                                 status === "publisert" ? "Publisert – avventer kundens aksept" :
+                                 status === "avvist" ? "Avslått" :
+                                 status ? `Status: ${status}` :
+                                 "Tilbudsstatus ikke tilgjengelig"}
+                              </p>
+                            </div>
+
+                            {status === "akseptert" && (
+                              <div className="rounded-xl border border-amber-500/25 p-3">
+                                <p className="text-[10px] font-bold uppercase text-amber-300">
+                                  Oppstartsdato
+                                </p>
+                                {proposal?.proposed_start_date && (
+                                  <p className="mt-1 text-sm font-bold text-white">
+                                    {proposal.proposed_start_date}
+                                    {proposal.estimated_duration
+                                      ? ` · ${proposal.estimated_duration}`
+                                      : ""}
+                                  </p>
+                                )}
+                                <p className="mt-1 text-xs text-slate-300">
+                                  {dateStatus === "approved" ? "Godkjent av kunden" :
+                                   dateStatus === "pending_customer" ? "Avventer kundens bekreftelse" :
+                                   dateStatus === "change_requested" ? "Kunden ønsker endring" :
+                                   workflow?.scheduleChecked === false
+                                     ? "Datostatus kan ikke bekreftes"
+                                     : dateStatus ? `Status: ${dateStatus}` :
+                                       "Ingen oppstartsdato registrert"}
+                                </p>
+                              </div>
                             )}
+
+                            <div className="border-t border-slate-700/50 pt-3">
+                              <p className="text-[10px] font-bold uppercase text-amber-300">
+                                Neste handling
+                              </p>
+                              {/* TLV_PM_PHONE_PREVIEW_V1 */}
+{onBackToAdmin &&
+ status === "akseptert" &&
+ dateStatus === "pending_customer" && (
+  <div className="mt-3 space-y-2">
+    <button
+      type="button"
+      disabled
+      className="w-full cursor-not-allowed rounded-lg border border-amber-500/50 bg-amber-500/15 px-4 py-3 text-xs font-bold text-amber-200 opacity-70"
+    >
+      Bekreft oppstartsdato via telefon
+    </button>
+    <p className="text-[11px] text-slate-400">
+      Administratorforhåndsvisning. Registrering utføres
+      av innlogget prosjektansvarlig.
+    </p>
+  </div>
+)}
+{status === "akseptert" &&
+                               offer?.offer_number && !onBackToAdmin ? (
+                                <AgreementScheduleStatus
+                                  inquiryId={normalizeInquiryId(overviewInquiry.id)}
+                                  offerNumber={String(offer.offer_number)}
+                                />
+                              ) : (
+                                <p className="mt-1 text-xs leading-5 text-white">
+                                  {status === "publisert"
+                                    ? "Avventer kundens aksept av utbedringstilbudet."
+                                    : status === "akseptert" && dateStatus === "approved"
+                                      ? "Følg opp arbeidsavtale og signering."
+                                      : status === "akseptert" && dateStatus === "pending_customer"
+                                        ? "Avventer kundens bekreftelse av oppstartsdatoen."
+                                        : status === "akseptert" && dateStatus === "change_requested"
+                                          ? "Behandle kundens ønske om endret oppstartsdato."
+                                          : status === "akseptert"
+                                            ? "Kontroller oppstartsdato i avtaleplanleggingen."
+                                            : "Kontroller oppfølgingstilbudet."}
+                                </p>
+                              )}
+                            </div>
                           </div>
-                        </div>;
+                        );
                       })()}
-                      <div className="mt-4 border-t border-slate-700/50 pt-3 space-y-2 text-xs">
+<div className="mt-4 border-t border-slate-700/50 pt-3 space-y-2 text-xs">
                         <p><span className="text-slate-400">Prosjektansvarlig:</span> <span className="font-bold text-white">{teamOverview[overviewInquiry.id.toString()]?.project_manager?.name || previewEmployee?.name || overviewInquiry.assigned_to || "Ikke tildelt"}</span></p>
                         {!isDigitalInspection && <p><span className="text-slate-400">Tekniker:</span> <span className="font-bold text-white">{teamOverview[overviewInquiry.id.toString()]?.technician?.name || "Ikke tildelt"}</span></p>}
                       </div>
@@ -10148,6 +10238,21 @@ if (from < earliestDate) {
           </div>
         )}
       </main>
+
+      <NewManualInquiryModal
+        open={newManualInquiryOpen}
+        onClose={() => setNewManualInquiryOpen(false)}
+        endpoint={apiUrl("/admin_manual_inquiry.php")}
+        sessionToken={
+          onBackToAdmin
+            ? undefined
+            : window.localStorage.getItem("taklekkasjevakten_project_manager_session") || undefined
+        }
+        onCreated={async () => {
+          await fetchInquiries();
+          setView("oversikt");
+        }}
+      />
 
       <OfferGenerator
         open={offerGeneratorOpen}

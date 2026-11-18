@@ -24,6 +24,7 @@ type Props = {
   onAgreementCreated?: () => void;
   onStatusChange?: () => void;
   onApprovalChange?: (approved: boolean) => void;
+  onSimplifiedChange?: (simplified: boolean) => void;
   onOpenAgreement?: () => void;
 };
 
@@ -32,8 +33,11 @@ const dateLabel = (value: string) => {
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("nb-NO", { day: "numeric", month: "long", year: "numeric" }).format(date);
 };
 
-export default function CustomerAgreementSchedule({ inquiryId, sessionToken, endpoint, previewMode = false, compact = false, hideWhenEmpty = false, onPendingChange, onAgreementCreated, onStatusChange, onApprovalChange, onOpenAgreement }: Props) {
+export default function CustomerAgreementSchedule({ inquiryId, sessionToken, endpoint, previewMode = false, compact = false, hideWhenEmpty = false, onPendingChange, onAgreementCreated, onStatusChange, onApprovalChange, onOpenAgreement, onSimplifiedChange }: Props) {
   const [proposals, setProposals] = useState<Proposal[]>([]);
+
+  // TLV_SIMPLE_ORDER_CUSTOMER_VIEW_V1
+  const [simplifiedOrder, setSimplifiedOrder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -54,6 +58,28 @@ export default function CustomerAgreementSchedule({ inquiryId, sessionToken, end
       const rows = (Array.isArray(data.proposals) ? data.proposals : []) as Proposal[];
       const sorted = [...rows].sort((a, b) => b.version_no - a.version_no || b.id - a.id);
       setProposals(sorted);
+
+      const latestProposal = sorted[0];
+      const decisions = Array.isArray(data.order_decisions)
+        ? data.order_decisions
+        : [];
+
+      const isSimplified =
+        latestProposal?.status === "approved" &&
+        Number(latestProposal.id) > 0 &&
+        Number(latestProposal.offer_id) > 0 &&
+        decisions.some((decision: {
+          decision?: string;
+          core_offer_id?: number | string;
+          approved_schedule_id?: number | string;
+        }) =>
+          decision.decision === "simplified" &&
+          Number(decision.core_offer_id) === Number(latestProposal.offer_id) &&
+          Number(decision.approved_schedule_id) === Number(latestProposal.id)
+        );
+
+      setSimplifiedOrder(Boolean(isSimplified));
+      onSimplifiedChange?.(Boolean(isSimplified));
       onApprovalChange?.(sorted[0]?.status === "approved");
       onPendingChange?.(sorted[0]?.status === "pending_customer");
 
@@ -181,6 +207,64 @@ export default function CustomerAgreementSchedule({ inquiryId, sessionToken, end
   const wrapper = compact ? "mt-5 text-white" : "rounded-2xl border border-amber-500/30 bg-[#0b1422] p-5 text-white";
 
   if (hideWhenEmpty && !loading && !error && !latest) return null;
+
+  // Kun dokumentert forenklet beslutning for det valgte tilbudet.
+  // Ingen arbeidsavtale, signering eller nye godkjenninger.
+  if (!loading && !error && approved && simplifiedOrder && latest) {
+    return (
+      <section
+        className={wrapper}
+        aria-label="Forenklet bedriftsbestilling"
+      >
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/[0.06] p-4">
+          <div className="flex items-center gap-2 text-emerald-300">
+            <CheckCircle2 className="h-5 w-5 shrink-0" />
+            <h2 className="text-base font-black">
+              Bestilling bekreftet
+            </h2>
+          </div>
+
+          <p className="mt-3 text-xs leading-5 text-slate-200">
+            Tilbudet er akseptert og oppstarten godkjent.
+            Denne bedriftsbestillingen krever ikke en
+            separat arbeidsavtale.
+          </p>
+
+          <div className="mt-4 space-y-3 border-t border-slate-700/70 pt-4">
+            <div className="flex items-start gap-3">
+              <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-slate-400">
+                  Godkjent oppstart
+                </p>
+                <p className="mt-1 text-sm font-bold text-white">
+                  {dateLabel(latest.proposed_start_date)}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-3">
+              <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-slate-400">
+                  Forventet varighet
+                </p>
+                <p className="mt-1 text-sm font-bold text-white">
+                  {latest.estimated_duration}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <p className="mt-4 text-xs leading-5 text-slate-400">
+            Det aksepterte tilbudet og vilkårene finner du
+            under Tilbud og avtaler. Du trenger ikke signere
+            et separat arbeidsavtaledokument.
+          </p>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className={wrapper} data-start-date-pending={latest?.status === "pending_customer" ? "true" : undefined} aria-label="Oppstartsdato og varighet">

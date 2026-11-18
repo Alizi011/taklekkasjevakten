@@ -1,3 +1,4 @@
+import MarketingPhotoLibrary from "./MarketingPhotoLibrary";
 import NewManualInquiryModal from '../components/NewManualInquiryModal';
 import { useState, useEffect, useRef } from "react";
 import {
@@ -304,7 +305,7 @@ function RoofMaintenanceAdmin() {
 }
 
 export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<"oppdrag" | "kalender" | "sjekklister" | "prosjekter" | "kunder" | "markedsforing" | "epost" | "ansatte" | "timeliste" | "kjorebok" | "dataimport" | "rapporter" | "arlig_takkontroll" | "innstillinger">("oppdrag");
+  const [activeTab, setActiveTab] = useState<"oppdrag" | "kalender" | "sjekklister" | "prosjekter" | "kunder" | "markedsforing" | "bildebibliotek" | "epost" | "ansatte" | "timeliste" | "kjorebok" | "dataimport" | "rapporter" | "arlig_takkontroll" | "innstillinger">("oppdrag");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<
     "aktive" | "handling" | "avsluttede" | "rapporter"
@@ -1787,8 +1788,14 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     setPreviewCustomerInquiryId(Number(latestInquiry.id));
   };
 
-  const isCompletedInquiry = (inq: Inquiry) => {
-    const status = String((inq as any).status || "").toLowerCase();
+  const isCompletedInquiry = (inq: Inquiry): boolean => {
+    const core = coreCaseStatusForInquiry(coreCaseStatuses, inq.id);
+
+    if (core.state === "available") {
+      return ["completed", "closed", "stopped"].includes(core.status);
+    }
+
+    const status = String(inq.status || "").toLowerCase();
     const reportSummary = reportStatuses[inq.id.toString()];
 
     return (
@@ -2166,7 +2173,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     return (
       <CustomerDashboard
         previewMode
+        key={previewCustomerInquiryId}
         previewInquiryId={previewCustomerInquiryId}
+        onPreviewCase={(inquiryId) => {
+          if (Number.isInteger(inquiryId) && inquiryId > 0) {
+            setPreviewCustomerInquiryId(inquiryId);
+          }
+        }}
         onOpenBusinessPreview={(customerId) => {
           if (!Number.isInteger(customerId) || customerId <= 0) return;
           setPreviewBusinessCustomerId(customerId);
@@ -2376,6 +2389,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               label: "Markedsføring",
               icon: Search,
               tab: "markedsforing",
+            },
+            {
+              id: "bildebibliotek",
+              label: "Bildebibliotek",
+              icon: ImageIcon,
+              tab: "bildebibliotek",
             },
             {
               id: "epost",
@@ -4081,6 +4100,11 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
             <ProspectPage segment={marketingSegment} />
           </div>
+        )}
+
+        {/* TLV_MARKETING_LIBRARY_PAGE_V1 */}
+        {activeTab === "bildebibliotek" && (
+          <MarketingPhotoLibrary />
         )}
 
         {/* FANE: E-POST & KAMPANJER */}

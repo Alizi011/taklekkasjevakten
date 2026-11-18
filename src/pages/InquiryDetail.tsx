@@ -1,3 +1,4 @@
+import AdminPhotoVisibility from "../components/AdminPhotoVisibility";
 import AgreementPreviewButton from "@/components/AgreementPreviewButton";
 import AdminAgreementProgress from "../components/AdminAgreementProgress";
 import AdminAgreementSigningCaseNotice from "../components/AdminAgreementSigningCaseNotice";
@@ -2447,7 +2448,10 @@ export default function InquiryDetail({
   const inquiryStatus = String(inquiry.status || "").toLowerCase();
   const isOfferPendingCustomer = offerStatus === "publisert";
   const isOfferAccepted = offerStatus === "akseptert" || (offer?.offer_context !== "followup" && inquiryStatus === "tilbud_akseptert");
-  const isCaseClosed = inquiryStatus === "avsluttet";
+  const isCaseClosed =
+    coreCaseStatus.state === "available"
+      ? ["completed", "closed", "stopped"].includes(coreCaseStatus.status)
+      : inquiryStatus === "avsluttet";
 
   const openCustomerMessages = () => {
     setCommunicationView("messages");
@@ -2598,6 +2602,19 @@ export default function InquiryDetail({
   const activeFollowupOffer = followupOffers.find((item) => item.status === "akseptert")
     || followupOffers.find((item) => item.status === "publisert")
     || followupOffers.find((item) => item.status === "utkast") || null;
+  // TLV_ACCEPTED_REPAIR_STATUS_V2
+  const acceptedRepairOffer = caseOffers
+    .filter(item =>
+      item.status === "akseptert" &&
+      (
+        item.offer_context === "followup" ||
+        (
+          item.offer_context === "initial" &&
+          /utbedr|reparasjon|tetting/i.test(String(item.title || ""))
+        )
+      )
+    )
+    .sort((a, b) => Number(b.id) - Number(a.id))[0] || null;
   const isReportPublished = report?.status === "publisert";
   const isFollowupDecided = isReportPublished && savedFollowupChoice !== null;
   const followupStageTitle = savedFollowupChoice === "none" ? "Ingen videre utbedring"
@@ -2641,8 +2658,12 @@ export default function InquiryDetail({
       "Avventer videre avklaring"
     : "";
 
-  const nextStepLabel = isAdminPaused
+  const nextStepLabel = isCaseClosed
+    ? "Saken avsluttet"
+    : isAdminPaused
     ? "På vent – videre arbeid stanset"
+    : isReportPublished && acceptedRepairOffer
+    ? "Utbedringstilbud akseptert – avtaleoppfølging"
     : isFollowupDecided
     ? followupStageTitle
     : isReportPublished
@@ -2661,8 +2682,12 @@ export default function InquiryDetail({
     ? "Opprett tilbud"
     : "Avklar neste steg";
 
-  const nextStepSubtitle = isAdminPaused
+  const nextStepSubtitle = isCaseClosed
+    ? "Ingen videre handling"
+    : isAdminPaused
     ? adminPauseReason
+    : isReportPublished && acceptedRepairOffer
+    ? "Tilbudet er akseptert. Kontroller oppstart, arbeidsavtale og signatarer."
     : isFollowupDecided
     ? followupStageDetail
     : isReportPublished
@@ -3552,20 +3577,8 @@ export default function InquiryDetail({
                       </div>
                       <button type="button" onClick={() => setOverviewInlineMedia("overview")} className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800">Tilbake til oversikt</button>
                     </div>
-                    <div className="space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
-                      <h4 className="text-xs font-bold text-slate-100">Feltbilder ({photos.filter(photo => Boolean(photo.photo_url)).length})</h4>
-                      {loadingFieldStatus ? <p className="text-xs text-slate-400">Henter feltbilder …</p> :
-                        photos.filter(photo => Boolean(photo.photo_url)).length === 0 ? <p className="text-xs text-slate-400">Ingen feltbilder registrert.</p> :
-                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                          {photos.filter(photo => Boolean(photo.photo_url)).map(photo => (
-                            <a key={photo.id} href={apiAssetUrl(photo.photo_url)} target="_blank" rel="noopener noreferrer"
-                              className="group min-w-0 overflow-hidden rounded-xl border border-slate-700 bg-slate-950/70 hover:border-cyan-500/50">
-                              <img src={apiAssetUrl(photo.photo_url)} alt={photo.caption_text || `Feltbilde ${photo.id}`} loading="lazy" className="h-44 w-full object-cover" />
-                              <p className="break-words p-3 text-xs text-slate-300">{photo.caption_text || `Bilde #${photo.id}`}</p>
-                            </a>
-                          ))}
-                        </div>}
-                    </div>
+                    {/* TLV_ADMIN_PHOTOS_INLINE_V2 */}
+                    <AdminPhotoVisibility inquiryId={inquiryId} photos={photos} />
                     <div className="space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
                       <h4 className="text-xs font-bold text-slate-100">Bilder sendt inn av kunden</h4>
                       {loadingPreinspection ? <p className="text-xs text-slate-400">Henter kundevedlegg …</p> :
@@ -3728,10 +3741,7 @@ export default function InquiryDetail({
 )}
                   <div className="mt-6 space-y-4 border-t border-white/10 pt-5">
                   {(() => {
-                    const acceptedRepairs = caseOffers
-                      .filter(item => item.offer_context === "followup" && item.status === "akseptert")
-                      .sort((a, b) => Number(b.id) - Number(a.id));
-                    const current = acceptedRepairs[0];
+                    const current = acceptedRepairOffer;
                     const otherOffers = caseOffers.filter(item => item.id !== current?.id).length;
                     return current ? (
                       <>
@@ -5600,6 +5610,7 @@ export default function InquiryDetail({
           </p>
         </section>
         <section id="field-status" className={`${adminCaseTab === "field" ? "" : "hidden"} scroll-mt-6 bg-[#1b0b12] border border-slate-800 rounded-2xl p-6 space-y-5`}>
+
           <div className="border-b border-slate-800/80 pb-4">
             <h3 className="font-extrabold text-sm text-white flex items-center gap-2">
               <CheckCircle2 className="w-5 h-5 text-[#F5B800]" />

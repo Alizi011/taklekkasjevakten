@@ -3,6 +3,7 @@ import { Plus, X } from 'lucide-react';
 
 export type ManualInquiryPayload = {
   customer_id?: number;
+  core_customer_id?: number;
   organization_number?: string;
   contact_name?: string;
   customer_name: string;
@@ -18,6 +19,8 @@ export type ManualInquiryPayload = {
 };
 
 export type ManualCustomerOption = {
+  core_customer_id?: number;
+  organization_number?: string | null;
   id: number;
   name: string;
   customer_type?: ManualInquiryPayload['customer_type'];
@@ -34,6 +37,7 @@ type Props = {
   onCreated: (id: number) => void | Promise<void>;
   /** Separate authenticated ADMIN endpoint. Must not point to the public inquiries.php POST. */
   endpoint: string;
+  sessionToken?: string;
   customers?: ManualCustomerOption[];
 };
 
@@ -45,9 +49,11 @@ const initial: ManualInquiryPayload = {
 const field = 'w-full rounded-xl border border-[#673243] bg-[#260d18] px-3 py-2.5 text-sm text-white outline-none focus:border-rose-400';
 const label = 'mb-1 block text-xs font-bold text-[#f0cbd7]';
 
-export default function NewManualInquiryModal({ open, onClose, onCreated, endpoint, customers = [] }: Props) {
+export default function NewManualInquiryModal({ open, onClose, onCreated, endpoint, sessionToken }: Props) {
   const [form, setForm] = useState<ManualInquiryPayload>(initial);
   const [selectedCustomer, setSelectedCustomer] = useState('');
+  // TLV_CORE_CUSTOMER_SEARCH_V3
+  const [customerSearch, setCustomerSearch] = useState('');
   const [serverCustomers, setServerCustomers] = useState<ManualCustomerOption[]>([]);
   const [customerError, setCustomerError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -66,7 +72,15 @@ export default function NewManualInquiryModal({ open, onClose, onCreated, endpoi
     if (!open) return;
     let cancelled = false;
     setCustomerError('');
-    fetch(endpoint, { credentials: 'include', cache: 'no-store' })
+    fetch(endpoint, sessionToken
+      ? {
+          method: 'POST',
+          credentials: 'include',
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'list_customers', session_token: sessionToken })
+        }
+      : { credentials: 'include', cache: 'no-store' })
       .then(async r => {
         const result = await r.json();
         if (!r.ok || !result.success || !Array.isArray(result.customers)) throw new Error(result.message || 'Kunne ikke hente kunder.');
@@ -74,21 +88,33 @@ export default function NewManualInquiryModal({ open, onClose, onCreated, endpoi
       })
       .catch(e => { if (!cancelled) setCustomerError(e instanceof Error ? e.message : 'Kunne ikke hente kunder.'); });
     return () => { cancelled = true; };
-  }, [endpoint, open]);
+  }, [endpoint, open, sessionToken]);
 
   if (!open) return null;
 
   function chooseCustomer(value: string) {
     setSelectedCustomer(value);
-    const customer = [...customers, ...serverCustomers].find(c => String(c.id) === value);
-    if (!customer) { setForm(initial); return; }
+    const customer = serverCustomers.find(c =>
+      `core:${c.core_customer_id ?? c.id}` === value
+    );
+
+    if (!customer) {
+      setForm(initial);
+      return;
+    }
+
     setForm(old => ({
       ...old,
-      customer_id: customer.id,
+      customer_id: undefined,
+      core_customer_id: customer.core_customer_id ?? customer.id,
       customer_name: customer.name,
       customer_type: customer.customer_type || 'Privatperson',
-      phone: customer.phone || '', email: customer.email || '',
-      address: customer.address || '', postal_code: customer.postal_code || '',
+      organization_number: customer.organization_number || '',
+      contact_name: old.contact_name || '',
+      phone: customer.phone || '',
+      email: customer.email || '',
+      address: customer.address || '',
+      postal_code: customer.postal_code || '',
       city: customer.city || '',
     }));
   }
@@ -108,7 +134,7 @@ export default function NewManualInquiryModal({ open, onClose, onCreated, endpoi
       const response = await fetch(endpoint, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, session_token: sessionToken }),
       });
       const result: { success?: boolean; id?: number; inquiry_id?: number; message?: string } = await response.json();
       if (!response.ok || !result.success) throw new Error(result.message || 'Kunne ikke opprette oppdrag.');
@@ -138,7 +164,48 @@ export default function NewManualInquiryModal({ open, onClose, onCreated, endpoi
             <div><label className={label} htmlFor="manual-source">Mottatt via</label><select id="manual-source" className={field} value={form.source} onChange={e => update('source', e.target.value as ManualInquiryPayload['source'])}><option value="telefon">Telefon</option><option value="epost">E-post</option><option value="direkte">Direkte kunde</option><option value="befaring">Befaring</option><option value="vedlikehold">Vedlikehold</option><option value="annet">Annet</option></select></div>
           </div>
           {customerError && <p role="alert" className="text-sm text-amber-300">{customerError}</p>}
-          {([...customers, ...serverCustomers].length > 0) && <div><label className={label} htmlFor="manual-existing-customer">Eksisterende kunde</label><select id="manual-existing-customer" className={field} value={selectedCustomer} onChange={e => chooseCustomer(e.target.value)}><option value="">Ny kunde / skriv inn selv</option>{[...customers, ...serverCustomers].filter((c,i,a) => a.findIndex(x => x.id === c.id) === i).map(c => <option key={c.id} value={c.id}>{c.name} (#{c.id})</option>)}</select></div>}
+                    <div className="space-y-2">
+            <label className={label} htmlFor="manual-customer-search">
+              Eksisterende kunde – Perun Core
+            </label>
+            <input
+              id="manual-customer-search"
+              className={field}
+              value={customerSearch}
+              onChange={e => setCustomerSearch(e.target.value)}
+              placeholder="Søk navn, organisasjonsnummer eller kunde-ID"
+            />
+            <select
+              id="manual-existing-customer"
+              className={field}
+              value={selectedCustomer}
+              onChange={e => chooseCustomer(e.target.value)}
+            >
+              <option value="">Ny kunde / skriv inn selv</option>
+              {serverCustomers
+                .filter(c =>
+                  [
+                    c.name,
+                    c.organization_number || '',
+                    String(c.core_customer_id ?? c.id)
+                  ].join(' ').toLocaleLowerCase('nb-NO')
+                   .includes(customerSearch.trim().toLocaleLowerCase('nb-NO')) ||
+                  `core:${c.core_customer_id ?? c.id}` === selectedCustomer
+                )
+                .map(c => (
+                  <option
+                    key={`core:${c.core_customer_id ?? c.id}`}
+                    value={`core:${c.core_customer_id ?? c.id}`}
+                  >
+                    {c.name} (Core #{c.core_customer_id ?? c.id})
+                  </option>
+                ))}
+            </select>
+            <p className="text-xs text-[#d1abb9]">
+              {serverCustomers.length} kunder hentet fra Perun Core.
+              Oppdragsadressen kan endres.
+            </p>
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div><label className={label} htmlFor="manual-customer">Kunde / firmanavn *</label><input id="manual-customer" className={field} required maxLength={255} value={form.customer_name} onChange={e => update('customer_name', e.target.value)} /></div>
             <div><label className={label} htmlFor="manual-customer-type">Kundetype</label><select id="manual-customer-type" className={field} value={form.customer_type} onChange={e => update('customer_type', e.target.value as ManualInquiryPayload['customer_type'])}><option>Privatperson</option><option>B2B</option><option>Borettslag/Sameie</option></select></div>
