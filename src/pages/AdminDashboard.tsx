@@ -2084,7 +2084,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   // Avoid counting completed Core projects already represented by a TLV inquiry.
   const knownInquiryIds = new Set(inquiries.map(i => Number(i.id)));
   const unlinkedHistorical = historicalCoreProjects.filter(project => {
-    const match = /^inquiry:(\\d+)$/.exec(project.source_reference || "");
+    const match = /^inquiry:(\d+)$/.exec(project.source_reference || "");
     return !match || !knownInquiryIds.has(Number(match[1]));
   });
   const baseStatusCounts = countCoreStatusRows(dashboardRows, coreStatusForRow, coreStatusSourceAvailable);
