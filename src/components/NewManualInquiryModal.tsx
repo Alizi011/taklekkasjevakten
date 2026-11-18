@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, X } from 'lucide-react';
+import type { CoreOfferCustomer } from './NewPriceOfferChooser';
 
 export type ManualInquiryPayload = {
   customer_id?: number;
@@ -39,6 +40,7 @@ type Props = {
   endpoint: string;
   sessionToken?: string;
   customers?: ManualCustomerOption[];
+  initialCoreCustomer?: CoreOfferCustomer | null;
 };
 
 const initial: ManualInquiryPayload = {
@@ -49,7 +51,7 @@ const initial: ManualInquiryPayload = {
 const field = 'w-full rounded-xl border border-[#673243] bg-[#260d18] px-3 py-2.5 text-sm text-white outline-none focus:border-rose-400';
 const label = 'mb-1 block text-xs font-bold text-[#f0cbd7]';
 
-export default function NewManualInquiryModal({ open, onClose, onCreated, endpoint, sessionToken }: Props) {
+export default function NewManualInquiryModal({ open, onClose, onCreated, endpoint, sessionToken, initialCoreCustomer }: Props) {
   const [form, setForm] = useState<ManualInquiryPayload>(initial);
   const [selectedCustomer, setSelectedCustomer] = useState('');
   // TLV_CORE_CUSTOMER_SEARCH_V3
@@ -89,6 +91,41 @@ export default function NewManualInquiryModal({ open, onClose, onCreated, endpoi
       .catch(e => { if (!cancelled) setCustomerError(e instanceof Error ? e.message : 'Kunne ikke hente kunder.'); });
     return () => { cancelled = true; };
   }, [endpoint, open, sessionToken]);
+
+  useEffect(() => {
+    if (!open || !initialCoreCustomer) return;
+    const customer = initialCoreCustomer;
+    const type = customer.customer_type === 'private'
+      ? 'Privatperson'
+      : customer.customer_type === 'condominium' || customer.customer_type === 'housing_association'
+        ? 'Borettslag/Sameie' : 'B2B';
+    setSelectedCustomer(`core:${customer.id}`);
+    setCustomerSearch(customer.name);
+    setForm({
+      ...initial,
+      core_customer_id: customer.id,
+      customer_name: customer.name,
+      customer_type: type,
+      organization_number: customer.organization_number || '',
+      city: customer.city || ''
+    });
+  }, [open, initialCoreCustomer?.id]);
+
+  // En valgt Core-kunde skal beholde sin identitet selv om kundelisten
+  // i oppdragsmodulen ikke inneholder alle Core-kunder.
+  useEffect(() => {
+    if (!open || !initialCoreCustomer || serverCustomers.length === 0) return;
+    const found = serverCustomers.find(c => Number(c.core_customer_id ?? c.id) === initialCoreCustomer.id);
+    if (!found) return;
+    setForm(old => old.core_customer_id === initialCoreCustomer.id ? {
+      ...old,
+      phone: old.phone || found.phone || '',
+      email: old.email || found.email || '',
+      address: old.address || found.address || '',
+      postal_code: old.postal_code || found.postal_code || '',
+      city: old.city || found.city || '',
+    } : old);
+  }, [open, initialCoreCustomer?.id, serverCustomers]);
 
   if (!open) return null;
 
@@ -182,6 +219,9 @@ export default function NewManualInquiryModal({ open, onClose, onCreated, endpoi
               onChange={e => chooseCustomer(e.target.value)}
             >
               <option value="">Ny kunde / skriv inn selv</option>
+              {initialCoreCustomer && !serverCustomers.some(c => Number(c.core_customer_id ?? c.id) === initialCoreCustomer.id) && (
+                <option value={`core:${initialCoreCustomer.id}`}>{initialCoreCustomer.name} (Core #{initialCoreCustomer.id})</option>
+              )}
               {serverCustomers
                 .filter(c =>
                   [
