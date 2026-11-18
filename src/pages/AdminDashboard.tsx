@@ -2,7 +2,7 @@ import AdminHistoricalCoreProjects, { type HistoricalProject } from "../componen
 import HistoricalCoreCaseDetail from "./HistoricalCoreCaseDetail";
 import MarketingPhotoLibrary from "./MarketingPhotoLibrary";
 import NewManualInquiryModal from '../components/NewManualInquiryModal';
-import NewPriceOfferChooser from "../components/NewPriceOfferChooser";
+import NewPriceOfferChooser, { type CoreOfferCustomer } from "../components/NewPriceOfferChooser";
 import { useState, useEffect, useRef } from "react";
 import {
   Inbox,
@@ -354,6 +354,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   
   const [showNewManualInquiry, setShowNewManualInquiry] = useState(false);
   const [showNewPriceOffer, setShowNewPriceOffer] = useState(false);
+  const [selectedOfferCoreCustomer, setSelectedOfferCoreCustomer] = useState<CoreOfferCustomer | null>(null);
   const [offerAfterNewInquiry, setOfferAfterNewInquiry] = useState(false);
   const [selectedInquiryOpensOffer, setSelectedInquiryOpensOffer] = useState(false);
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
@@ -2655,7 +2656,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => { setOfferAfterNewInquiry(false); setShowNewManualInquiry(true); }}
+                  onClick={() => { setSelectedOfferCoreCustomer(null); setOfferAfterNewInquiry(false); setShowNewManualInquiry(true); }}
                   className="rounded-xl bg-rose-700 px-4 py-3 text-sm font-bold text-white hover:bg-rose-600"
                 >
                   <Plus className="mr-1 inline h-4 w-4" />
@@ -2681,7 +2682,14 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   setSelectedInquiryOpensOffer(true);
                   setSelectedInquiry(inquiry);
                 }}
+                onCoreCustomer={(customer) => {
+                  setSelectedOfferCoreCustomer(customer);
+                  setShowNewPriceOffer(false);
+                  setOfferAfterNewInquiry(true);
+                  setShowNewManualInquiry(true);
+                }}
                 onNewCase={() => {
+                  setSelectedOfferCoreCustomer(null);
                   setShowNewPriceOffer(false);
                   setOfferAfterNewInquiry(true);
                   setShowNewManualInquiry(true);
@@ -2691,11 +2699,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
             {activeTab === "oppdrag" && (
               <NewManualInquiryModal
                 open={showNewManualInquiry}
-                onClose={() => setShowNewManualInquiry(false)}
+                initialCoreCustomer={selectedOfferCoreCustomer}
+                onClose={() => { setShowNewManualInquiry(false); setSelectedOfferCoreCustomer(null); setOfferAfterNewInquiry(false); }}
                 endpoint={apiUrl("/admin_manual_inquiry.php")}
                 onCreated={async (id) => {
                   const fromOffer = offerAfterNewInquiry;
                   setShowNewManualInquiry(false);
+                  setSelectedOfferCoreCustomer(null);
                   setOfferAfterNewInquiry(false);
                   await fetchInquiries();
                   setActiveSubTab("aktive");
