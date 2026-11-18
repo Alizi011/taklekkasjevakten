@@ -1,3 +1,4 @@
+import AdminCaseOrganizations from "../components/AdminCaseOrganizations";
 import AdminPhotoVisibility from "../components/AdminPhotoVisibility";
 import AgreementPreviewButton from "@/components/AgreementPreviewButton";
 import AdminAgreementProgress from "../components/AdminAgreementProgress";
@@ -3477,7 +3478,7 @@ export default function InquiryDetail({
               </div>
               <div className="overflow-hidden rounded-2xl border border-slate-700/70 bg-[#171020]">
                 <div className="flex flex-wrap gap-1 border-b border-slate-700/70 p-2" role="tablist" aria-label="Snarveier for saken">
-                  {([{ label:"Oversikt",icon:Building2,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("overview"); setShowBrregInline(false); } },{ label:"Dokumenter",icon:FileText,action:()=>{ setShowDocumentsInOverview(true); setOverviewInlineMedia("overview"); setShowBrregInline(false); } },{ label:"Bilder",icon:Camera,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("photos"); setShowBrregInline(false); } },{ label:"Rapport",icon:FileCheck2,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("report"); setShowBrregInline(false); } },{ label:"Tilbud",icon:ClipboardList,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("offers"); setShowBrregInline(false); } },{ label:"Meldinger",icon:Mail,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("messages"); setShowBrregInline(false); setCommunicationView("messages"); } }] as const).map(tab => <button key={tab.label} type="button" onClick={tab.action} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-200"><tab.icon className="h-4 w-4" />{tab.label}</button>)}
+                  {([{ label:"Oversikt",icon:Building2,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("overview"); setShowBrregInline(false); } },{ label:"Dokumenter",icon:FileText,action:()=>{ setShowDocumentsInOverview(true); setOverviewInlineMedia("overview"); setShowBrregInline(false); } },{ label:"Bilder",icon:Camera,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("photos"); setShowBrregInline(false); } },{ label:"Rapport",icon:FileCheck2,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("report"); setShowBrregInline(false); } },{ label:"Tilbud",icon:ClipboardList,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("offers"); setShowBrregInline(false); } },{ label:"Meldinger",icon:Mail,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("messages"); setShowBrregInline(false); setCommunicationView("messages"); } },{ label:"Virksomheter",icon:Building2,action:()=>{ setShowDocumentsInOverview(false); setOverviewInlineMedia("organisations"); setShowBrregInline(false); } }] as const).map(tab => <button key={tab.label} type="button" onClick={tab.action} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-200"><tab.icon className="h-4 w-4" />{tab.label}</button>)}
                   {showBrregTab && (
                     <button type="button" onClick={() => setShowBrregInline(value => !value)}
                       className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-200">
@@ -3567,6 +3568,11 @@ export default function InquiryDetail({
                           </div>}
                     </div>
                   </section>
+                )}
+                {overviewInlineMedia === "organisations" && !showBrregInline && !showDocumentsInOverview && (
+                  <div className="p-4">
+                    <AdminCaseOrganizations inquiryId={inquiryId} />
+                  </div>
                 )}
                 {overviewInlineMedia === "photos" && !showBrregInline && !showDocumentsInOverview && (
                   <section className="space-y-4 p-4" aria-label="Bilder i saksoversikten">
