@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ArrowLeft, Building2, Camera, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, FileText, FolderOpen, Image as ImageIcon, Info, X } from "lucide-react";
+import { ArrowLeft, Building2, Camera, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, FileText, FolderOpen, Info, X } from "lucide-react";
 import { CorePhoto, dateLabel, useHistoricalPhotos, type HistoricalProject } from "../components/AdminHistoricalCoreProjects";
 
 // Reuses the case-detail visual structure. Historical projects are not TLV inquiries.
