@@ -108,6 +108,7 @@ interface BrregSearchResult {
 interface InquiryDetailProps {
   inquiry: Inquiry;
   coreCaseStatus?: CoreCaseStatusView;
+  initialTab?: "overview" | "offer";
   onBack: () => void;
   onUpdateInquiry: (updated: Inquiry) => void;
   onPreviewCustomer?: (inquiryId: number) => void;
@@ -452,6 +453,7 @@ function DetailBlock({
 export default function InquiryDetail({
   inquiry,
   coreCaseStatus = { state: "unavailable" },
+  initialTab = "overview",
   onBack,
   onUpdateInquiry,
   onPreviewCustomer,
@@ -791,7 +793,7 @@ export default function InquiryDetail({
 
   const [adminSignaturePending, setAdminSignaturePending] = useState(false);
   const [adminCaseTab, setAdminCaseTab] =
-    useState<AdminCaseTab>("overview");
+    useState<AdminCaseTab>(initialTab);
   const [showBrregInline, setShowBrregInline] = useState(false);
   const [showDocumentsInOverview, setShowDocumentsInOverview] = useState(false);
   // Separate read-only tabs inside the existing case overview; do not switch adminCaseTab.
