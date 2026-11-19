@@ -76,17 +76,41 @@ export function CorePhoto({ photoId, alt, className }: { photoId: number; alt: s
     </div>;
 }
 
+// Property images are separate from field documentation; never use a work photo as the card background.
+function CorePropertyBackground({ projectId }: { projectId: number }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+    setUrl(null);
+    fetch(apiUrl(`/admin_historical_tlv_property_image.php?project_id=${projectId}`), {
+      method: "GET", credentials: "include", cache: "no-store", signal: controller.signal,
+    }).then(async response => {
+      if (!response.ok) throw new Error("Eiendomsbilde ikke tilgjengelig.");
+      const blob = await response.blob();
+      if (!blob.type.startsWith("image/")) throw new Error("Ugyldig bildeformat.");
+      if (controller.signal.aborted) return;
+      objectUrl = URL.createObjectURL(blob);
+      setUrl(objectUrl);
+    }).catch(() => {/* missing property view => neutral background, never field photo */});
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [projectId]);
+  if (!url) return null;
+  return <img src={url} alt="" className="h-full w-full object-cover object-center opacity-75"/>;
+}
+
 function HistoricalCard({ project, onOpen }: { project: HistoricalProject; onOpen: () => void }) {
   const { photos, error, loading } = useHistoricalPhotos(project.id);
   return (
     <article className="relative isolate flex min-w-0 flex-col gap-3 overflow-hidden rounded-2xl border border-[#955568] bg-[#472333] p-4 text-white shadow-[0_8px_25px_rgba(0,0,0,0.16)] transition-all hover:border-rose-300/60 hover:shadow-[0_12px_32px_rgba(0,0,0,0.22)]">
-      {photos[0] && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-[54%] overflow-hidden rounded-t-2xl" aria-hidden="true">
-          <CorePhoto photoId={photos[0].id} alt="" className="h-full w-full object-cover object-center opacity-75" />
-          <div className="absolute inset-0 bg-gradient-to-r from-[#331522]/95 via-[#381725]/75 to-[#381725]/35" />
-          <div className="absolute inset-0 bg-gradient-to-t from-[#472333] via-[#472333]/35 to-transparent" />
-        </div>
-      )}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-[54%] overflow-hidden rounded-t-2xl" aria-hidden="true">
+        <CorePropertyBackground projectId={project.id}/>
+        <div className="absolute inset-0 bg-gradient-to-r from-[#331522]/95 via-[#381725]/75 to-[#381725]/35" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#472333] via-[#472333]/35 to-transparent" />
+      </div>
       <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-white/[0.035] to-transparent" aria-hidden="true" />
 
       <div className="relative z-10 flex items-start justify-between gap-3">
