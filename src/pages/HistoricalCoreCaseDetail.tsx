@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
-import { ArrowLeft, Building2, Camera, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, FileText, FolderOpen, Info, X } from "lucide-react";
+import { ArrowLeft, Building2, Camera, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, FileText, FolderOpen, X } from "lucide-react";
 import { CorePhoto, dateLabel, useHistoricalPhotos, type HistoricalProject } from "../components/AdminHistoricalCoreProjects";
+import HistoricalCoreDocuments, { useHistoricalDocuments } from "../components/HistoricalCoreDocuments";
 
 // Reuses the case-detail visual structure. Historical projects are not TLV inquiries.
 export default function HistoricalCoreCaseDetail({ project, onBack }: { project: HistoricalProject; onBack: () => void }) {
   const { photos, error, loading } = useHistoricalPhotos(project.id);
-  const [tab, setTab] = useState<"overview" | "photos" | "documents">("overview");
+  const { documents, loading: docsLoading, error: docsError } = useHistoricalDocuments(project.id);
+  const [tab, setTab] = useState<"overview" | "photos" | "documents" | "reports">("overview");
   const [rightPanel, setRightPanel] = useState<"process" | "activity">("process");
   const [page, setPage] = useState(0);
   const [photoId, setPhotoId] = useState<number | null>(null);
@@ -71,7 +73,8 @@ export default function HistoricalCoreCaseDetail({ project, onBack }: { project:
                 {([
                   ["overview","Oversikt",ClipboardList],
                   ["documents","Dokumenter",FileText],
-                  ["photos","Bilder",Camera]
+                  ["photos","Bilder",Camera],
+                  ["reports","Rapport",FileText]
                 ] as const).map(([key,label,Icon]) => (
                   <button type="button" key={key} role="tab" aria-selected={tab === key}
                     onClick={() => setTab(key)}
@@ -99,10 +102,8 @@ export default function HistoricalCoreCaseDetail({ project, onBack }: { project:
                   {project.notes && <p className="mt-3 whitespace-pre-wrap break-words border-t border-white/10 pt-3 text-sm text-slate-300">{project.notes}</p>}
                 </div>
               </div>}
-              {tab === "documents" && <div className="p-5 text-sm text-slate-300">
-                <p className="flex items-center gap-2 font-semibold text-white"><Info size={16}/> Historiske dokumenter</p>
-                <p className="mt-2 text-xs leading-5">Dokumentoversikten fra Perun Core er ikke koblet til denne visningen ennå. Dokumenter er ikke importert eller slettet.</p>
-              </div>}
+              {tab === "documents" && <HistoricalCoreDocuments items={documents} loading={docsLoading} error={docsError} mode="documents" />}
+              {tab === "reports" && <HistoricalCoreDocuments items={documents} loading={docsLoading} error={docsError} mode="reports" />}
               {tab === "photos" && <div className="space-y-4 p-4">
                 {loading && <p className="text-xs text-slate-300">Henter bilder …</p>}
                 {error && <p role="alert" className="text-sm text-amber-300">{error}</p>}
