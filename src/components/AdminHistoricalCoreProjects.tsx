@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, Building2, CalendarDays, CheckCircle2, FolderArchive, Image as ImageIcon } from "lucide-react";
+import { ArrowRight, MapPin, Image as ImageIcon } from "lucide-react";
 import { apiUrl } from "../lib/api";
 
 // Historical Core projects are read-only, and photos are served via an admin-authenticated TLV proxy.
@@ -78,34 +78,65 @@ export function CorePhoto({ photoId, alt, className }: { photoId: number; alt: s
 
 function HistoricalCard({ project, onOpen }: { project: HistoricalProject; onOpen: () => void }) {
   const { photos, error, loading } = useHistoricalPhotos(project.id);
-  return <article className="relative isolate flex min-w-0 flex-col gap-3 overflow-hidden rounded-2xl border border-[#955568] bg-[#472333] p-4 text-white shadow-[0_8px_25px_rgba(0,0,0.16)] transition-all hover:border-rose-300/60">
-    <div className="flex items-start justify-between gap-2">
-      <span className="rounded-lg bg-slate-950/65 px-2.5 py-1 font-mono text-[11px] font-black">{project.project_number || `Core #${project.id}`}</span>
-      <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold text-amber-200">Historisk · Core</span>
-    </div>
-    <div className="relative h-44 overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-[#392036] via-[#302538] to-[#172839]">
-      {photos[0] ? <CorePhoto photoId={photos[0].id} alt={`Bilde fra ${project.title}`} className="h-full w-full object-cover"/> :
-        <div className="flex h-full flex-col items-center justify-center gap-2"><FolderArchive size={34} className="text-amber-300/70"/><p className="text-xs text-slate-300">{loading ? "Henter prosjektbilder …" : error || "Ingen bilder registrert"}</p></div>}
-      {photos.length > 0 && <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-lg bg-slate-950/85 px-2 py-1 text-xs font-bold"><ImageIcon size={13}/>{photos.length} bilder</span>}
-    </div>
-    <div className="min-h-[75px]">
-      <h3 className="line-clamp-2 text-base font-black">{project.customer_name || "Kunde ikke oppgitt"}</h3>
-      <p className="mt-1 line-clamp-3 text-xs text-[#f0d7dd]">{project.title || "Prosjekt uten tittel"}</p>
-    </div>
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-bold text-emerald-200"><CheckCircle2 size={13}/> Fullført</span>
-      <span className="inline-flex items-center gap-1 rounded-full border border-white/20 px-2.5 py-1 text-xs text-slate-200"><Building2 size={13}/> Perun Core</span>
-    </div>
-    <div className="grid grid-cols-2 gap-3 border-t border-white/20 pt-3 text-xs">
-      <div><p className="text-[10px] text-[#dfb9c4]">Hovedstatus (Core)</p><p className="mt-1 font-bold text-emerald-200">Fullført</p></div>
-      <div><p className="text-[10px] text-[#dfb9c4]">Fakturert</p><p className="mt-1 font-bold text-slate-300">Ikke kontrollert</p></div>
-      <div className="col-span-2"><p className="flex items-center gap-1 text-[10px] text-[#dfb9c4]"><CalendarDays size={12}/> Sluttdato</p><p className="mt-1 font-bold">{dateLabel(project.end_date)}</p></div>
-    </div>
-    <button type="button" onClick={onOpen}
-      className="relative z-10 mt-auto flex w-full items-center justify-center gap-2 rounded-xl border border-[#c57490] bg-gradient-to-r from-[#79334e] to-[#61243e] px-3 py-2.5 text-xs font-bold shadow-sm transition hover:border-rose-300 hover:from-[#92405e] hover:to-[#76314f]">
-      Åpne oppdrag <ArrowRight size={14}/>
-    </button>
-  </article>;
+  return (
+    <article className="relative isolate flex min-w-0 flex-col gap-3 overflow-hidden rounded-2xl border border-[#955568] bg-[#472333] p-4 text-white shadow-[0_8px_25px_rgba(0,0,0,0.16)] transition-all hover:border-rose-300/60 hover:shadow-[0_12px_32px_rgba(0,0,0,0.22)]">
+      {photos[0] && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-[54%] overflow-hidden rounded-t-2xl" aria-hidden="true">
+          <CorePhoto photoId={photos[0].id} alt="" className="h-full w-full object-cover object-center opacity-75" />
+          <div className="absolute inset-0 bg-gradient-to-r from-[#331522]/95 via-[#381725]/75 to-[#381725]/35" />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#472333] via-[#472333]/35 to-transparent" />
+        </div>
+      )}
+      <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-white/[0.035] to-transparent" aria-hidden="true" />
+
+      <div className="relative z-10 flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="rounded-lg border border-[#633347] bg-[#1b0a12] px-2 py-1 font-mono text-xs font-black text-[#f6e9ed]">{project.project_number || `Core #${project.id}`}</span>
+            <span className="rounded-md border border-amber-500/35 bg-[#432b25]/90 px-2 py-1 text-[9px] font-bold text-amber-200">Historisk · Core</span>
+          </div>
+          <h4 className="break-words text-sm font-extrabold text-white">{project.customer_name || "Ukjent kunde"}</h4>
+          <p className="mt-1 flex items-start gap-1.5 text-[11px] leading-5 text-[#e8cbd4]">
+            <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-amber-300" />
+            <span>{project.title || "Oppdragsadresse ikke registrert"}</span>
+          </p>
+          <p className="mt-1 text-[10px] text-[#c5a5b2]">Taklekkasjevakten · Historisk prosjekt</p>
+        </div>
+        {photos.length > 0 && (
+          <button type="button" onClick={onOpen} title="Åpne prosjekt og bilder"
+            className="relative z-10 shrink-0 rounded-lg border border-[#714050] bg-[#1e0b13] px-2 py-1.5 text-[10px] text-[#f2dbe2] hover:bg-[#4b2331]">
+            <span className="inline-flex items-center gap-1"><ImageIcon size={13}/>{photos.length}</span>
+          </button>
+        )}
+      </div>
+
+      <div className="relative z-10 flex flex-wrap items-center gap-2">
+        <span className="rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold text-emerald-200">Fullført</span>
+        <span className="rounded-full border border-slate-400/25 bg-slate-700/30 px-2.5 py-1 text-[10px] font-bold text-slate-200">Perun Core</span>
+      </div>
+
+      <div className="relative z-10 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-[#a16b7b]/60 pt-3 text-xs">
+        <div className="min-w-0">
+          <div className="mb-1 text-[10px] text-[#c5a5b2]">Hovedstatus (Core)</div>
+          <span className="inline-flex rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-2 py-1 text-[10px] font-bold text-emerald-200">Fullført</span>
+        </div>
+        <div className="min-w-0">
+          <div className="mb-1 text-[10px] text-[#c5a5b2]">Fakturert</div>
+          <span className="inline-flex rounded-lg border border-slate-500/50 bg-slate-900/30 px-2 py-1 text-[10px] font-bold text-slate-200">Ikke kontrollert</span>
+        </div>
+        <div className="col-span-2">
+          <div className="mb-1 text-[10px] text-[#c5a5b2]">Dato</div>
+          <span className="text-[#ecd4dd]">{dateLabel(project.end_date)}</span>
+        </div>
+      </div>
+      {!photos.length && (loading || error) && (
+        <p className="relative z-10 text-[10px] text-[#c5a5b2]">{loading ? "Henter bilder …" : error}</p>
+      )}
+      <button type="button" onClick={onOpen} className="relative z-10 mt-auto flex w-full items-center justify-center gap-2 rounded-xl border border-[#c57490] bg-gradient-to-r from-[#79334e] to-[#61243e] px-3 py-2.5 text-xs font-bold text-white shadow-sm transition hover:border-rose-300 hover:from-[#92405e] hover:to-[#76314f]">
+        Åpne oppdrag <ArrowRight className="h-3.5 w-3.5" />
+      </button>
+    </article>
+  );
 }
 
 export default function AdminHistoricalCoreProjects({ projects, query = "", sortNewest = true, onOpen }: Props) {
