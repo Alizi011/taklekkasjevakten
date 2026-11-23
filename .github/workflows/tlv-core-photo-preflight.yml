@@ -1,0 +1,55 @@
+name: TLV Core photo bridge production preflight
+on:
+  push:
+    branches:
+      - tlv/core-case-photo-bridge-20261123
+permissions:
+  contents: read
+jobs:
+  compare:
+    if: ${{ contains(github.event.head_commit.message, '[tlv-photo-preflight]') }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Rebuild main baseline without modifying production
+        run: |
+          npm ci
+          npm run build
+          test -s dist/index.html
+          echo '=== MAIN BUILD ASSETS ==='
+          grep -oE 'assets/index-[A-Za-z0-9_-]+\\.(js|css)' dist/index.html
+      - name: Read current one.com production manifest and compare
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.TLV_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.TLV_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY"
+          test -n "$KNOWN_HOSTS"
+          mkdir -m 700 -p "$HOME/.ssh"
+          printf '%s\\n' "$DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          HOST="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          "${SSH[@]}" "$HOST" 'test -s /webroots/www/index.html && test -d /webroots/www/assets'
+          "${SSH[@]}" "$HOST" 'cat /webroots/www/index.html' > /tmp/tlv-live-index.html
+          echo '=== CURRENT LIVE ASSETS ==='
+          grep -oE 'assets/index-[A-Za-z0-9_-]+\\.(js|css)' /tmp/tlv-live-index.html
+          echo '=== BASELINE COMPARISON ==='
+          if cmp -s dist/index.html /tmp/tlv-live-index.html; then
+            echo 'LIVE_MATCHES_GITHUB_MAIN_INDEX'
+          else
+            echo 'LIVE_DIFFERS_FROM_GITHUB_MAIN_INDEX'
+          fi
+          echo 'PRODUCTION_UNCHANGED'
