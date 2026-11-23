@@ -1,0 +1,53 @@
+name: TLV read-only live baseline check
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/tlv-live-baseline-check.yml
+permissions:
+  contents: read
+jobs:
+  check-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Rebuild current main frontend
+        run: |
+          npm ci
+          npm run build
+          test -s dist/index.html
+      - name: Compare live index and referenced assets (read-only)
+        env:
+          KEY: ${{ secrets.TLV_DEPLOY_SSH_KEY }}
+          KNOWN: ${{ vars.TLV_SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$KEY" && test -n "$KNOWN"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            c2d9sf1au_ssh@ssh.c2d9sf1au.service.one \
+            'test -s /webroots/www/index.html; cat /webroots/www/index.html' > /tmp/tlv-live-index
+          echo '=== MAIN BUILD ==='
+          sha256sum dist/index.html
+          grep -oE 'assets/index-[A-Za-z0-9_-]+\.(js|css)' dist/index.html || true
+          echo '=== ONE.COM ACTIVE ==='
+          sha256sum /tmp/tlv-live-index
+          grep -oE 'assets/index-[A-Za-z0-9_-]+\.(js|css)' /tmp/tlv-live-index || true
+          if cmp -s dist/index.html /tmp/tlv-live-index; then
+            echo 'LIVE_MATCHES_MAIN'
+          else
+            echo 'LIVE_DIFFERS_FROM_MAIN'
+          fi
+          echo 'READ_ONLY_NO_PRODUCTION_FILES_CHANGED'
