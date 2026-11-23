@@ -125,6 +125,20 @@ interface PhotoRow {
   caption_text?: string | null;
 }
 
+interface CoreCasePhoto {
+  id: number;
+  caption?: string | null;
+  taken_at?: string | null;
+  imported_at?: string | null;
+}
+interface CoreCasePhotosResponse {
+  success: boolean;
+  inquiry_id?: number;
+  project_id?: number;
+  photos?: CoreCasePhoto[];
+  message?: string;
+}
+
 interface PropertyImageData {
   image_url: string;
   source: "streetview" | "satellite";
@@ -459,6 +473,8 @@ export default function InquiryDetail({
 
   const [checklists, setChecklists] = useState<ChecklistRow[]>([]);
   const [photos, setPhotos] = useState<PhotoRow[]>([]);
+  const [corePhotos, setCorePhotos] = useState<CoreCasePhoto[]>([]);
+  const [corePhotosError, setCorePhotosError] = useState("");
   const [report, setReport] = useState<ReportData | null>(null);
   const [completionReport, setCompletionReport] =
     useState<CompletionReportMini | null>(null);
@@ -2288,6 +2304,30 @@ export default function InquiryDetail({
     }
   };
 
+  // Administrator-only Core photo bridge. Never affects customer image visibility.
+  useEffect(() => {
+    if (!Number.isInteger(inquiryId) || inquiryId < 1) return;
+    let cancelled = false;
+    setCorePhotos([]);
+    setCorePhotosError("");
+    void fetch(apiUrl(`/admin_core_case_photos.php?inquiry_id=${encodeURIComponent(String(inquiryId))}`), {
+      credentials: "include", cache: "no-store"
+    })
+      .then(async response => {
+        const data = await response.json() as CoreCasePhotosResponse;
+        if (!response.ok || !data.success || data.inquiry_id !== inquiryId ||
+            !Array.isArray(data.photos)) {
+          throw new Error(data.message || "Kunne ikke hente Core-bilder.");
+        }
+        return data.photos;
+      })
+      .then(rows => { if (!cancelled) setCorePhotos(rows); })
+      .catch(error => {
+        if (!cancelled) setCorePhotosError(error instanceof Error ? error.message : "Kunne ikke hente Core-bilder.");
+      });
+    return () => { cancelled = true; };
+  }, [inquiryId]);
+
   const fetchFieldStatus = async () => {
     if (!inquiryId) return;
 
@@ -3126,7 +3166,7 @@ export default function InquiryDetail({
                     <div className="h-72 lg:h-[350px]">
                       {propertyImage?.image_url ? <img src={propertyImage.image_url} alt={`Eiendommen ${addressLabel}`} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-slate-500"><Building2 className="h-12 w-12" /></div>}
                     </div>
-                    <button type="button" onClick={() => setAdminCaseTab("documents")} className="absolute bottom-3 left-3 inline-flex items-center gap-2 rounded-lg border border-white/20 bg-slate-950/85 px-3 py-2 text-xs font-bold text-white"><Camera className="h-4 w-4" />{photos.length ? `${photos.length} bilder` : "Vis bilder"}</button>
+                    <button type="button" onClick={() => setAdminCaseTab("documents")} className="absolute bottom-3 left-3 inline-flex items-center gap-2 rounded-lg border border-white/20 bg-slate-950/85 px-3 py-2 text-xs font-bold text-white"><Camera className="h-4 w-4" />{photos.length + corePhotos.length ? `${photos.length + corePhotos.length} bilder` : "Vis bilder"}</button>
                   </div>
                   <div className="min-w-0 pr-9">
                     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400"><span className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 font-bold text-cyan-200">SAK #{inquiry.id}</span><span>{orderedService}</span></div>
@@ -3161,7 +3201,10 @@ export default function InquiryDetail({
                 </div>
                 <div className="grid gap-3 p-4 md:grid-cols-2">
                   <div className="rounded-xl border border-slate-700/70 bg-slate-950/40 p-4"><div className="flex items-center justify-between"><h3 className="text-sm font-bold">Siste dokumenter</h3><button type="button" onClick={() => setAdminCaseTab("documents")} className="text-xs font-semibold text-cyan-300">Vis alle →</button></div><div className="mt-4 space-y-2">{report && <button type="button" onClick={() => setAdminCaseTab("reports")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" />Rapport 1 · {reportStatusLabel(report.status)}</button>}{caseOffers.slice().sort((a,b)=>b.id-a.id).slice(0,2).map(o=><button type="button" key={o.id} onClick={() => setAdminCaseTab("offer")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" /><span className="min-w-0 truncate">{o.offer_number || `Tilbud #${o.id}`} · {o.status}</span></button>)}{!report && caseOffers.length===0 && <p className="text-xs text-slate-400">Ingen dokumenter registrert</p>}</div></div>
-                  <div className="rounded-xl border border-slate-700/70 bg-slate-950/40 p-4"><div className="flex items-center justify-between"><h3 className="text-sm font-bold">Siste bilder fra saken</h3><button type="button" onClick={() => setAdminCaseTab("field")} className="text-xs font-semibold text-cyan-300">Vis alle →</button></div>{photos.length ? <div className="mt-4 grid grid-cols-3 gap-2">{photos.filter(p=>Boolean(p.photo_url)).slice(0,6).map(p=><button type="button" key={p.id} onClick={() => setAdminCaseTab("field")} className="aspect-square overflow-hidden rounded-lg border border-slate-700 bg-slate-900"><img src={apiAssetUrl(p.photo_url)} alt={p.caption_text || "Feltbilde"} className="h-full w-full object-cover" loading="lazy" /></button>)}</div> : <p className="mt-4 text-xs text-slate-400">Ingen feltbilder registrert</p>}</div>
+                  <div className="rounded-xl border border-slate-700/70 bg-slate-950/40 p-4"><div className="flex items-center justify-between"><h3 className="text-sm font-bold">Siste bilder fra saken</h3><button type="button" onClick={() => setAdminCaseTab("field")} className="text-xs font-semibold text-cyan-300">Vis alle →</button></div>{photos.length || corePhotos.length ? <div className="mt-4 grid grid-cols-3 gap-2">
+                    {photos.filter(p=>Boolean(p.photo_url)).slice(0,6).map(p=><button type="button" key={p.id} onClick={() => setAdminCaseTab("field")} className="aspect-square overflow-hidden rounded-lg border border-slate-700 bg-slate-900"><img src={apiAssetUrl(p.photo_url)} alt={p.caption_text || "Feltbilde"} className="h-full w-full object-cover" loading="lazy" /></button>)}
+                    {corePhotos.slice(0,Math.max(0,6-photos.length)).map(photo=><button type="button" key={`core-${photo.id}`} onClick={()=>setAdminCaseTab("documents")} className="aspect-square overflow-hidden rounded-lg border border-slate-700 bg-slate-900"><img src={apiUrl(`/admin_core_case_photos.php?inquiry_id=${encodeURIComponent(String(inquiryId))}&photo_id=${encodeURIComponent(String(photo.id))}`)} alt={photo.caption || "Core-prosjektbilde"} className="h-full w-full object-cover" loading="lazy"/></button>)}
+                  </div> : <p className="mt-4 text-xs text-slate-400">Ingen feltbilder registrert</p>}</div>
                 </div>
               </div>
             </div>
@@ -5038,6 +5081,24 @@ export default function InquiryDetail({
               </div>
             </div>
           </div>
+          {(corePhotos.length > 0 || corePhotosError) && (
+            <div className="mt-6 border-t border-slate-800 pt-5">
+              <h4 className="text-sm font-black text-white">Dokumentasjon fra Perun Core ({corePhotos.length})</h4>
+              <p className="mt-1 text-xs text-slate-400">Importerte prosjektbilder, tilgjengelig kun for autorisert administrator.</p>
+              {corePhotosError && <p role="alert" className="mt-3 text-sm text-amber-300">{corePhotosError}</p>}
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {corePhotos.map(photo => {
+                  const url = apiUrl(`/admin_core_case_photos.php?inquiry_id=${encodeURIComponent(String(inquiryId))}&photo_id=${encodeURIComponent(String(photo.id))}`);
+                  return <a key={photo.id} href={url} target="_blank" rel="noopener noreferrer"
+                    className="overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
+                    <img src={url} alt={photo.caption || `Prosjektbilde #${photo.id}`}
+                      className="h-40 w-full object-cover" loading="lazy"/>
+                    <p className="break-words p-3 text-xs text-slate-200">{photo.caption || `Prosjektbilde #${photo.id}`}</p>
+                  </a>;
+                })}
+              </div>
+            </div>
+          )}
         </section>
 
         <div
@@ -5275,6 +5336,36 @@ export default function InquiryDetail({
                   )}
                 </div>
 
+                {(corePhotos.length > 0 || corePhotosError) && (
+                  <div className="space-y-3 border-t border-slate-800 pt-4">
+                    <div>
+                      <h4 className="text-sm font-bold text-white">Bilder fra Perun Core ({corePhotos.length})</h4>
+                      <p className="mt-1 text-xs text-slate-400">
+                        Importert prosjektdokumentasjon. Tilgjengelig kun i administratorvisningen;
+                        ingen bilder er automatisk publisert til kunde.
+                      </p>
+                    </div>
+                    {corePhotosError && <p role="alert" className="text-sm text-amber-300">{corePhotosError}</p>}
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {corePhotos.map(photo => {
+                        const url = apiUrl(`/admin_core_case_photos.php?inquiry_id=${encodeURIComponent(String(inquiryId))}&photo_id=${encodeURIComponent(String(photo.id))}`);
+                        return <article key={photo.id} className="overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
+                          <a href={url} target="_blank" rel="noopener noreferrer">
+                            <img src={url} alt={photo.caption || `Prosjektbilde ${photo.id}`}
+                              loading="lazy" className="h-44 w-full object-cover"/>
+                          </a>
+                          <div className="space-y-1 p-3">
+                            <p className="break-words text-xs text-slate-200">{photo.caption || `Core-bilde #${photo.id}`}</p>
+                            <p className="text-[11px] text-slate-400">Bilde-ID {photo.id}
+                              {photo.taken_at ? ` · Registrert dato: ${photo.taken_at}` : ""}
+                            </p>
+                          </div>
+                        </article>;
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {photos.length > 0 && (
                   <div className="space-y-3 border-t border-slate-800 pt-4">
                     <h4 className="text-sm font-bold text-white">
@@ -5387,7 +5478,7 @@ export default function InquiryDetail({
                     Bilder
                   </span>
                   <strong className="text-xl font-black text-white block mt-1">
-                    {photos.length}
+                    {photos.length + corePhotos.length}
                   </strong>
                 </div>
 
@@ -5441,7 +5532,7 @@ export default function InquiryDetail({
                       Dokumentasjon
                     </span>
                     <span className="text-xs font-bold text-slate-200">
-                      {photos.length} feltbilder
+                      {photos.length + corePhotos.length} feltbilder
                     </span>
                   </div>
                 </div>

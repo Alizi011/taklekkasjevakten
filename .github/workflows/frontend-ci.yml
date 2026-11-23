@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - utvikling-avtale-sakskort
+      - tlv/core-case-photo-bridge-20261123
   pull_request:
     branches:
       - main
