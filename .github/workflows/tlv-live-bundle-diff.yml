@@ -1,0 +1,87 @@
+name: Compare TLV live bundle with GitHub main and photo branch
+on:
+  push:
+    branches:
+      - tlv/core-case-photo-bridge-20261123
+    paths:
+      - .github/workflows/tlv-live-bundle-diff.yml
+permissions:
+  contents: read
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout baseline main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: baseline
+      - name: Checkout photo bridge candidate
+        uses: actions/checkout@v4
+        with:
+          ref: tlv/core-case-photo-bridge-20261123
+          path: candidate
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: baseline/package-lock.json
+      - name: Build baseline and candidate in same environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd baseline && npm ci --no-audit --no-fund && npm run build)
+          (cd candidate && npm ci --no-audit --no-fund && npm run build)
+      - name: Fetch active public production bundle (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p live
+          curl --fail --location --silent --show-error --retry 3 --max-time 40 -H 'Cache-Control: no-cache' 'https://taklekkasjevakten.no/?build_compare=20261123' -o live/index.html
+          LIVE_JS=$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' live/index.html | head -1)
+          LIVE_CSS=$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.css' live/index.html | head -1)
+          test -n "$LIVE_JS" && test -n "$LIVE_CSS"
+          curl --fail --location --silent --show-error --retry 3 --max-time 60 "https://taklekkasjevakten.no/$LIVE_JS" -o live/app.js
+          curl --fail --location --silent --show-error --retry 3 --max-time 60 "https://taklekkasjevakten.no/$LIVE_CSS" -o live/app.css
+          test -s live/app.js && test -s live/app.css
+          echo "ACTIVE_JS=$LIVE_JS"
+          echo "ACTIVE_CSS=$LIVE_CSS"
+      - name: Compare exact asset hashes and UI strings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, html, pathlib, re
+          dirs = {'main':pathlib.Path('baseline/dist'), 'candidate':pathlib.Path('candidate/dist')}
+          files = {'live':pathlib.Path('live/app.js')}
+          for name, d in dirs.items():
+              idx=(d/'index.html').read_text()
+              js=re.search(r'assets/index-[\w-]+\.js',idx)
+              css=re.search(r'assets/index-[\w-]+\.css',idx)
+              assert js and css, f'{name}: missing assets'
+              files[name]=d/js.group()
+              print(f'{name.upper()}_JS={js.group()}')
+              print(f'{name.upper()}_CSS={css.group()}')
+          text={k:p.read_text(errors='replace') for k,p in files.items()}
+          for k,p in files.items():
+              print(f'{k.upper()}_SHA256={hashlib.sha256(p.read_bytes()).hexdigest()}')
+              print(f'{k.upper()}_SIZE={p.stat().st_size}')
+          print('LIVE_MATCHES_MAIN_JS='+str(files['live'].read_bytes()==files['main'].read_bytes()))
+          print('LIVE_MATCHES_CANDIDATE_JS='+str(files['live'].read_bytes()==files['candidate'].read_bytes()))
+          def extract_strings(content):
+              # Public interface labels, not code fragments.
+              raw=set(re.findall(r'(?<!\\)[\x22\x27]([^\x22\x27\\\n]{12,150})[\x22\x27]',content))
+              return {html.unescape(x) for x in raw if (' ' in x or any(c in x for c in 'æøåÆØÅ')) and not any(t in x for t in ('function','className','http','{','}','=>','<','>',';')) and sum(c.isalpha() for c in x)>=10}
+          sets={k:extract_strings(v) for k,v in text.items()}
+          for label, source, other in [
+              ('LIVE_ONLY_VS_MAIN','live','main'),
+              ('MAIN_ONLY_VS_LIVE','main','live'),
+              ('CANDIDATE_ONLY_VS_MAIN','candidate','main'),
+              ('LIVE_ONLY_VS_CANDIDATE','live','candidate')
+          ]:
+              items=sorted(sets[source]-sets[other],key=lambda x:(-len(x),x))
+              print(f'=== {label}: {len(items)} strings ===')
+              for x in items[:65]: print('UI_STRING: '+x[:150])
+          PY
+          echo 'COMPARISON_COMPLETE_PRODUCTION_UNCHANGED'
