@@ -1,0 +1,75 @@
+name: TLV integration candidate - isolated one.com stage
+on:
+  push:
+    branches:
+      - integration/tlv-prod-core-20261123
+    paths:
+      - .github/workflows/tlv-integration-stage.yml
+permissions:
+  contents: read
+concurrency:
+  group: tlv-integration-stage
+  cancel-in-progress: false
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Build isolated candidate
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          test -s dist/index.html
+      - name: Reject unexpected files and generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(find dist -type l -print -quit)"
+          while IFS= read -r -d '' item; do
+            rel="${item#dist/}"
+            case "$rel" in
+              index.html|robots.txt|site.webmanifest) ;;
+              assets/index-*.js|assets/index-*.css)
+                [[ "$rel" =~ ^assets/index-[A-Za-z0-9_-]+\.(js|css)$ ]] || exit 1 ;;
+              *.png|*.jpg|*.jpeg|*.webp|*.svg|*.ico)
+                [[ "$rel" != */* ]] || exit 1 ;;
+              *) echo "::error::Unexpected release item: $rel"; exit 1 ;;
+            esac
+          done < <(find dist -type f -print0)
+          grep -qE 'assets/index-[A-Za-z0-9_-]+\.js' dist/index.html
+          grep -qE 'assets/index-[A-Za-z0-9_-]+\.css' dist/index.html
+          find dist -type f -print0 | sort -z | xargs -0 -r sha256sum > release-checksums.txt
+          sha256sum --check release-checksums.txt >/dev/null
+      - name: Configure verified SSH
+        shell: bash
+        env:
+          KEY: ${{ secrets.TLV_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.TLV_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$KEY" && test -n "$KNOWN_HOSTS"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+      - name: Upload into a unique NON-PUBLIC staging folder
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          STAGE="tlv-github-staging/integration-${GITHUB_SHA}"
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          "${SSH[@]}" "$REMOTE" "umask 077; test ! -e '$STAGE'; mkdir -p '$STAGE'"
+          rsync -az -e "ssh -i $HOME/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes" \
+            dist release-checksums.txt "$REMOTE:$STAGE/"
+          "${SSH[@]}" "$REMOTE" "cd '$STAGE' && sha256sum --check release-checksums.txt >/dev/null && test -s dist/index.html && echo STAGING_HASHES_VERIFIED"
+          "${SSH[@]}" "$REMOTE" "test -s /webroots/www/index.html && echo LIVE_SITE_UNCHANGED_NOT_MODIFIED_BY_THIS_JOB"
+          echo "ISOLATED_STAGE_READY=$STAGE"
+          echo "NO_PRODUCTION_RELEASE"
