@@ -53,3 +53,5 @@ jobs:
             echo 'LIVE_DIFFERS_FROM_GITHUB_MAIN_INDEX'
           fi
           echo 'PRODUCTION_UNCHANGED'
+
+# Read-only validation of the currently active TLV frontend.
