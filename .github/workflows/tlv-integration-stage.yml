@@ -22,6 +22,13 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run build
+          # Vite copies public/uploads/.htaccess into dist; never ship server config
+          # with the static frontend. Only remove this build output, not source.
+          if test -f dist/uploads/.htaccess; then
+            rm -f dist/uploads/.htaccess
+            rmdir dist/uploads 2>/dev/null || true
+            echo 'Excluded public/uploads/.htaccess from frontend-only release'
+          fi
           test -s dist/index.html
       - name: Verify package is frontend-only
         shell: bash
