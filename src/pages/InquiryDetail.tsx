@@ -2710,6 +2710,10 @@ export default function InquiryDetail({
     ? "Saken avsluttet"
     : isAdminPaused
     ? "På vent – videre arbeid stanset"
+    : actualWork
+    ? "Arbeid utført – dokumentasjon og Rapport 2"
+    : actualLeakDate && !isReportPublished
+    ? "Lekkasjesøk utført – Rapport 1"
     : isReportPublished && acceptedRepairOffer
     ? "Utbedringstilbud akseptert – avtaleoppfølging"
     : isFollowupDecided
@@ -2734,6 +2738,10 @@ export default function InquiryDetail({
     ? "Ingen videre handling"
     : isAdminPaused
     ? adminPauseReason
+    : actualWork
+    ? `Ferdigstilt ${formatDate(actualWork.completed_on)}. Følg opp kontrollisten for Rapport 2.`
+    : actualLeakDate && !isReportPublished
+    ? `Utført ${formatDate(actualLeakDate)}. Følg opp sjekklisten og Rapport 1.`
     : isReportPublished && acceptedRepairOffer
     ? "Tilbudet er akseptert. Kontroller oppstart, arbeidsavtale og signatarer."
     : isFollowupDecided
@@ -5477,7 +5485,7 @@ export default function InquiryDetail({
             <div className="text-xs text-slate-400">Registrert taktype: <strong className="text-white">{inquiry.roof_type || inquiry.roofType || "Ukjent"}</strong></div>
           </div>
           {[inquiry.inquiry_type, inquiry.recommended_service].some(value => String(value || "").toLowerCase() === "lekkasjesok") && (
-            <AdminLeakSearchCompletion inquiryId={inquiryId}/>
+            <AdminLeakSearchCompletion inquiryId={inquiryId} onCompletion={setActualLeakDate}/>
           )}
           <div className="grid gap-3 md:grid-cols-3">
             {checklistTemplateOptions.map((item) => (
