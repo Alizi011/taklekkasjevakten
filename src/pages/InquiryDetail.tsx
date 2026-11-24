@@ -3806,7 +3806,7 @@ export default function InquiryDetail({
                 <FileText className="h-4 w-4" />
                 Opprett nytt tilbud
               </button>
-              {String(inquiry.inquiry_type || inquiry.recommended_service || "").toLowerCase() === "lekkasjesok" && !isReportPublished && (
+              {[inquiry.inquiry_type, inquiry.recommended_service].some(value => String(value || "").toLowerCase() === "lekkasjesok") && !isReportPublished && (
                 <button type="button" onClick={() => setAdminCaseTab("checklists")}
                   className="mt-3 w-full rounded-xl border border-emerald-500/35 bg-emerald-500/[0.06] px-4 py-3 text-left text-xs font-bold text-emerald-200 hover:bg-emerald-500/15">
                   Registrer utført lekkasjesøk / etterspør sjekkliste
@@ -5453,7 +5453,7 @@ export default function InquiryDetail({
             </div>
             <div className="text-xs text-slate-400">Registrert taktype: <strong className="text-white">{inquiry.roof_type || inquiry.roofType || "Ukjent"}</strong></div>
           </div>
-          {String(inquiry.inquiry_type || inquiry.recommended_service || "").toLowerCase() === "lekkasjesok" && (
+          {[inquiry.inquiry_type, inquiry.recommended_service].some(value => String(value || "").toLowerCase() === "lekkasjesok") && (
             <AdminLeakSearchCompletion inquiryId={inquiryId}/>
           )}
           <div className="grid gap-3 md:grid-cols-3">
