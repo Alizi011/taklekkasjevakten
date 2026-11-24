@@ -1885,10 +1885,25 @@ export default function CustomerDashboard({
         }
       })();
 
+      const actualProgressTask = (async () => {
+        try {
+          const token = previewMode ? null : window.localStorage.getItem(CUSTOMER_PORTAL_SESSION_STORAGE_KEY);
+          if (!previewMode && !token) return;
+          const response = await fetch(apiUrl(previewMode ? `/customer_actual_progress.php?inquiry_id=${currentInquiryId}` : "/customer_actual_progress.php"),
+            previewMode ? { credentials: "include", cache: "no-store" } : {
+              method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ inquiry_id: currentInquiryId, session_token: token }),
+            });
+          const payload = await response.json();
+          if (!response.ok || !payload.success || Number(payload.inquiry_id) !== currentInquiryId) return;
+          setInquiryData((current: any) => Number(current?.inquiry?.id) === currentInquiryId ? { ...current, actual_progress: payload.progress } : current);
+        } catch (error) { console.error("Kunne ikke hente registrert utførelsesstatus:", error); }
+      })();
       // Hent kun kundetilpasset tiltak; aldri hent interne oppfølgingsnotater.
       setCustomerNextStep(null);
       const enrichmentTasks: Promise<unknown>[] = [
         fetchCustomerNextStep(),
+        actualProgressTask,
         reportTask,
         completionTask,
         fetchPreinspection(currentInquiryId),
@@ -1959,7 +1974,8 @@ export default function CustomerDashboard({
       );
 
     if (!reportPublished && isFieldFlow) {
-      const accepted =
+      if (actualLeakDate) return 6;
+      const accepted = oralInitial ||
         offers.some((item) => String(item.status || "").toLowerCase() === "akseptert") ||
         currentOfferStatus === "akseptert" ||
         status === "tilbud_akseptert";
@@ -2048,7 +2064,8 @@ export default function CustomerDashboard({
     }
 
     if (!reportPublished && isFieldFlow) {
-      const accepted =
+      if (actualProgressHeadline) return actualProgressHeadline + ". " + actualProgressDescription;
+      const accepted = oralInitial ||
         offers.some((item) => String(item.status || "").toLowerCase() === "akseptert") ||
         offer?.status === "akseptert" ||
         status === "tilbud_akseptert";
@@ -2861,6 +2878,19 @@ export default function CustomerDashboard({
   // Dato fra den opprinnelige avtalen brukes som oppdragsdato, ikke som
   // en oppdiktet/selvstendig verifisert ferdigstillelsesdato.
   const originalWorkFinished = reportPublished || completionReportPublished;
+  const actualProgress = inquiryData?.actual_progress;
+  const actualLeakDate = actualProgress?.leak_performed_on || null;
+  const actualWork = actualProgress?.work;
+  const oralScope = String(actualProgress?.phone_acceptance?.scope || "");
+  const oralInitial = oralScope === "lekkasjesok" || oralScope === "lekkasjesok_og_service";
+  const oralFollowup = ["service", "vedlikehold", "varig_utbedring", "lekkasjesok_og_service"].includes(oralScope);
+  const actualLeakLabel = actualLeakDate ? "Lekkasjesøk utført " + String(actualLeakDate).split("-").reverse().join(".") : "";
+  const actualWorkLabel = actualWork?.completed_on ? (actualWork.work_type === "service" ? "Servicearbeid" : actualWork.work_type === "vedlikehold" ? "Vedlikehold" : "Utbedring") + " utført " + String(actualWork.completed_on).split("-").reverse().join(".") : "";
+  const actualProgressHeadline = actualWorkLabel || (oralFollowup ? "Videre arbeid avtalt muntlig" : actualLeakLabel || (oralInitial ? "Lekkasjesøk avtalt muntlig" : ""));
+  const actualProgressDescription = actualWorkLabel
+    ? "Arbeidet er registrert som utført. " + (completionReportPublished ? "Utførelsesrapporten er publisert." : "Utførelsesdokumentasjon følges opp.")
+    : actualLeakDate ? (reportPublished ? "Rapporten er tilgjengelig." : actualProgress?.report_approved ? "Rapporten er godkjent og avventer publisering." : "Rapporten er under behandling.") + (oralFollowup ? " Videre arbeid er registrert som muntlig avtalt." : "")
+    : oralInitial || oralFollowup ? "Kundeaksept er registrert muntlig. Ingen digital signatur er registrert på grunnlag av denne aksepten." : "";
 
   const originalWorkLabel = initialServiceLabel === "Taklekkasjesøk" ? "Lekkasjesøk" : initialServiceLabel;
   // Tilbudshistorikken inneholder bare kundesynlige tilbud. Interne utkast
@@ -4378,26 +4408,26 @@ export default function CustomerDashboard({
 
                 <div className="grid grid-cols-3 gap-2">
                   <div className="rounded-xl border border-slate-800 bg-[#111d2c] px-2 py-3 text-center">
-                    {reportPublished ? (
+                    {(reportPublished || actualLeakDate) ? (
                       <CheckCircle2 className="mx-auto h-5 w-5 text-emerald-400" />
                     ) : (
                       <Clock3 className="mx-auto h-5 w-5 text-slate-500" />
                     )}
                     <p className="mt-2 text-xs font-bold text-white">Undersøkt</p>
                     <p className="mt-1 text-[10px] leading-4 text-slate-400">
-                      {reportPublished ? "Rapport klar" : "Under behandling"}
+                      {reportPublished ? "Rapport klar" : actualLeakLabel || "Under behandling"}
                     </p>
                   </div>
 
                   <div className="rounded-xl border border-slate-800 bg-[#111d2c] px-2 py-3 text-center">
-                    {followupOfferAccepted ? (
+                    {(followupOfferAccepted || oralFollowup) ? (
                       <CheckCircle2 className="mx-auto h-5 w-5 text-emerald-400" />
                     ) : (
                       <Clock3 className="mx-auto h-5 w-5 text-slate-500" />
                     )}
                     <p className="mt-2 text-xs font-bold text-white">Bestilt</p>
                     <p className="mt-1 text-[10px] leading-4 text-slate-400">
-                      {followupOfferAccepted
+                      {oralFollowup ? "Muntlig avtalt" : followupOfferAccepted
                         ? "Tilbud akseptert"
                         : followupOfferReady
                         ? "Tilbud til vurdering"
@@ -4406,7 +4436,7 @@ export default function CustomerDashboard({
                   </div>
 
                   <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-2 py-3 text-center">
-                    {completionReportPublished ? (
+                    {(completionReportPublished || actualWorkLabel) ? (
                       <CheckCircle2 className="mx-auto h-5 w-5 text-emerald-400" />
                     ) : (
                       <Clock3 className="mx-auto h-5 w-5 text-amber-400" />
@@ -4415,9 +4445,9 @@ export default function CustomerDashboard({
                     <p className="mt-1 text-[10px] leading-4 text-slate-400">
                       {completionReportPublished
                         ? "Rapport 2 klar"
-                        : followupOfferAccepted
+                        : actualWorkLabel || (followupOfferAccepted
                         ? "Videre arbeid"
-                        : "Neste fase"}
+                        : "Neste fase")}
                     </p>
                   </div>
                 </div>
@@ -4432,7 +4462,7 @@ export default function CustomerDashboard({
                         Siste prosjektstatus
                       </p>
                       <p className="mt-1 text-[11px] leading-5 text-slate-400">
-                        {completionReportPublished
+                        {actualProgressHeadline ? actualProgressHeadline + ". " + actualProgressDescription : completionReportPublished
                           ? "Utbedringen er dokumentert og Rapport 2 er publisert."
                           : followupOfferAccepted
                           ? "Oppfølgingstilbudet er akseptert. Følg oppstart og avtale i høyrepanelet."
@@ -4472,15 +4502,16 @@ export default function CustomerDashboard({
   )}
   <div className="relative grid grid-cols-2 gap-x-3 gap-y-5 lg:grid-cols-5">
                 {(originalWorkFinished
-                  ? ["Bestilling", "Tilbud og avtale", "Avtalt tid", originalWorkLabel, "Rapport 1"]
+                  ? ["Bestilling", oralInitial ? "Muntlig aksept" : "Tilbud og avtale", "Avtalt tid", originalWorkLabel, "Rapport 1"]
                   : isInitialFieldFlow
-                  ? ["Bestilling", "Pris og vilkår", "Tidspunkt", "Opplysninger", initialServiceLabel, "Rapport"]
+                  ? ["Bestilling", oralInitial ? "Muntlig aksept" : "Pris og vilkår", "Tidspunkt", "Opplysninger", initialServiceLabel, actualProgress?.report_approved ? "Rapport godkjent" : "Rapport"]
                   : ["Opplysninger", "Digital befaring", "Tilbud & plan", "Feltarbeid", "Rapport", "Videre oppfølging"]
                 ).map((title, index, arr) => {
                   const step = index + 1;
                    const current = originalWorkFinished ? arr.length + 1 : getCustomerProcessStep();
-                  const complete = step < current;
-                  const active = step === current;
+                  const historical = Boolean(actualLeakDate && !originalWorkFinished && isInitialFieldFlow);
+                  const complete = historical ? step === 1 || (step === 2 && oralInitial) || step === 5 || (step === 3 && initialScheduleConfirmed) || (step === 4 && Boolean(preinspection?.submitted_at)) : step < current;
+                  const active = !complete && step === current;
 
                   return (
                     <div key={`${step}-${title}`} className="min-w-0">
@@ -4553,26 +4584,26 @@ export default function CustomerDashboard({
               <h3 className="mt-2 text-lg font-black text-white">
                 {acceptedDirectFixedOffer && !followupOfferAccepted && customerStartDatePending ? "Godkjenn foreslått oppstartsdato"
                   : (followupOfferAccepted || acceptedDirectFixedOffer) && customerStartDateApproved ? "Utbedring avtalt"
-                  : followupOfferAccepted ? "Bekreft oppstart" : originalWorkFinished
+                  : followupOfferAccepted ? "Bekreft oppstart" : actualProgressHeadline || (originalWorkFinished
                   ? currentFollowupHeadline
                   : offer?.status === "publisert" && !offerExpired(offer) ? "Godkjenn oppdraget"
                   : initialSchedulePending ? "Bekreft tidspunkt"
                   : initialScheduleConfirmed && !preinspection?.submitted_at ? "Send inn opplysninger"
-                  : "Følg saken videre"}
+                  : "Følg saken videre")}
               </h3>
               <p className="mt-2 text-xs leading-5 text-slate-400">
                 {acceptedDirectFixedOffer && !followupOfferAccepted && customerStartDatePending
                   ? "Prosjektansvarlig har foreslått oppstartsdato og varighet. Godkjenn datoen nedenfor, eller be om endring."
                   : (followupOfferAccepted || acceptedDirectFixedOffer) && customerStartDateApproved
                   ? "Oppstart og varighet er bekreftet. Gå til Tilbud og avtaler for å lese arbeidsavtalen og bekrefte signatar."
-                  : followupOfferAccepted ? "Prosjektansvarlig har registrert oppstartsdato og forventet varighet. Kontroller og svar nedenfor." : originalWorkFinished
+                  : followupOfferAccepted ? "Prosjektansvarlig har registrert oppstartsdato og forventet varighet. Kontroller og svar nedenfor." : actualProgressDescription || (originalWorkFinished
                   ? currentFollowupDescription
                   : offer?.status === "publisert" && !offerExpired(offer)
                   ? "Pris og vilkår er klare. Åpne tilbudet og godkjenn når alt ser riktig ut."
                   : initialSchedulePending ? "Prosjektansvarlig har foreslått et tidspunkt som venter på ditt svar."
                   : initialScheduleConfirmed && !preinspection?.submitted_at
                   ? "Tidspunktet er registrert. Legg inn bilder og opplysninger slik at teamet kan forberede besøket."
-                  : "Du kan følge status, avtaler og dokumentasjon fra menyen."}
+                  : "Du kan følge status, avtaler og dokumentasjon fra menyen.")}
               </p>
 
               {(followupOfferAccepted || acceptedDirectFixedOffer) ? (
