@@ -46,6 +46,7 @@ import {
   Home,
 } from "lucide-react";
 import ChecklistManager from "../components/checklist/ChecklistManager";
+import ProjectManagerRetrospectivePhotos from "../components/ProjectManagerRetrospectivePhotos";
 import PhotoWithAudioNote from "../components/PhotoWithAudioNote";
 import LiveInspectionRoom from "../components/LiveInspectionRoom";
 import OfferGenerator, { type FollowUpType, type OfferService } from "../components/project-manager/OfferGenerator";
@@ -8126,6 +8127,10 @@ if (from < earliestDate) {
                           task.status === "open" && isRetrospectiveTask(task))?.description}
                       </p>
                     </div>
+                  )}
+                  {coreTasks.some(task => task.inquiry_id === normalizeInquiryId(overviewInquiry.id) &&
+                      task.status === "open" && isRetrospectiveTask(task)) && !onBackToAdmin && (
+                    <ProjectManagerRetrospectivePhotos inquiryId={normalizeInquiryId(overviewInquiry.id)} />
                   )}
                   <ChecklistManager
                     retrospective={coreTasks.some(task => task.inquiry_id === normalizeInquiryId(overviewInquiry.id) &&
