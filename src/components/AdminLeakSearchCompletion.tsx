@@ -8,7 +8,7 @@ type ResponseBody = {
 };
 
 /** Admin workflow: attest original leak-search date, then request original checklist. */
-export default function AdminLeakSearchCompletion({ inquiryId }: { inquiryId: number }) {
+export default function AdminLeakSearchCompletion({ inquiryId, onCompletion }: { inquiryId: number; onCompletion?: (date: string | null) => void }) {
   const [completion, setCompletion] = useState<Completion | null>(null);
   const [date, setDate] = useState("");
   const [loading, setLoading] = useState(true);
@@ -28,7 +28,7 @@ export default function AdminLeakSearchCompletion({ inquiryId }: { inquiryId: nu
     }).then(async response => {
       const body = await response.json() as ResponseBody;
       if (!response.ok || !body.success) throw new Error(body.message || "Kunne ikke lese utførelsesstatus.");
-      if (active) setCompletion(body.completion || null);
+      if (active) { setCompletion(body.completion || null); onCompletion?.(body.completion?.performed_on || null); }
     }).catch(err => {
       if (active) setError(err instanceof Error ? err.message : "Kunne ikke lese utførelsesstatus.");
     }).finally(() => { if (active) setLoading(false); });
@@ -51,6 +51,7 @@ export default function AdminLeakSearchCompletion({ inquiryId }: { inquiryId: nu
         throw new Error(body.message || "Kunne ikke registrere dato.");
       }
       setCompletion(body.completion);
+      onCompletion?.(body.completion.performed_on);
       setNotice("Lekkasjesøket er registrert som utført. Du kan nå etterspørre sjekklisten.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Kunne ikke lagre utførelsesdato.");
