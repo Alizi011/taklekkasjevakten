@@ -40,8 +40,8 @@ export default function AdminWorkOverride({ inquiryId, onSaved }: Props) {
   }, [inquiryId, endpoint]);
   const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Oslo" }).format(new Date());
   const validDates = Boolean(type && start && end && start <= end && end <= today);
-  const submit = async (action: "save_dates" | "request_report2") => {
-    if (!available || busy || (action === "save_dates" && !validDates) || (action === "request_report2" && (!work || dirty))) return;
+  const submit = async (action: "save_dates" | "request_report2_checklist") => {
+    if (!available || busy || (action === "save_dates" && !validDates) || (action === "request_report2_checklist" && (!work || dirty))) return;
     setBusy(true); setError(""); setNotice("");
     try {
       const response = await fetch(endpoint, {
@@ -76,8 +76,8 @@ export default function AdminWorkOverride({ inquiryId, onSaved }: Props) {
         <textarea rows={2} maxLength={1000} value={note} disabled={!available || busy} onChange={e => {setNote(e.target.value);setDirty(true);}} className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 p-2 text-white"/>
       </label>
       <button type="button" disabled={!available || busy || !validDates || !dirty} onClick={() => void submit("save_dates")} className="w-full rounded-lg bg-emerald-400 p-2.5 text-xs font-black text-slate-950 disabled:opacity-40">Lagre faktiske utførelsesdatoer</button>
-      {task && <p className="text-xs text-slate-300">Rapport 2 · Oppgave #{task.id} · {task.status}</p>}
-      <button type="button" disabled={!available || busy || !work || dirty || task?.status === "open"} onClick={() => void submit("request_report2")} className="w-full rounded-lg bg-amber-400 p-2.5 text-xs font-black text-slate-950 disabled:opacity-40">Etterspør Rapport 2</button>
+      {task && <p className="text-xs text-slate-300">Kontrolliste for Rapport 2 · Oppgave #{task.id} · {task.status}</p>}
+      <button type="button" disabled={!available || busy || !work || dirty || task?.status === "open"} onClick={() => void submit("request_report2_checklist")} className="w-full rounded-lg bg-amber-400 p-2.5 text-xs font-black text-slate-950 disabled:opacity-40">Etterspør kontrolliste for Rapport 2</button>
       {busy && <p role="status" className="text-xs text-slate-400">Henter eller lagrer …</p>}
       {error && <p role="alert" className="text-xs text-rose-300">{error}</p>}
       {notice && <p role="status" className="text-xs text-emerald-300">{notice}</p>}
