@@ -1,6 +1,7 @@
 import AdminCaseOrganizations from "../components/AdminCaseOrganizations";
 import AdminPhotoVisibility from "../components/AdminPhotoVisibility";
 import AdminLeakSearchCompletion from "../components/AdminLeakSearchCompletion";
+import AdminWorkOverride from "../components/AdminWorkOverride";
 import AgreementPreviewButton from "@/components/AgreementPreviewButton";
 import AdminAgreementProgress from "../components/AdminAgreementProgress";
 import AdminAgreementSigningCaseNotice from "../components/AdminAgreementSigningCaseNotice";
@@ -3770,6 +3771,9 @@ export default function InquiryDetail({
                   }
                 />
               </div>
+              {rightPanelTab === "override" && (
+                <AdminWorkOverride key={inquiryId} inquiryId={inquiryId}/>
+              )}
               {adminCaseTab === "overview" && rightPanelTab === "process" && (
                 <div role="tabpanel">
                   {isAdminPaused && (
@@ -3789,6 +3793,8 @@ export default function InquiryDetail({
                   )}
 {directProcessOffer ? (
   <DirectOfferCaseProcess
+    key={inquiryId}
+    inquiryId={inquiryId}
     offer={directProcessOffer}
     onOpenOffer={() => setAdminCaseTab("offer")}
   />
