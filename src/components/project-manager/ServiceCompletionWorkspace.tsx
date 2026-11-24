@@ -79,6 +79,7 @@ interface Props {
   employeeId?: number | null;
   employeeName?: string | null;
   onFinished?: () => void;
+  readOnly?: boolean;
   historicalWork?: { work_type: "service" | "vedlikehold" | "varig_utbedring"; started_on: string; completed_on: string };
 }
 
@@ -161,6 +162,7 @@ export default function ServiceCompletionWorkspace({
   employeeName = null,
   onFinished,
   historicalWork,
+  readOnly = false,
 }: Props) {
   const historical = Boolean(historicalWork);
   const actualWorkType = historicalWork?.work_type === "varig_utbedring" ? "varig_utbedring" : "service";
@@ -653,6 +655,7 @@ export default function ServiceCompletionWorkspace({
   };
 
   const save = async (finish: boolean) => {
+    if (readOnly || saving) return;
     setSaving(true);
     setMessage("");
     setError("");
@@ -698,7 +701,7 @@ export default function ServiceCompletionWorkspace({
           warranty_years: historical ? (completion?.warranty_years ?? 0) : 5,
           warranty_start_date: warrantyStartDate,
           warranty_notes: warrantyNotes || null,
-          status: finish ? "arbeid_ferdig" : "utkast",
+          status: historical ? "utkast" : finish ? "arbeid_ferdig" : "utkast",
         }),
       });
 
@@ -772,6 +775,14 @@ export default function ServiceCompletionWorkspace({
         );
       }
 
+      if (historical && finish) {
+        const finalRes = await fetch(apiUrl("/work_completion.php"), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "finalize_historical", inquiry_id: inquiryId, completion_id: completionId, session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "" }),
+        });
+        const finalData = await finalRes.json();
+        if (!finalRes.ok || !finalData.success) throw new Error(finalData.message || "Kunne ikke ferdigstille kontrollisten.");
+      }
       setMessage(
         finish
           ? "Arbeidet er ferdigstilt. Du kan fortsette til dokumentasjon."
@@ -866,6 +877,26 @@ export default function ServiceCompletionWorkspace({
     }
   };
 
+  if (readOnly) return <section className="space-y-4 rounded-2xl border border-slate-700 bg-[#0b0f17] p-5">
+    <h2 className="text-lg font-black">Kontrolliste for Rapport 2</h2>
+    <p className="text-xs text-slate-300">Skrivebeskyttet administratorvisning</p>
+    {loading ? <p>Henter kontrolliste …</p> : error ? <p role="alert" className="text-rose-300">{error}</p> : <>
+      <p className="text-sm">{completedCount} av {items.length} tiltak vurdert · {completion?.status || "Ikke ferdigstilt"}</p>
+      {items.map((item,index) => <article key={item.id || index} className="rounded-xl border border-slate-700 p-3 space-y-2">
+        <h3 className="font-bold">{item.title}</h3>
+        <p className="text-xs text-slate-300">Utførelse: {item.item_status} · Resultat: {item.result_status || "ikke_vurdert"} · TG: {item.result_tg || "ikke_vurdert"}</p>
+        {item.comment && <p className="whitespace-pre-wrap text-sm">{item.comment}</p>}
+        {documentationForItem(item).map(doc => <div key={doc.id} className="text-xs">
+          {doc.caption_text && <p>{doc.caption_text}</p>}
+          {doc.photo_url && <a className="underline" href={apiAssetUrl(doc.photo_url)} target="_blank" rel="noreferrer">Bilde</a>}
+          {doc.audio_url && <audio controls preload="none" src={apiAssetUrl(doc.audio_url)} />}
+        </div>)}
+      </article>)}
+      <h3 className="font-bold">Sluttkontroll</h3>
+      {([["agreed_scope_completed","Avtalte tiltak kontrollert"],["visual_control_completed","Visuell sluttkontroll"],["documentation_completed","Dokumentasjon komplett"],["site_cleaned","Arbeidsområde ferdigstilt"]] as const).map(([key,label]) => <p key={key} className="text-sm">{label}: {boolValue(controls[key]) ? "Bekreftet" : "Ikke bekreftet"}</p>)}
+    </>}
+  </section>;
+
   return (
     <section className="overflow-hidden rounded-3xl border border-blue-500/25 bg-[#0b0f17]">
       <div className="border-b border-slate-800/80 px-5 py-5 sm:px-6">
@@ -887,7 +918,7 @@ export default function ServiceCompletionWorkspace({
 
           <span className="inline-flex w-fit items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-[10px] font-black text-emerald-300">
             <ShieldCheck className="h-3.5 w-3.5" />
-            5 års garanti
+            {historical ? "Historisk arbeidsregistrering" : "5 års garanti"}
           </span>
         </div>
 
