@@ -101,6 +101,42 @@ jobs:
             if(!js.includes(phrase)) throw new Error('Missing Core photo feature: '+phrase);
           }
           console.log('PASS Core photo UI contract included in candidate JS');
+
+          // A separate authenticated-admin simulation: all API responses are
+          // explicit mocks, never use or retrieve a real admin session.
+          const adminContext = await browser.newContext({viewport:{width:1280,height:850},serviceWorkers:'block'});
+          await adminContext.route('https://api.taklekkasjevakten.no/**', async route => {
+            const u=route.request().url();
+            if (u.includes('tlv_admin_auth.php') && u.includes('action=session')) {
+              await route.fulfill({status:200,contentType:'application/json',
+                body:JSON.stringify({success:true,authenticated:true})});
+              return;
+            }
+            await route.fulfill({status:200,contentType:'application/json',
+              body:JSON.stringify({success:false,message:'Testrespons: ingen produksjonsdata'})});
+          });
+          await adminContext.route('https://**', async route => {
+            const u=new URL(route.request().url());
+            if (u.hostname==='127.0.0.1') return route.continue();
+            await route.abort();
+          });
+          const adminPage=await adminContext.newPage();
+          const adminErrors=[];
+          adminPage.on('pageerror',error=>adminErrors.push(String(error.message)));
+          const adminResponse=await adminPage.goto('http://127.0.0.1:4182/admin',
+            {waitUntil:'domcontentloaded',timeout:30000});
+          await adminPage.waitForTimeout(2500);
+          const adminText=await adminPage.locator('#root').innerText();
+          console.log('ADMIN_MOCK_RESULT',JSON.stringify({
+            http:adminResponse?.status(),chars:adminText.length,sample:adminText.slice(0,260),
+            errors:adminErrors.slice(0,5)
+          }));
+          await adminPage.screenshot({path:'browser-evidence/7-Admin-Mock.png',fullPage:false});
+          if (adminResponse?.status()!==200 || adminText.trim().length<60 || adminErrors.length) {
+            throw new Error('Simulated authenticated-admin page failed to render cleanly');
+          }
+          console.log('PASS simulated authenticated admin frontend (all API requests mocked)');
+          await adminContext.close();
           await browser.close();
           JS
       - name: Store browser screenshots for review
