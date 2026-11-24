@@ -2908,6 +2908,64 @@ export default function CustomerDashboard({
     followupStatus === "akseptert" || nextStepStatus === "offer_accepted"
   );
   const followupOfferRejected = reportPublished && followupStatus === "avvist";
+  // Historical / oral cases use factual milestones, not mandatory digital steps.
+  const factualTimeline = Boolean(actualLeakDate || actualWorkLabel || oralInitial || oralFollowup);
+  const historicalWorkDone = Boolean(actualLeakDate || actualWorkLabel);
+  const workName = actualWork?.work_type === "vedlikehold" || oralScope === "vedlikehold" ? "Vedlikehold"
+    : actualWork?.work_type === "varig_utbedring" || oralScope === "varig_utbedring" ? "Utbedring" : "Servicearbeid";
+  const actualDateLabel = (value: string | null | undefined) => value ? String(value).split("-").reverse().join(".") : "";
+  const oralDateLabel = actualDateLabel(actualProgress?.phone_acceptance?.accepted_on);
+  const factualNextTitle = completionReportPublished && reportPublished ? "Dokumentasjonen er klar"
+    : actualWorkLabel ? "Avventer sluttdokumentasjon"
+    : oralFollowup && !followupOfferReady ? "Videre arbeid er avtalt"
+    : actualLeakDate && !reportPublished ? "Avventer Rapport 1"
+    : oralInitial && !actualLeakDate && !reportPublished ? "Avventer gjennomføring"
+    : "";
+  const factualNextText = completionReportPublished && reportPublished ? "Rapportene er tilgjengelige under Dokumenter."
+    : actualWorkLabel ? "Arbeidet er gjennomført. " + (completionReportPublished ? "Rapport 2 er tilgjengelig." : "Prosjektansvarlig følger opp utførelsesrapporten.") + (!reportPublished && actualLeakDate ? " Rapport 1 avventer også publisering." : "")
+    : oralFollowup ? "Prosjektansvarlig følger opp videre arbeid og dokumentasjon."
+    : actualLeakDate && !reportPublished ? (actualProgress?.report_approved ? "Rapporten er godkjent og avventer publisering." : "Rapporten kvalitetssikres før publisering.")
+    : oralInitial ? "Oppdraget er avtalt muntlig. Prosjektansvarlig følger opp gjennomføringen." : "";
+  const showFactualNext = factualTimeline && Boolean(factualNextTitle) && !followupOfferReady && !(followupOfferAccepted || acceptedDirectFixedOffer);
+  type Milestone = { title: string; detail: string; state: "done" | "current" | "pending" };
+  const phaseOne: Milestone[] = [
+    { title: "Bestilling mottatt", detail: "Oppdrag registrert", state: "done" },
+    ...(oralInitial ? [{ title: "Muntlig kundeaksept", detail: oralDateLabel || "Registrert", state: "done" as const }] : []),
+    { title: originalWorkLabel + " gjennomført", detail: actualDateLabel(actualLeakDate) || (reportPublished ? "Dokumentert i rapport" : "Avventer gjennomføring"), state: actualLeakDate || reportPublished ? "done" : "current" },
+    { title: "Rapport 1 godkjent", detail: actualProgress?.report_approved || reportPublished ? "Kvalitetssikret" : "Avventer kvalitetssikring", state: actualProgress?.report_approved || reportPublished ? "done" : actualLeakDate ? "current" : "pending" },
+    { title: "Rapport 1 publisert", detail: reportPublished ? "Tilgjengelig i Dokumenter" : "Avventer publisering", state: reportPublished ? "done" : actualProgress?.report_approved ? "current" : "pending" },
+  ];
+  const phaseTwo: Milestone[] = [
+    ...(oralFollowup ? [{ title: "Muntlig kundeaksept", detail: oralDateLabel || "Registrert", state: "done" as const }] : []),
+    { title: workName + " gjennomført", detail: actualDateLabel(actualWork?.completed_on) || (completionReportPublished ? "Dokumentert i rapport" : "Avventer utførelse"), state: actualWorkLabel || completionReportPublished ? "done" : "current" },
+    { title: "Rapport 2 – utførelsesrapport", detail: completionReportPublished ? "Publisert og tilgjengelig" : actualWorkLabel ? "Avventer sluttdokumentasjon" : "Etter gjennomføring", state: completionReportPublished ? "done" : actualWorkLabel ? "current" : "pending" },
+  ];
+  const renderFactualPhase = (number: number, heading: string, milestones: Milestone[]) => {
+    const done = milestones.filter(item => item.state === "done").length;
+    return (
+      <section data-testid={`actual-progress-phase-${number}`} className="overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-900/45">
+        <div className="flex items-center gap-3 border-b border-slate-700/60 bg-slate-800/30 p-4">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cyan-500/10 text-cyan-300">{number === 1 ? <ClipboardList className="h-5 w-5"/> : <Hammer className="h-5 w-5"/>}</div>
+          <div className="min-w-0 flex-1"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Fase {number}</p><h3 className="mt-1 text-sm font-black text-white">{heading}</h3></div>
+          <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold text-emerald-300">{done === milestones.length ? "Fullført" : `${done} av ${milestones.length}`}</span>
+        </div>
+        <div className="mx-4 mt-4 h-1.5 overflow-hidden rounded-full bg-slate-700/70"><div className="h-full rounded-full bg-emerald-400 transition-all motion-reduce:transition-none" style={{width: `${done / milestones.length * 100}%`}}/></div>
+        <ol className="space-y-0 p-4">
+          {milestones.map((item, index) => (
+            <li key={item.title} className="relative flex gap-3 pb-4 last:pb-0">
+              {index < milestones.length - 1 && <div aria-hidden="true" className={`absolute left-[15px] top-8 h-[calc(100%-24px)] w-px ${item.state === "done" ? "bg-emerald-500/35" : "bg-slate-700"}`}/>}
+              <div className={`relative z-10 grid h-8 w-8 shrink-0 place-items-center rounded-full border ${item.state === "done" ? "border-emerald-500/40 bg-[#123329] text-emerald-300" : item.state === "current" ? "border-amber-400/50 bg-[#362b16] text-amber-300" : "border-slate-700 bg-slate-900 text-slate-500"}`}>
+                {item.state === "done" ? <CheckCircle2 className="h-4 w-4"/> : item.state === "current" ? <Clock3 className="h-4 w-4"/> : <span className="text-xs">{index+1}</span>}
+              </div>
+              <div className="min-w-0 flex-1 pt-0.5"><p className={`text-xs font-bold ${item.state === "pending" ? "text-slate-400" : "text-white"}`}>{item.title}</p><p className="mt-1 text-[11px] text-slate-400">{item.detail}</p></div>
+              {item.state === "current" && <span className="self-start rounded-full bg-amber-500/10 px-2 py-1 text-[9px] font-bold text-amber-300">Neste steg</span>}
+            </li>
+          ))}
+        </ol>
+      </section>
+    );
+  };
+
   const simplifiedBusinessOrder =
     simpleOrderView?.inquiryId === Number(inq.id) &&
     simpleOrderView.simplified === true;
@@ -3923,6 +3981,13 @@ export default function CustomerDashboard({
                       </button>
                     ))}
                   </div>
+                  {(oralInitial || oralFollowup) && (offersTab === "accepted" || offersTab === "appointments") && (
+                    <section className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-4">
+                      <div className="flex items-center gap-3"><PhoneCall className="h-5 w-5 text-emerald-300"/><div><h3 className="text-sm font-black text-white">Muntlig kundeaksept</h3><p className="mt-1 text-xs text-slate-300">{oralScope === "lekkasjesok_og_service" ? "Lekkasjesøk og service" : oralInitial ? "Lekkasjesøk" : workName}{oralDateLabel ? " · "+oralDateLabel : ""}</p></div></div>
+                      <p className="mt-3 text-xs text-slate-400">Aksept er registrert av prosjektansvarlig. Dette er ikke et digitalt signert tilbud eller en arbeidsavtale.</p>
+                      {actualWorkLabel && <p className="mt-2 text-xs font-bold text-emerald-300">{actualWorkLabel}</p>}
+                    </section>
+                  )}
                   {offerError && <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-xs text-red-200">{offerError}</div>}
                   {offerMessage && <div role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-xs text-emerald-200">{offerMessage}</div>}
                   {offersTab === "appointments" && acceptedDirectFixedOffer && !followupOfferAccepted && (
@@ -4478,6 +4543,12 @@ export default function CustomerDashboard({
               </div>
 
 
+          {factualTimeline ? (
+            <div className="mt-6 space-y-4" data-testid="customer-factual-timeline">
+              {(actualLeakDate || oralInitial || reportPublished || initialFieldService === "lekkasjesok") && renderFactualPhase(1, "Undersøkelse og rapport", phaseOne)}
+              {(oralFollowup || actualWorkLabel || completionReportPublished) && renderFactualPhase(2, workName + " og dokumentasjon", phaseTwo)}
+            </div>
+          ) : (
           <div className={followupOfferAccepted ? "mt-6 min-w-0 rounded-t-2xl border border-b-0 border-slate-700/70 bg-slate-900/40 p-4" : "mt-6 min-w-0 rounded-2xl border border-slate-700/70 bg-slate-900/40 p-4"}>
             <div className="mb-4 flex items-center justify-between gap-4">
               <div>
@@ -4540,7 +4611,7 @@ export default function CustomerDashboard({
               </div>
             </div>
           </div>
-
+          )}
               <div className="mt-0 min-w-0">
                           {followupOfferAccepted && !simplifiedBusinessOrder && (
             <CustomerFollowupTimeline
@@ -4582,7 +4653,7 @@ export default function CustomerDashboard({
               `}</style>
               <p className="text-[9px] font-black uppercase tracking-[0.16em] text-amber-400">Neste steg</p>
               <h3 className="mt-2 text-lg font-black text-white">
-                {acceptedDirectFixedOffer && !followupOfferAccepted && customerStartDatePending ? "Godkjenn foreslått oppstartsdato"
+                {showFactualNext ? factualNextTitle : acceptedDirectFixedOffer && !followupOfferAccepted && customerStartDatePending ? "Godkjenn foreslått oppstartsdato"
                   : (followupOfferAccepted || acceptedDirectFixedOffer) && customerStartDateApproved ? "Utbedring avtalt"
                   : followupOfferAccepted ? "Bekreft oppstart" : actualProgressHeadline || (originalWorkFinished
                   ? currentFollowupHeadline
@@ -4592,7 +4663,7 @@ export default function CustomerDashboard({
                   : "Følg saken videre")}
               </h3>
               <p className="mt-2 text-xs leading-5 text-slate-400">
-                {acceptedDirectFixedOffer && !followupOfferAccepted && customerStartDatePending
+                {showFactualNext ? factualNextText : acceptedDirectFixedOffer && !followupOfferAccepted && customerStartDatePending
                   ? "Prosjektansvarlig har foreslått oppstartsdato og varighet. Godkjenn datoen nedenfor, eller be om endring."
                   : (followupOfferAccepted || acceptedDirectFixedOffer) && customerStartDateApproved
                   ? "Oppstart og varighet er bekreftet. Gå til Tilbud og avtaler for å lese arbeidsavtalen og bekrefte signatar."
@@ -4606,6 +4677,13 @@ export default function CustomerDashboard({
                   : "Du kan følge status, avtaler og dokumentasjon fra menyen.")}
               </p>
 
+              {showFactualNext && (
+                <div className="mt-5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+                  <div className="flex items-center gap-2 text-cyan-200"><Info className="h-4 w-4"/><p className="text-xs font-bold">Prosjektansvarlig følger opp</p></div>
+                  <p className="mt-2 text-[11px] leading-5 text-slate-400">Ingen handling kreves fra deg for dette steget nå.</p>
+                  {(reportPublished || completionReportPublished) && <button type="button" onClick={() => openCustomerPortalView("documents")} className="mt-3 flex items-center gap-2 text-xs font-bold text-cyan-300"><FileText className="h-4 w-4"/>Åpne dokumenter <ArrowRight className="h-3 w-3"/></button>}
+                </div>
+              )}
               {(followupOfferAccepted || acceptedDirectFixedOffer) ? (
                 <CustomerAgreementSchedule
                   inquiryId={Number(inq.id)}
@@ -4626,7 +4704,7 @@ export default function CustomerDashboard({
                       }
                   onOpenAgreement={() => setAgreementPdfOpen(true)}
                 />
-              ) : originalWorkFinished ? null : followupSchedule?.schedule_date ? (
+              ) : (originalWorkFinished || historicalWorkDone) ? null : followupSchedule?.schedule_date ? (
                 <div className="mt-5 border-t border-slate-800/80 pt-4">
                   <p className="text-[9px] font-black uppercase tracking-wider text-slate-500">{initialScheduleConfirmed ? "Registrert tidspunkt" : "Foreslått tidspunkt"}</p>
                   <p className="mt-2 text-sm font-bold text-white">{formatBookingDate(followupSchedule.schedule_date)} kl. {String(followupSchedule.start_time || "").substring(0, 5)}</p>
@@ -4682,7 +4760,7 @@ export default function CustomerDashboard({
 
               <div className="mt-6 grid gap-2">
                 {followupOfferReady && <button type="button" onClick={() => { setOffersTab("current"); openCustomerPortalView("offers"); }} className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-400 px-4 py-3 text-xs font-black text-slate-950 hover:bg-amber-300"><FileText className="h-4 w-4" />Se nytt tilbud</button>}
-                {!originalWorkFinished && offer?.status === "publisert" && !offerExpired(offer) && (
+                {!originalWorkFinished && !historicalWorkDone && offer?.status === "publisert" && !offerExpired(offer) && (
                   <button
                     type="button"
                     onClick={() => openCustomerPortalView("offers")}
@@ -4692,10 +4770,10 @@ export default function CustomerDashboard({
                     Åpne tilbudet
                   </button>
                 )}
-                {!originalWorkFinished && pendingOfferExpired && !newTimeRequestSent && (
+                {!originalWorkFinished && !historicalWorkDone && pendingOfferExpired && !newTimeRequestSent && (
                   <button type="button" onClick={() => openCustomerPortalView("offers")} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#F5B800] px-4 py-3 text-xs font-black text-slate-950">Be om nytt tidspunkt</button>
                 )}
-                {!originalWorkFinished && initialSchedulePending && !pendingOfferExpired && (
+                {!originalWorkFinished && !historicalWorkDone && initialSchedulePending && !pendingOfferExpired && (
                   <button
                     type="button"
                     onClick={() => openCustomerPortalView("schedule")}
@@ -4705,7 +4783,7 @@ export default function CustomerDashboard({
                     Se tidspunkt
                   </button>
                 )}
-                {!originalWorkFinished && initialScheduleConfirmed && !preinspection?.submitted_at && (
+                {!originalWorkFinished && !historicalWorkDone && initialScheduleConfirmed && !preinspection?.submitted_at && (
                   <button
                     type="button"
                     onClick={() => setShowPreinspectionForm(true)}
