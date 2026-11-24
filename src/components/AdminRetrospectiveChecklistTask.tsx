@@ -22,8 +22,6 @@ type TaskResponse = {
 // No direct project ID or employee assignment is accepted from the browser.
 export default function AdminRetrospectiveChecklistTask({ inquiryId }: { inquiryId: number }) {
   const [task, setTask] = useState<Task | null>(null);
-  const [workDate, setWorkDate] = useState("");
-  const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
@@ -70,7 +68,7 @@ export default function AdminRetrospectiveChecklistTask({ inquiryId }: { inquiry
         credentials: "include",
         cache: "no-store",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inquiry_id: inquiryId, work_date: workDate, reason: reason.trim() })
+        body: JSON.stringify({ inquiry_id: inquiryId })
       });
       const data = await response.json() as TaskResponse;
       if (!response.ok || !data.success) {
@@ -110,26 +108,14 @@ export default function AdminRetrospectiveChecklistTask({ inquiryId }: { inquiry
           </div>
         ) : !error ? (
           <div className="grid gap-3">
-            <label className="space-y-1 text-xs font-semibold text-white">
-              Dato for utført arbeid (valgfritt)
-              <input type="date" value={workDate} onChange={e => setWorkDate(e.target.value)}
-                max={new Date().toLocaleDateString("en-CA")}
-                className="block w-full max-w-xs rounded-lg border border-slate-600 bg-slate-950 p-2 text-white"/>
-            </label>
-            <label className="space-y-1 text-xs font-semibold text-white">
-              Merknad til prosjektansvarlig (valgfritt)
-              <textarea value={reason} onChange={e => setReason(e.target.value)}
-                rows={3} maxLength={2000}
-                placeholder="For eksempel: Sjekklisten mangler etter tidligere utført lekkasjesøk. Bruk eksisterende bilder og arbeidsnotater."
-                className="block w-full rounded-lg border border-slate-600 bg-slate-950 p-3 text-white"/>
-            </label>
-            <p className="text-[11px] text-amber-200">
-              Oppgaven opprettes med dagens dato. Dersom arbeidsdatoen er ukjent, kan prosjektansvarlig avklare den når sjekklisten fylles ut.
+            <p className="text-xs text-amber-200">
+              Prosjektansvarlig får i oppgave å fullføre den eksisterende sjekklisten.
+              Tidligere registrerte kontrollpunkter og vedlegg beholdes.
             </p>
             <button type="button" onClick={() => void createTask()}
               disabled={saving}
               className="w-fit rounded-lg bg-amber-400 px-4 py-2.5 text-xs font-black text-slate-950 disabled:opacity-40">
-              {saving ? "Tildeler …" : "Tildel etterregistrering"}
+              {saving ? "Sender …" : "Etterspør sjekkliste"}
             </button>
           </div>
         ) : null}
