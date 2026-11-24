@@ -8,7 +8,7 @@ import type {
 } from "./ChecklistItem";
 import ChecklistProgress from "./ChecklistProgress";
 import ChecklistSummary from "./ChecklistSummary";
-import { apiUrl } from "../../lib/api";
+import { apiUrl, apiAssetUrl } from "../../lib/api";
 interface ChecklistDetail {
   title: string;
   info: string;
@@ -30,6 +30,7 @@ interface ChecklistManagerProps {
   onChange?: () => void;
   onComplete?: () => void;
   retrospective?: boolean;
+  readOnly?: boolean;
 }
 
 const CHECKLIST_TEMPLATES: Record<string, ChecklistDetail[]> = {
@@ -253,6 +254,7 @@ export default function ChecklistManager({
   onChange,
   onComplete,
   retrospective = false,
+  readOnly = false,
 }: ChecklistManagerProps) {
   const initialTemplate = getTemplateKey(initialRoofType || "Flatt tak");
 
@@ -326,8 +328,8 @@ export default function ChecklistManager({
 
     try {
       const [response, mediaResponse] = await Promise.all([
-        fetch(apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)),
-        fetch(apiUrl(`/photos.php?inquiry_id=${inquiryId}`), { cache: "no-store" }),
+        fetch(apiUrl(`/checklists.php?inquiry_id=${inquiryId}`), readOnly ? { credentials: "include", cache: "no-store" } : undefined),
+        fetch(apiUrl(`/photos.php?inquiry_id=${inquiryId}`), { cache: "no-store", ...(readOnly ? { credentials: "include" as const } : {}) }),
       ]);
       const [data, mediaData] = await Promise.all([response.json(), mediaResponse.json()]);
       if (!mediaResponse.ok || !mediaData.success) throw new Error("Kunne ikke hente dokumentasjonen.");
@@ -791,6 +793,44 @@ export default function ChecklistManager({
         <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-[#F5B800]" />
         Henter teknisk sjekkliste...
       </div>
+    );
+  }
+
+  if (readOnly) {
+    return (
+      <section aria-label="Teknisk sjekkliste" className="rounded-3xl border border-slate-200 bg-white p-5 md:p-6 text-slate-950 shadow-sm">
+        <h3 className="text-lg font-black">Teknisk sjekkliste</h3>
+        <p className="mt-1 text-xs text-slate-500">Administratorvisning · {summary.completed} / {items.length} registrert</p>
+        {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
+        <div className="mt-4 flex flex-wrap gap-2">
+          {(["flatt", "skratak", "balkong"] as const).map(key => (
+            <button key={key} type="button" onClick={() => handleTemplateChange(key)}
+              aria-pressed={activeTemplate === key} className={`rounded-lg border px-3 py-2 text-xs font-bold ${activeTemplate === key ? "bg-amber-400" : "bg-slate-100"}`}>
+              {key === "flatt" ? "Flatt tak" : key === "skratak" ? "Skråtak" : "Balkong"}
+            </button>
+          ))}
+        </div>
+        <div className="mt-4 space-y-2">
+          {items.map(item => (
+            <article key={item.id} className="rounded-xl border border-slate-200 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <h4 className="text-sm font-bold">{item.title}</h4>
+                <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-bold">{savedIds.has(item.id) ? (item.status || "Ikke vurdert").toUpperCase() : "Ikke vurdert"}</span>
+              </div>
+              {item.note && <p className="mt-2 whitespace-pre-wrap text-sm">{item.note}</p>}
+              {item.photoUrl && <a className="mt-2 block text-xs underline" href={apiAssetUrl(item.photoUrl)} target="_blank" rel="noreferrer">Bilde</a>}
+              {item.audioUrl && <audio className="mt-2 w-full" controls preload="none" src={apiAssetUrl(item.audioUrl)} />}
+              {(item.attachments || []).map(entry => (
+                <div key={entry.id} className="mt-2 text-xs">
+                  {entry.caption_text && <p>{entry.caption_text}</p>}
+                  {entry.photo_url && <a className="underline" href={apiAssetUrl(entry.photo_url)} target="_blank" rel="noreferrer">Åpne bilde</a>}
+                  {entry.audio_url && <audio className="w-full" controls preload="none" src={apiAssetUrl(entry.audio_url)} />}
+                </div>
+              ))}
+            </article>
+          ))}
+        </div>
+      </section>
     );
   }
 
