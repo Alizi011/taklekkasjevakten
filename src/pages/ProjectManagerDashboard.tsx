@@ -2122,7 +2122,7 @@ export default function ProjectManagerDashboard({
   const [calendarCursor, setCalendarCursor] = useState(new Date());
 
   const [checklistRows, setChecklistRows] = useState<ChecklistRow[]>([]);
-  const [, setLoadingChecklistSummary] = useState(false);
+  const [loadingChecklistSummary, setLoadingChecklistSummary] = useState(false);
   const [checklistOverview, setChecklistOverview] = useState<Record<string, ChecklistRow[]>>({});
   const [documentOverview, setDocumentOverview] = useState<Record<string, number>>({});
 
@@ -6589,9 +6589,14 @@ if (from < earliestDate) {
                                                    const id = normalizeInquiryId(inquiry.id);
                                                    if (!id) return;
                                                    if (onBackToAdmin) {
-                                                     // Admin preview remains read-only: no checklist editing.
-                                                     openInquiry(inquiry);
-                                                     setCasePanelTab("sjekklister");
+                                                     // Open the focused read-only checklist independently of the case tab reset.
+                                                     if (activeInquiryId !== id) {
+                                                       setChecklistRows([]);
+                                                       setLoadingChecklistSummary(true);
+                                                     }
+                                                     setActiveInquiryId(id);
+                                                     setFocusedChecklistInquiryId(id);
+                                                     setView("felt");
                                                      return;
                                                    }
                                                    // Real project manager: task opens only the assigned checklist.
@@ -7045,7 +7050,28 @@ if (from < earliestDate) {
                 Åpne hele oppdraget
               </button>
             </div>
-            <ChecklistManager
+            {onBackToAdmin ? (
+              <div className="space-y-3 rounded-xl border border-slate-700 p-4">
+                <p className="text-xs text-slate-300">Skrivebeskyttet administratorvisning av eksisterende sjekkliste.</p>
+                {loadingChecklistSummary ? (
+                  <p className="text-sm text-slate-300">Henter sjekklisten …</p>
+                ) : checklistRows.length === 0 ? (
+                  <p className="text-sm text-slate-300">Ingen registrerte kontrollpunkter.</p>
+                ) : checklistRows.map(item => (
+                  <article key={item.id} className="rounded-xl border border-slate-700/60 bg-[#130f21] p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-xs font-semibold text-white">{item.item_title}</p>
+                      <span className="text-xs font-bold uppercase text-amber-200">{item.status || "Ikke vurdert"}</span>
+                    </div>
+                    {item.comment && <p className="mt-2 whitespace-pre-wrap text-xs text-slate-300">{item.comment}</p>}
+                    <div className="mt-2 flex gap-3 text-xs">
+                      {item.photo_url && <a href={apiAssetUrl(item.photo_url)} target="_blank" rel="noreferrer" className="text-rose-200 underline">Bilde</a>}
+                      {item.audio_url && <a href={apiAssetUrl(item.audio_url)} target="_blank" rel="noreferrer" className="text-rose-200 underline">Lydnotat</a>}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : <ChecklistManager
               retrospective
               inquiryId={normalizeInquiryId(overviewInquiry.id)}
               initialRoofType={overviewInquiry.roof_type || overviewInquiry.roofType || "Flatt tak"}
@@ -7055,7 +7081,7 @@ if (from < earliestDate) {
                 setFocusedChecklistInquiryId(null);
                 setFieldWorkspaceTab("oppsummering");
               }}
-            />
+            />}
           </section>
         ) : view === "felt" && overviewInquiry && (
           <div className="space-y-6">
