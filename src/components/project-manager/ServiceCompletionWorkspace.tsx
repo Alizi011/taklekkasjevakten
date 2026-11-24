@@ -516,6 +516,7 @@ export default function ServiceCompletionWorkspace({
       body: JSON.stringify({
         session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
         action: "save_completion",
+          ...(historical ? { historical: true } : {}),
         completion_id: completion?.id || null,
         inquiry_id: inquiryId,
         work_type: actualWorkType,
@@ -547,6 +548,7 @@ export default function ServiceCompletionWorkspace({
       body: JSON.stringify({
         session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
         action: "save_items",
+          ...(historical ? { historical: true } : {}),
         completion_id: completionId,
         items: items.map((rawItem, index) => {
           const normalized = normalizeItem(rawItem);
@@ -678,6 +680,7 @@ export default function ServiceCompletionWorkspace({
         body: JSON.stringify({
         session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
           action: "save_completion",
+          ...(historical ? { historical: true } : {}),
           completion_id: completion?.id || null,
           inquiry_id: inquiryId,
           work_type: actualWorkType,
@@ -719,6 +722,7 @@ export default function ServiceCompletionWorkspace({
         body: JSON.stringify({
         session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
           action: "save_items",
+          ...(historical ? { historical: true } : {}),
           completion_id: completionId,
           items: items.map((rawItem, index) => {
             const item = normalizeItem(rawItem);
@@ -749,6 +753,7 @@ export default function ServiceCompletionWorkspace({
         body: JSON.stringify({
         session_token: window.localStorage.getItem("taklekkasjevakten_project_manager_session") || "",
           action: "save_controls",
+          ...(historical ? { historical: true } : {}),
           completion_id: completionId,
           agreed_scope_completed: boolValue(controls.agreed_scope_completed),
           visual_control_completed: boolValue(controls.visual_control_completed),
