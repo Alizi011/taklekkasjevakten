@@ -16,8 +16,8 @@ jobs:
     environment: production
     timeout-minutes: 20
     env:
-      RELEASE_RUN_ID: '45403237758'
-      RELEASE_SHA: '5e41eccea8675fcc1037735f4e181e41aa927b2f'
+      RELEASE_RUN_ID: '45435922304'
+      RELEASE_SHA: 'bedf7ea88dcb9490914a352a0e3ad2b650021ff6'
     steps:
       - uses: actions/checkout@v4
       - name: Verify immutable candidate run, repo, commit and successful release build
@@ -30,8 +30,8 @@ jobs:
           jq -e --arg repo "$GITHUB_REPOSITORY" --arg sha "$RELEASE_SHA" '
             .conclusion == "success" and
             .event == "push" and
-            .name == "TLV admin leak-search completion release package (NO deployment)" and
-            .head_branch == "feature/tlv-leak-search-completion-20261124" and
+            .name == "TLV administrative work override release package (NO deployment)" and
+            .head_branch == "feature/tlv-admin-work-override-20261124" and
             .head_sha == $sha and
             ((.head_repository.full_name | ascii_downcase) == ($repo | ascii_downcase))
           ' /tmp/tlv-release-run.json >/dev/null
@@ -39,8 +39,8 @@ jobs:
       - name: Download pinned, non-production frontend artifact
         uses: actions/download-artifact@v4
         with:
-          name: tlv-leak-search-completion-frontend-candidate
-          run-id: 45403237758
+          name: tlv-admin-work-override-frontend-candidate
+          run-id: 45435922304
           github-token: ${{ github.token }}
           path: release
       - name: Validate artifact checksum and strict static-file allowlist
