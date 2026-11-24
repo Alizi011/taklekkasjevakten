@@ -3615,6 +3615,36 @@ export default function InquiryDetail({
                       <button type="button" onClick={() => setOverviewInlineMedia("overview")} className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800">Tilbake til oversikt</button>
                     </div>
                     {/* TLV_ADMIN_PHOTOS_INLINE_V2 */}
+                    <div className="space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
+                      <div>
+                        <h4 className="text-sm font-bold text-white">Importerte prosjektbilder fra Perun Core ({coreCasePhotos.length})</h4>
+                        <p className="mt-1 text-xs text-slate-400">
+                          Bildene tilhører dette TLV-prosjektet og er kun tilgjengelige for administrator.
+                          De er ikke automatisk godkjent for kundevisning eller markedsføring.
+                        </p>
+                      </div>
+                      {coreCasePhotosError && (
+                        <p role="alert" className="text-xs text-amber-300">{coreCasePhotosError}</p>
+                      )}
+                      {coreCasePhotos.length > 0 ? (
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                          {coreCasePhotos.map(photo => (
+                            <a key={photo.id} href={corePhotoUrl(photo.id)} target="_blank"
+                              rel="noopener noreferrer"
+                              className="overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
+                              <img src={corePhotoUrl(photo.id)} alt={photo.caption || `Prosjektbilde #${photo.id}`}
+                                loading="lazy" className="h-40 w-full object-cover" />
+                              <div className="space-y-1 p-3">
+                                <p className="break-words text-xs text-white">{photo.caption || `Bilde #${photo.id}`}</p>
+                                <p className="text-[11px] text-slate-400">Core-bilde #{photo.id} · Kun administrator</p>
+                              </div>
+                            </a>
+                          ))}
+                        </div>
+                      ) : !coreCasePhotosError ? (
+                        <p className="text-xs text-slate-400">Ingen importerte Core-bilder registrert på saken.</p>
+                      ) : null}
+                    </div>
                     <AdminPhotoVisibility inquiryId={inquiryId} photos={photos} />
                     <div className="space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
                       <h4 className="text-xs font-bold text-slate-100">Bilder sendt inn av kunden</h4>
