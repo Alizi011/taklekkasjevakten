@@ -6579,8 +6579,13 @@ if (from < earliestDate) {
                                                  if (isRetrospectiveTask(task)) {
                                                    const id = normalizeInquiryId(inquiry.id);
                                                    if (!id) return;
-                                                   // A direct checklist task is not the general case workspace.
-                                                   // No admin preview may create an employee session or save results.
+                                                   if (onBackToAdmin) {
+                                                     // Admin preview remains read-only: no checklist editing.
+                                                     openInquiry(inquiry);
+                                                     setCasePanelTab("sjekklister");
+                                                     return;
+                                                   }
+                                                   // Real project manager: task opens only the assigned checklist.
                                                    setActiveInquiryId(id);
                                                    setFocusedChecklistInquiryId(id);
                                                    setView("felt");
