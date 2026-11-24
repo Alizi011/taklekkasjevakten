@@ -1,6 +1,6 @@
 import AdminCaseOrganizations from "../components/AdminCaseOrganizations";
 import AdminPhotoVisibility from "../components/AdminPhotoVisibility";
-import AdminRetrospectiveChecklistTask from "../components/AdminRetrospectiveChecklistTask";
+import AdminLeakSearchCompletion from "../components/AdminLeakSearchCompletion";
 import AgreementPreviewButton from "@/components/AgreementPreviewButton";
 import AdminAgreementProgress from "../components/AdminAgreementProgress";
 import AdminAgreementSigningCaseNotice from "../components/AdminAgreementSigningCaseNotice";
@@ -3806,6 +3806,12 @@ export default function InquiryDetail({
                 <FileText className="h-4 w-4" />
                 Opprett nytt tilbud
               </button>
+              {String(inquiry.inquiry_type || inquiry.recommended_service || "").toLowerCase() === "lekkasjesok" && !isReportPublished && (
+                <button type="button" onClick={() => setAdminCaseTab("checklists")}
+                  className="mt-3 w-full rounded-xl border border-emerald-500/35 bg-emerald-500/[0.06] px-4 py-3 text-left text-xs font-bold text-emerald-200 hover:bg-emerald-500/15">
+                  Registrer utført lekkasjesøk / etterspør sjekkliste
+                </button>
+              )}
               <div className="mt-5 space-y-6 border-t border-white/10 pt-5">
                 <div className="flex gap-3"><CheckCircle2 className={`mt-0.5 h-5 w-5 shrink-0 ${isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{orderedService} {isReportPublished ? "gjennomført" : "bestilt"}</p><p className="mt-1 text-[11px] text-slate-400">{hasRecordedSchedule ? displayedSchedule : "Tidspunkt ikke registrert"}</p><button type="button" onClick={() => setAdminCaseTab("checklists")} className="mt-2 block text-left text-xs font-semibold text-cyan-300 hover:underline">Åpne sjekkliste →</button><button type="button" onClick={() => setAdminCaseTab("field")} className="mt-1 block text-left text-xs font-semibold text-cyan-300 hover:underline">Feltdokumentasjon →</button></div></div>
                 <div className="flex gap-3"><FileCheck2 className={`mt-0.5 h-5 w-5 shrink-0 ${isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{isReportPublished ? "Rapport 1 publisert" : report ? `Rapport 1 – ${reportStatusLabel(report.status)}` : "Rapport 1 avventer"}</p><p className="mt-1 text-[11px] text-slate-400">{isReportPublished ? "Kvalitetssikret og publisert" : "Rapportstatus og behandling"}</p><button type="button" onClick={() => setAdminCaseTab("reports")} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">{report ? "Åpne rapport →" : "Åpne rapportarbeid →"}</button></div></div>
@@ -5447,7 +5453,9 @@ export default function InquiryDetail({
             </div>
             <div className="text-xs text-slate-400">Registrert taktype: <strong className="text-white">{inquiry.roof_type || inquiry.roofType || "Ukjent"}</strong></div>
           </div>
-          <AdminRetrospectiveChecklistTask inquiryId={inquiryId} />
+          {String(inquiry.inquiry_type || inquiry.recommended_service || "").toLowerCase() === "lekkasjesok" && (
+            <AdminLeakSearchCompletion inquiryId={inquiryId}/>
+          )}
           <div className="grid gap-3 md:grid-cols-3">
             {checklistTemplateOptions.map((item) => (
               <button key={item.key} type="button"
