@@ -1,0 +1,72 @@
+name: TLV administrative work override release package (NO deployment)
+on:
+  push:
+    branches:
+      - feature/tlv-admin-work-override-20261124
+    paths:
+      - .github/workflows/tlv-admin-work-override-release.yml
+      - src/**
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Build integration candidate
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          # Vite copies public/uploads/.htaccess into dist; never ship server config
+          # with the static frontend. Only remove this build output, not source.
+          if test -f dist/uploads/.htaccess; then
+            rm -f dist/uploads/.htaccess
+            rmdir dist/uploads 2>/dev/null || true
+            echo 'Excluded public/uploads/.htaccess from frontend-only release'
+          fi
+          test -s dist/index.html
+          grep -Fq 'admin_leak_search_completion.php' dist/assets/index-*.js
+          grep -Fq 'Etterspør sjekkliste' dist/assets/index-*.js
+          grep -Fq '2026-11-24 00:00:00' dist/assets/index-*.js
+          grep -Fq 'admin_retrospective_checklist_task.php' dist/assets/index-*.js
+          grep -Fq 'Fullfør manglende sjekkliste' dist/assets/index-*.js
+          grep -Fq 'Fullfør kontrolliste for Rapport 2' dist/assets/index-*.js
+          grep -Fq 'admin_work_override.php' dist/assets/index-*.js
+          grep -Fq 'finalize_historical' dist/assets/index-*.js
+      - name: Verify package is frontend-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(find dist -type l -print -quit)"
+          while IFS= read -r -d '' file; do
+            rel="${file#dist/}"
+            case "$rel" in
+              index.html|robots.txt|site.webmanifest) ;;
+              assets/index-*.js|assets/index-*.css)
+                [[ "$rel" =~ ^assets/index-[A-Za-z0-9_-]+\.(js|css)$ ]] || exit 1 ;;
+              *.png|*.jpg|*.jpeg|*.webp|*.svg|*.ico)
+                [[ "$rel" != */* ]] || exit 1 ;;
+              *) echo "::error::Unexpected asset: $rel"; exit 1 ;;
+            esac
+          done < <(find dist -type f -print0)
+          JS="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' dist/index.html | head -1)"
+          CSS="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.css' dist/index.html | head -1)"
+          test -s "dist/$JS"
+          test -s "dist/$CSS"
+          find dist -type f -print0 | sort -z | xargs -0 -r sha256sum > release-checksums.txt
+          sha256sum --check release-checksums.txt >/dev/null
+          echo "RELEASE_PACKAGE_VERIFIED_NO_SERVER_WRITES"
+      - name: Save isolated candidate for later controlled staging
+        uses: actions/upload-artifact@v4
+        with:
+          name: tlv-admin-work-override-frontend-candidate
+          path: |
+            dist/
+            release-checksums.txt
+          if-no-files-found: error
+          retention-days: 7
