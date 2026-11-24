@@ -29,6 +29,7 @@ interface ChecklistManagerProps {
   initialRoofType?: string;
   onChange?: () => void;
   onComplete?: () => void;
+  retrospective?: boolean;
 }
 
 const CHECKLIST_TEMPLATES: Record<string, ChecklistDetail[]> = {
@@ -174,14 +175,14 @@ const getTemplateKey = (value: string) => {
   return "skratak";
 };
 
-const buildItems = (key: string): ChecklistItemData[] => {
+const buildItems = (key: string, retrospective = false): ChecklistItemData[] => {
   const list = CHECKLIST_TEMPLATES[key] || CHECKLIST_TEMPLATES.skratak;
 
   const baseItems = list.map((item, index) => ({
     id: `${key}-${index}`,
     title: item.title,
     info: item.info,
-    status: "tg0" as ChecklistStatus,
+    status: retrospective ? undefined : ("tg0" as ChecklistStatus),
     note: "",
   }));
 
@@ -189,7 +190,7 @@ const buildItems = (key: string): ChecklistItemData[] => {
     id: `${key}-extra-1`,
     title: `${baseItems.length + 1}. Andre observasjoner (Tilkomst, fasade, naboforhold, spesiell skade)`,
     info: "Bruk dette feltet til å dokumentere spesielle forhold på stedet som ikke dekkes av standardpunktene over.",
-    status: "tg1",
+    status: retrospective ? undefined : ("tg1" as ChecklistStatus),
     note: "",
   });
 
@@ -251,12 +252,13 @@ export default function ChecklistManager({
   initialRoofType,
   onChange,
   onComplete,
+  retrospective = false,
 }: ChecklistManagerProps) {
   const initialTemplate = getTemplateKey(initialRoofType || "Flatt tak");
 
   const [activeTemplate, setActiveTemplate] = useState(initialTemplate);
   const [items, setItems] = useState<ChecklistItemData[]>(
-    buildItems(initialTemplate)
+    buildItems(initialTemplate, retrospective)
   );
   const [savedRows, setSavedRows] = useState<SavedChecklistRow[]>([]);
   const mediaRef = useRef<ChecklistMedia[]>([]);
@@ -273,7 +275,7 @@ export default function ChecklistManager({
     templateKey: string,
     rows: SavedChecklistRow[]
   ) => {
-    const baseItems = buildItems(templateKey);
+    const baseItems = buildItems(templateKey, retrospective);
     const byPoint = (key: string) => mediaRef.current.filter((m) => m.checklist_item_id === key);
 
     const merged = baseItems.map((item) => {
@@ -367,9 +369,9 @@ export default function ChecklistManager({
     if (savedRows.length > 0) {
       applySavedRows(nextTemplate, savedRows);
     } else {
-      setItems(buildItems(nextTemplate));
+      setItems(buildItems(nextTemplate, retrospective));
     }
-  }, [initialRoofType]);
+  }, [initialRoofType, retrospective]);
 
   const savedIds = useMemo(
     () => new Set(savedRows.map((row) => row.item_id)),
@@ -490,6 +492,10 @@ export default function ChecklistManager({
       setError("Velg tilstandsgrad før kontrollpunktet lagres.");
       return;
     }
+    if (retrospective && !item.note?.trim()) {
+      setError("Ved etterregistrering må du begrunne vurderingen skriftlig før lagring.");
+      return;
+    }
 
     setSavingId(item.id);
     setError("");
@@ -526,6 +532,7 @@ export default function ChecklistManager({
   ) => {
     const updated = { ...item, status };
     updateStatus(item.id, status);
+    if (retrospective) return;
     await saveChecklistItem(updated);
   };
 
@@ -770,7 +777,7 @@ export default function ChecklistManager({
       id: `${activeTemplate}-custom-${Date.now()}`,
       title: `${itemNumber}. Ekstra observasjon / Tilleggspunkt`,
       info: "Fritekstpunkt for spesielle funn på dette taket.",
-      status: "tg1",
+      status: retrospective ? undefined : ("tg1" as ChecklistStatus),
       note: "",
     };
 
@@ -792,14 +799,15 @@ export default function ChecklistManager({
       <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="text-[9px] font-black uppercase tracking-wider text-[#F5B800]">
-            Arbeidssteg 2
+            {retrospective ? "Etterregistrering av utført arbeid" : "Arbeidssteg 2"}
           </p>
           <h3 className="mt-1 text-base font-black">
-            Teknisk sjekkliste
+            {retrospective ? "Etterregistrer teknisk sjekkliste" : "Teknisk sjekkliste"}
           </h3>
           <p className="mt-1 text-[11px] text-slate-500">
-            Ett kontrollpunkt åpnes om gangen. Status lagres automatisk,
-            mens kommentar lagres med «Lagre punkt».
+            {retrospective
+              ? "Nye punkter starter som ikke vurdert. Velg grad bare når funnet kan underbygges, og skriv grunnlaget før du lagrer. Utført arbeidsdato og dokumentasjonsdato skal holdes adskilt."
+              : "Ett kontrollpunkt åpnes om gangen. Status lagres automatisk, mens kommentar lagres med «Lagre punkt»."}
           </p>
         </div>
 
@@ -825,6 +833,11 @@ export default function ChecklistManager({
         </div>
       </div>
 
+      {retrospective && (
+        <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          Dette er etterregistrering, ikke en ny feltkontroll. Ikke marker uobserverte forhold som TG0. Beskriv usikkerhet og dokumentasjonsgrunnlag.
+        </p>
+      )}
       {error && (
         <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
           {error}

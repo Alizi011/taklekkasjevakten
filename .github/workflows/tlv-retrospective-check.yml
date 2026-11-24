@@ -1,0 +1,25 @@
+name: Verify retrospective checklist development
+on:
+  push:
+    branches: [feature/tlv-retrospective-checklist-20261124]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - name: Ensure retrospective safety defaults in source
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'status: retrospective ? undefined' src/components/checklist/ChecklistManager.tsx
+          grep -Fq 'if (retrospective && !item.note?.trim())' src/components/checklist/ChecklistManager.tsx
+          echo 'RETROSPECTIVE_CHECKLIST_SAFE_DEFAULTS_PASS'
