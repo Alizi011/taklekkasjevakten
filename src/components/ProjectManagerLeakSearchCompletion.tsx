@@ -15,7 +15,7 @@ type Result = {
 
 type Props = {
   inquiryId: number;
-  onStateChange: (state: "loading" | "not_completed" | "completed" | "error") => void;
+  onStateChange: (inquiryId: number, state: "loading" | "not_completed" | "completed" | "error") => void;
 };
 
 /** Records only the original leak-search performance date, not report approval. */
@@ -36,12 +36,12 @@ export default function ProjectManagerLeakSearchCompletion({ inquiryId, onStateC
     setShowDate(false);
     setDate("");
     setError("");
-    onStateChange("loading");
+    onStateChange(inquiryId, "loading");
     const session = window.localStorage.getItem("taklekkasjevakten_project_manager_session");
     if (!session) {
       setError("Logg inn som prosjektansvarlig for å registrere utført lekkasjesøk.");
       setLoading(false);
-      onStateChange("error");
+      onStateChange(inquiryId, "error");
       return () => controller.abort();
     }
     void fetch(apiUrl("/project_manager_leak_search_completion.php"), {
@@ -55,11 +55,11 @@ export default function ProjectManagerLeakSearchCompletion({ inquiryId, onStateC
       if (!response.ok || !data.success) throw new Error(data.message || "Kunne ikke lese status.");
       if (!active) return;
       setSaved(data.completion || null);
-      onStateChange(data.completed ? "completed" : "not_completed");
+      onStateChange(inquiryId, data.completed ? "completed" : "not_completed");
     }).catch(e => {
       if (!active) return;
       setError(e instanceof Error ? e.message : "Kunne ikke lese status.");
-      onStateChange("error");
+      onStateChange(inquiryId, "error");
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; controller.abort(); };
   }, [inquiryId, onStateChange]);
@@ -86,7 +86,7 @@ export default function ProjectManagerLeakSearchCompletion({ inquiryId, onStateC
       setSaved(result.completion);
       setShowDate(false);
       setStatusNote("Utførelsesdatoen er registrert. Sjekkliste og Rapport 1 påvirkes ikke.");
-      onStateChange("completed");
+      onStateChange(inquiryId, "completed");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Kunne ikke registrere dato.");
     } finally {
