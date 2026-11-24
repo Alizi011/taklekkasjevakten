@@ -2105,6 +2105,7 @@ export default function ProjectManagerDashboard({
   const [casePanelTab, setCasePanelTab] = useState<CasePanelTab>("oversikt");
   // Open the existing checklist alone for delegated retrospective tasks.
   const [focusedChecklistInquiryId, setFocusedChecklistInquiryId] = useState<number | null>(null);
+  const [standaloneChecklistInquiry, setStandaloneChecklistInquiry] = useState<Inquiry | null>(null);
   const [casePanelFiles, setCasePanelFiles] = useState<PreinspectionFile[]>([]);
   const [casePanelFilesBusy, setCasePanelFilesBusy] = useState(false);
   const [casePanelFilesError, setCasePanelFilesError] = useState("");
@@ -5864,6 +5865,32 @@ if (from < earliestDate) {
     overviewStandardService
   );
 
+  // Dedicated task screen: independent of the active case, workspace tabs and dashboard refresh.
+  if (standaloneChecklistInquiry) {
+    const id = normalizeInquiryId(standaloneChecklistInquiry.id);
+    return (
+      <main className="min-h-screen bg-[#211612] p-4 text-white sm:p-6">
+        <div className="mx-auto max-w-5xl space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <button type="button" onClick={() => setStandaloneChecklistInquiry(null)}
+              className="rounded-xl border border-slate-600 px-4 py-2 text-sm font-bold">← Tilbake til oppdrag</button>
+            <p className="text-sm font-bold">Sak #{id} · {fullAddress(standaloneChecklistInquiry)}</p>
+          </div>
+          <ChecklistManager key={id} inquiryId={id}
+            initialRoofType={standaloneChecklistInquiry.roof_type || standaloneChecklistInquiry.roofType || "Flatt tak"}
+            retrospective readOnly={Boolean(onBackToAdmin)}
+            onComplete={onBackToAdmin ? undefined : () => {
+              setStandaloneChecklistInquiry(null);
+              setActiveInquiryId(id);
+              setFieldWorkspaceTab("oppsummering");
+              setView("felt");
+            }}
+          />
+        </div>
+      </main>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[radial-gradient(ellipse_at_75%_0%,#4a210f_0%,#24140f_43%,#170f0d_100%)] text-white font-sans">
       <aside
@@ -6588,21 +6615,7 @@ if (from < earliestDate) {
                                                  if (isRetrospectiveTask(task)) {
                                                    const id = normalizeInquiryId(inquiry.id);
                                                    if (!id) return;
-                                                   if (onBackToAdmin) {
-                                                     // Open the focused read-only checklist independently of the case tab reset.
-                                                     if (activeInquiryId !== id) {
-                                                       setChecklistRows([]);
-                                                       setLoadingChecklistSummary(true);
-                                                     }
-                                                     setActiveInquiryId(id);
-                                                     setFocusedChecklistInquiryId(id);
-                                                     setView("felt");
-                                                     return;
-                                                   }
-                                                   // Real project manager: task opens only the assigned checklist.
-                                                   setActiveInquiryId(id);
-                                                   setFocusedChecklistInquiryId(id);
-                                                   setView("felt");
+                                                   setStandaloneChecklistInquiry(inquiry);
                                                    return;
                                                  }
                                                  if (onBackToAdmin) {
