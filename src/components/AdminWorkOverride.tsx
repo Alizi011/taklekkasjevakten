@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import { apiUrl } from "../lib/api";
 
-export type WorkOverride = { started_on: string; completed_on: string; note?: string | null; recorded_at?: string };
+type WorkType = "service" | "vedlikehold" | "varig_utbedring";
+const workTypes: Record<WorkType,string> = { service: "Service", vedlikehold: "Vedlikehold", varig_utbedring: "Varig utbedring" };
+export type WorkOverride = { work_type: WorkType; started_on: string; completed_on: string; note?: string | null; recorded_at?: string };
 type Result = { success?: boolean; message?: string; work?: WorkOverride | null; task?: { id: number; status: string } | null };
 type Props = { inquiryId: number; onSaved?: (work: WorkOverride | null) => void };
 export default function AdminWorkOverride({ inquiryId, onSaved }: Props) {
   const [work, setWork] = useState<WorkOverride | null>(null);
+  const [type, setType] = useState<WorkType | "">("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [note, setNote] = useState("");
@@ -18,6 +21,7 @@ export default function AdminWorkOverride({ inquiryId, onSaved }: Props) {
   const endpoint = apiUrl("/admin_work_override.php");
   const apply = (data: Result) => {
     setWork(data.work || null); setTask(data.task || null);
+    setType(data.work?.work_type || "");
     setStart(data.work?.started_on || ""); setEnd(data.work?.completed_on || "");
     setNote(data.work?.note || ""); setDirty(false);
     onSaved?.(data.work || null);
@@ -35,7 +39,7 @@ export default function AdminWorkOverride({ inquiryId, onSaved }: Props) {
     return () => controller.abort();
   }, [inquiryId, endpoint]);
   const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Oslo" }).format(new Date());
-  const validDates = Boolean(start && end && start <= end && end <= today);
+  const validDates = Boolean(type && start && end && start <= end && end <= today);
   const submit = async (action: "save_dates" | "request_report2") => {
     if (!available || busy || (action === "save_dates" && !validDates) || (action === "request_report2" && (!work || dirty))) return;
     setBusy(true); setError(""); setNotice("");
@@ -43,7 +47,7 @@ export default function AdminWorkOverride({ inquiryId, onSaved }: Props) {
       const response = await fetch(endpoint, {
         method: "POST", credentials: "include", cache: "no-store",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(action === "save_dates" ? { action, inquiry_id: inquiryId, started_on: start, completed_on: end, note } : { action, inquiry_id: inquiryId })
+        body: JSON.stringify(action === "save_dates" ? { action, inquiry_id: inquiryId, work_type: type, started_on: start, completed_on: end, note } : { action, inquiry_id: inquiryId })
       });
       const data = await response.json() as Result;
       if (!response.ok || !data.success) throw new Error(data.message || "Administrativ overstyring kunne ikke lagres.");
@@ -55,7 +59,13 @@ export default function AdminWorkOverride({ inquiryId, onSaved }: Props) {
     <summary className="cursor-pointer text-xs font-black text-amber-200">Administrativ overstyring</summary>
     <div className="mt-3 space-y-3">
       <p className="text-xs text-slate-300">Registrer faktiske arbeidsdatoer. Dette er ikke en teknisk sluttkontroll eller en kundegodkjenning.</p>
-      {work && <p className="text-xs font-bold text-emerald-300">Arbeid utført: {work.started_on} – {work.completed_on}</p>}
+      {work && <p className="text-xs font-bold text-emerald-300">{workTypes[work.work_type]} utført: {work.started_on} – {work.completed_on}</p>}
+      <label className="block text-xs text-slate-200">Faktisk utført arbeid
+        <select value={type} disabled={!available || busy} onChange={e => {setType(e.target.value as WorkType | "");setDirty(true);}} className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 p-2 text-white">
+          <option value="">Velg arbeidstype</option>
+          {Object.entries(workTypes).map(([value,label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </label>
       <label className="block text-xs text-slate-200">Faktisk oppstartsdato
         <input type="date" value={start} max={end || today} disabled={!available || busy} onChange={e => {setStart(e.target.value);setDirty(true);}} className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 p-2 text-white"/>
       </label>
