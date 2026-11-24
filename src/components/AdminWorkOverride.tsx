@@ -80,7 +80,7 @@ export default function AdminWorkOverride({ inquiryId, onSaved, onAcceptance }: 
     } catch(e) {setError(e instanceof Error?e.message:"Lagring feilet.");}
     finally {setBusy(false);}
   };
-  return <details className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/5 p-3" open={work ? undefined : true}>
+  return <details className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/5 p-3" data-testid="admin-work-override">
     <summary className="cursor-pointer text-xs font-black text-amber-200">Administrativ overstyring</summary>
     <div className="mt-3 space-y-3">
       <div className="space-y-2 border-b border-slate-700 pb-3">
