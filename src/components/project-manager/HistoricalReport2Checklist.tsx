@@ -40,9 +40,7 @@ export default function HistoricalReport2Checklist({ inquiryId, address, adminPr
       {work && <p className="text-sm text-emerald-300">Utført arbeid: {work.work_type} · {work.started_on} – {work.completed_on}</p>}
       {loading && <p role="status">Henter kontrollgrunnlaget …</p>}
       {error && <p role="alert" className="text-rose-300">{error}</p>}
-      {work && !loading && !error && (adminPreview
-        ? <p className="text-sm text-slate-300">Administratorvisning. Faglig utfylling krever personlig prosjektlederinnlogging.</p>
-        : <ServiceCompletionWorkspace inquiryId={inquiryId} reportText={reportText} historicalWork={work} onFinished={onFinished}/>)}
+      {work && !loading && !error && <ServiceCompletionWorkspace inquiryId={inquiryId} reportText={reportText} historicalWork={work} readOnly={adminPreview} onFinished={adminPreview ? undefined : onFinished}/>}
     </div>
   </main>;
 }
