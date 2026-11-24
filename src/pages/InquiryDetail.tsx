@@ -3815,7 +3815,7 @@ export default function InquiryDetail({
                   )}
 {directProcessOffer ? (
   <DirectOfferCaseProcess
-    key={inquiryId}
+    key={`direct-process-${inquiryId}`}
     offer={directProcessOffer}
     actualWorkOverride={actualWork}
     onOpenOffer={() => setAdminCaseTab("offer")}
@@ -3848,7 +3848,7 @@ export default function InquiryDetail({
                 
   </>
 )}
-                  <AdminWorkOverride key={inquiryId} inquiryId={inquiryId} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>
+                  <AdminWorkOverride key={`admin-work-override-${inquiryId}`} inquiryId={inquiryId} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>
                   {actualWork && <div className="mt-4 rounded-xl border border-emerald-500/30 p-3"><p className="text-sm font-bold text-emerald-300">Arbeid utført · {formatDate(actualWork.completed_on)}</p><button type="button" onClick={()=>setAdminCaseTab("reports")} className="mt-2 text-xs font-bold text-cyan-300">Rapport 2 – Utførelsesrapport →</button></div>}
                   <div className="mt-6 space-y-4 border-t border-white/10 pt-5">
                   {(() => {
@@ -3884,7 +3884,7 @@ export default function InquiryDetail({
                     );
                   })()}
                   </div>
-                  <CaseClosureControl key={inquiryId} inquiryId={inquiryId} coreStatus={coreCaseStatus} offers={caseOffers} pendingAdminSignature={adminSignaturePending} />
+                  <CaseClosureControl key={`case-closure-${inquiryId}`} inquiryId={inquiryId} coreStatus={coreCaseStatus} offers={caseOffers} pendingAdminSignature={adminSignaturePending} />
 </div>
               )}
               {rightPanelTab === "activity" && (
