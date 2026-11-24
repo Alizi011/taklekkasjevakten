@@ -1,0 +1,65 @@
+name: Diagnose TLV Bilder tab on live one.com (read only)
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/tlv-diagnose-live-photo-tab.yml]
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure read-only SSH
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.TLV_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.TLV_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY" && test -n "$KNOWN_HOSTS"
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+      - name: Read live frontend index, staged bundle and photo tab feature marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes "$REMOTE" 'bash -s' <<'REMOTE_SCRIPT'
+          set -euo pipefail
+          RELEASE="f3c0c89159e6ab9ddb2503a0cd6215d6ea16c505"
+          live="/webroots/www"
+          stage="$HOME/tlv-github-staging/$RELEASE/dist"
+          live_js="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' "$live/index.html" | head -1)"
+          staged_js="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' "$stage/index.html" | head -1)"
+          printf 'LIVE_JS=%s\nSTAGED_JS=%s\n' "$live_js" "$staged_js"
+          if cmp -s "$live/index.html" "$stage/index.html";then echo "LIVE_INDEX_MATCHES_STAGED=yes";else echo "LIVE_INDEX_MATCHES_STAGED=no";fi
+          if cmp -s "$live/$live_js" "$stage/$staged_js";then echo "LIVE_JS_MATCHES_STAGED=yes";else echo "LIVE_JS_MATCHES_STAGED=no";fi
+          for marker in 'Importerte prosjektbilder fra Perun Core' 'Bildevalg for kunde og markedsføring' 'Inkluderer ';do
+            if grep -qF "$marker" "$live/$live_js";then echo "LIVE_BUNDLE_MARKER_PRESENT: $marker";else echo "LIVE_BUNDLE_MARKER_MISSING: $marker";fi
+          done
+          echo "LIVE_INDEX_SHA256=$(sha256sum "$live/index.html" | cut -d' ' -f1)"
+          REMOTE_SCRIPT
+      - name: Read public index and JS, including www hostname (no login)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for host in taklekkasjevakten.no www.taklekkasjevakten.no;do
+            echo "PUBLIC_HOST=$host"
+            html="$(curl -fsSL --max-time 25 -H 'Cache-Control: no-cache' "https://$host/admin?check=20261124-photo-tab")"
+            asset="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' <<<"$html" | head -1)"
+            echo "PUBLIC_ASSET=$asset"
+            test -n "$asset"
+            curl -fsSL --max-time 30 -H 'Cache-Control: no-cache' "https://$host/$asset" -o "/tmp/tlv-$(echo "$host"|tr . _).js"
+            echo "PUBLIC_BUNDLE_SHA256=$(sha256sum "/tmp/tlv-$(echo "$host"|tr . _).js" |cut -d' ' -f1)"
+            if grep -qF 'Importerte prosjektbilder fra Perun Core' "/tmp/tlv-$(echo "$host"|tr . _).js";then
+              echo 'PUBLIC_PHOTO_TAB_MARKER=yes'
+            else
+              echo 'PUBLIC_PHOTO_TAB_MARKER=no'
+            fi
+          done
