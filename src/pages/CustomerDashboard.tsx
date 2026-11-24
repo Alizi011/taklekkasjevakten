@@ -1763,12 +1763,16 @@ export default function CustomerDashboard({
        * Rapport, tidspunkt, dokumenter og eiendomsbilde hentes etterpå,
        * slik at portalen ikke må vente på alle tilleggskall før den kan åpnes.
        */
+      // customer_portal.php only returns finalized published reports with PDF.
+      // Legacy responses omit status, so normalize this trusted response.
+      const portalPublishedReport = data.report &&
+        (data.report.status === "publisert" || data.report.status == null) &&
+        typeof data.report.admin_final === "string" && data.report.admin_final.trim() &&
+        typeof data.report.pdf_url === "string" && data.report.pdf_url.trim()
+        ? { ...data.report, status: "publisert" } : null;
       setInquiryData({
         ...data,
-        report:
-          data.report?.status === "publisert"
-            ? data.report
-            : null,
+        report: portalPublishedReport,
       });
 
       const portalOffers: CustomerOffer[] = Array.isArray(data.offers)
@@ -1824,7 +1828,7 @@ export default function CustomerDashboard({
 
             return {
               ...current,
-              report: publishedReport,
+              report: publishedReport || portalPublishedReport,
             };
           });
         } catch (reportErr) {
@@ -1840,7 +1844,7 @@ export default function CustomerDashboard({
 
             return {
               ...current,
-              report: null,
+              report: portalPublishedReport,
             };
           });
         }
