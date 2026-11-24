@@ -2332,6 +2332,8 @@ export default function ProjectManagerDashboard({
     on_hold?: boolean;
   }>>([]);
   const [quickAgreementTaskId, setQuickAgreementTaskId] = useState<number | null>(null);
+  const isRetrospectiveTask = (task: { title: string }) =>
+    task.title === "Etterregistrer sjekkliste og Rapport 1";
   const [coreTasksError, setCoreTasksError] = useState("");
   const [coreTasksLoading, setCoreTasksLoading] = useState(true);
 
@@ -6565,6 +6567,18 @@ if (from < earliestDate) {
                                               type="button"
                                               onClick={() => {
                                                  if (task.on_hold === true) return;
+                                                 if (isRetrospectiveTask(task)) {
+                                                   // Admin preview must never impersonate the project manager.
+                                                   if (onBackToAdmin) {
+                                                     openInquiry(inquiry);
+                                                     setCasePanelTab("sjekklister");
+                                                   } else {
+                                                     setActiveInquiryId(normalizeInquiryId(inquiry.id));
+                                                     setFieldWorkspaceTab("kontroll");
+                                                     setView("felt");
+                                                   }
+                                                   return;
+                                                 }
                                                  if (onBackToAdmin) {
                                                    setQuickAgreementTaskId((current) => current === task.id ? null : task.id);
                                                    return;
@@ -8100,7 +8114,21 @@ if (from < earliestDate) {
                   )
               ) : (
                 <section>
+                  {coreTasks.some(task => task.inquiry_id === normalizeInquiryId(overviewInquiry.id) &&
+                    task.status === "open" && isRetrospectiveTask(task)) && (
+                    <div role="status" className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
+                      <p className="font-black">Etterregistrering av tidligere utført arbeid</p>
+                      <p className="mt-1 text-xs">Ingen ny feltkontroll registreres. Oppgi faktisk dokumentasjonsgrunnlag,
+                        og skill historisk arbeidsdato fra datoen for etterregistrering.</p>
+                      <p className="mt-2 whitespace-pre-wrap text-xs">
+                        {coreTasks.find(task => task.inquiry_id === normalizeInquiryId(overviewInquiry.id) &&
+                          task.status === "open" && isRetrospectiveTask(task))?.description}
+                      </p>
+                    </div>
+                  )}
                   <ChecklistManager
+                    retrospective={coreTasks.some(task => task.inquiry_id === normalizeInquiryId(overviewInquiry.id) &&
+                      task.status === "open" && isRetrospectiveTask(task))}
                     inquiryId={normalizeInquiryId(overviewInquiry.id)}
                     initialRoofType={
                       overviewInquiry.roof_type ||
