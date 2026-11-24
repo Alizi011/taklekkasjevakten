@@ -1,0 +1,120 @@
+name: Activate pinned TLV frontend with rollback safety
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/tlv-activate-approved-integration.yml
+permissions:
+  contents: read
+concurrency:
+  group: tlv-production-operations
+  cancel-in-progress: false
+jobs:
+  guarded-activate:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    env:
+      RELEASE_SHA: '70ef65edbe096ff4546b362c8865c01d0572bd2e'
+      EXPECTED_PRE_RELEASE_BACKUP: 'tlv-before-github-20261124-060144-1.tar.gz'
+      EXPECTED_PRE_RELEASE_BACKUP_SHA256: '04a345113e1ed08dfca013b908053f04308f1b3a681df5f343e5da29c7a2cb8a'
+      LIVE_APPROVED: ${{ vars.TLV_ENABLE_LIVE }}
+      FUNCTIONAL_APPROVED: ${{ vars.TLV_FUNCTIONAL_TEST_OK }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require both established production release approvals
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$LIVE_APPROVED" != yes || "$FUNCTIONAL_APPROVED" != yes ]]; then
+            echo "::error::Release blocked: production vars TLV_ENABLE_LIVE and TLV_FUNCTIONAL_TEST_OK must both be yes."
+            exit 1
+          fi
+          echo "Existing production release approval gates verified"
+      - name: Configure pinned production SSH identity
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.TLV_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.TLV_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY" && test -n "$KNOWN_HOSTS"
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+      - name: Confirm staged package and unchanged live baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          "${SSH[@]}" "$REMOTE" "TLV_ENABLE_LIVE=no TLV_FUNCTIONAL_TEST_OK=no bash -s -- 'preflight' '$RELEASE_SHA' ''" < .github/scripts/tlv-frontend-deploy.sh
+          "${SSH[@]}" "$REMOTE" "bash -s -- '$EXPECTED_PRE_RELEASE_BACKUP' '$EXPECTED_PRE_RELEASE_BACKUP_SHA256'" <<'REMOTE_CHECK'
+          set -euo pipefail
+          name="$1"; expected="$2"
+          archive="$HOME/tlv-github-backups/$name"
+          test -s "$archive"
+          actual="$(sha256sum "$archive" | cut -d ' ' -f1)"
+          test "$actual" = "$expected"
+          tar -xOzf "$archive" index.html | cmp -s - /webroots/www/index.html || {
+            echo 'STOP: Live index differs from verified backup. Refuse to overwrite newer changes.'
+            exit 1
+          }
+          old_js="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' /webroots/www/index.html | head -1)"
+          old_css="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.css' /webroots/www/index.html | head -1)"
+          for f in "$old_js" "$old_css" robots.txt site.webmanifest; do
+            tar -xOzf "$archive" "$f" | cmp -s - "/webroots/www/$f" || {
+              echo "STOP: Protected production file drift: $f"
+              exit 1
+            }
+          done
+          echo 'PRE_RELEASE_BACKUP_MATCHES_ACTIVE_FILES'
+          REMOTE_CHECK
+      - name: Publish via pre-existing locked, reversible TLV release engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          "${SSH[@]}" "$REMOTE" "TLV_ENABLE_LIVE=yes TLV_FUNCTIONAL_TEST_OK=yes bash -s -- 'publish' '$RELEASE_SHA' ''" \
+            < .github/scripts/tlv-frontend-deploy.sh | tee /tmp/tlv-activation-output.txt
+          grep -q "PUBLISH COMPLETED: $RELEASE_SHA" /tmp/tlv-activation-output.txt
+          line="$(grep '^ROLLBACK USING:' /tmp/tlv-activation-output.txt | tail -1)"
+          backup="$(awk '{print $3}' <<<"$line")"
+          digest="$(awk '{print $4}' <<<"$line")"
+          [[ "$backup" =~ ^tlv-before-github-[0-9]{8}-[0-9]{6}(-[0-9]+)?\.tar\.gz$ ]]
+          [[ "$digest" =~ ^[a-f0-9]{64}$ ]]
+          printf '%s\n' "$backup" > /tmp/tlv-publish-backup-name
+          printf '%s\n' "$digest" > /tmp/tlv-publish-backup-sha
+          echo "PUBLISH_ROLLBACK_ARCHIVE=$backup"
+      - name: Smoke check actual public website and rollback on failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          validate_live() {
+            local expected_js expected_css live_html js css
+            expected_js="$("${SSH[@]}" "$REMOTE" "cd tlv-github-staging/$RELEASE_SHA && grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' dist/index.html | head -1")"
+            expected_css="$("${SSH[@]}" "$REMOTE" "cd tlv-github-staging/$RELEASE_SHA && grep -oE 'assets/index-[A-Za-z0-9_-]+\.css' dist/index.html | head -1")"
+            [[ -n "$expected_js" && -n "$expected_css" ]] || return 1
+            "${SSH[@]}" "$REMOTE" "cmp -s /webroots/www/index.html tlv-github-staging/$RELEASE_SHA/dist/index.html && cmp -s /webroots/www/$expected_js tlv-github-staging/$RELEASE_SHA/dist/$expected_js && cmp -s /webroots/www/$expected_css tlv-github-staging/$RELEASE_SHA/dist/$expected_css" || return 1
+            for path in / /admin /min-side /prosjekt /bedriftsportal; do
+              live_html="$(curl --fail --silent --show-error --location --retry 2 --max-time 25 -H 'Cache-Control: no-cache' "https://taklekkasjevakten.no$path?tlv_release_check=$RELEASE_SHA")" || return 1
+              grep -Fq "$expected_js" <<<"$live_html" || return 1
+              grep -Fq "$expected_css" <<<"$live_html" || return 1
+              echo "PUBLIC_ROUTE_OK: $path"
+            done
+            curl --fail --silent --show-error --location --max-time 40 -o /dev/null "https://taklekkasjevakten.no/$expected_js" || return 1
+            curl --fail --silent --show-error --location --max-time 40 -o /dev/null "https://taklekkasjevakten.no/$expected_css" || return 1
+            echo 'POST_PUBLISH_PUBLIC_SMOKE_PASSED'
+          }
+          if validate_live; then exit 0; fi
+          echo 'PUBLIC_SMOKE_FAILED: attempting verified rollback' >&2
+          backup="$(cat /tmp/tlv-publish-backup-name)"
+          digest="$(cat /tmp/tlv-publish-backup-sha)"
+          "${SSH[@]}" "$REMOTE" "TLV_ENABLE_LIVE=yes TLV_FUNCTIONAL_TEST_OK=yes bash -s -- 'rollback' '$backup' '$digest'" \
+            < .github/scripts/tlv-frontend-deploy.sh || echo 'CRITICAL: automatic rollback failed; manual recovery required' >&2
+          exit 1
