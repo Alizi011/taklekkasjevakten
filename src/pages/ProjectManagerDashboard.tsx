@@ -55,6 +55,7 @@ import OfferGenerator, { type FollowUpType, type OfferService } from "../compone
 import ProjectManagerCommunication from "../components/project-manager/ProjectManagerCommunication";
 import ProjectManagerCustomers from "../components/project-manager/ProjectManagerCustomers";
 import ServiceCompletionWorkspace from "../components/project-manager/ServiceCompletionWorkspace";
+import HistoricalReport2Checklist from "../components/project-manager/HistoricalReport2Checklist";
 import PropertyAndBuildingCase from "./PropertyAndBuildingCase";
 import { API_BASE, apiAssetUrl, apiUrl } from "../lib/api";
 import {
@@ -2106,6 +2107,7 @@ export default function ProjectManagerDashboard({
   // Open the existing checklist alone for delegated retrospective tasks.
   const [focusedChecklistInquiryId, setFocusedChecklistInquiryId] = useState<number | null>(null);
   const [standaloneChecklistInquiry, setStandaloneChecklistInquiry] = useState<Inquiry | null>(null);
+  const [standaloneWorkInquiry, setStandaloneWorkInquiry] = useState<Inquiry | null>(null);
   const [casePanelFiles, setCasePanelFiles] = useState<PreinspectionFile[]>([]);
   const [casePanelFilesBusy, setCasePanelFilesBusy] = useState(false);
   const [casePanelFilesError, setCasePanelFilesError] = useState("");
@@ -5865,6 +5867,10 @@ if (from < earliestDate) {
     overviewStandardService
   );
 
+  if (standaloneWorkInquiry) {
+    return <HistoricalReport2Checklist key={normalizeInquiryId(standaloneWorkInquiry.id)} inquiryId={normalizeInquiryId(standaloneWorkInquiry.id)} address={fullAddress(standaloneWorkInquiry)} adminPreview={Boolean(onBackToAdmin)} onBack={() => setStandaloneWorkInquiry(null)} onFinished={() => { setStandaloneWorkInquiry(null); }} />;
+  }
+
   // Dedicated task screen: independent of the active case, workspace tabs and dashboard refresh.
   if (standaloneChecklistInquiry) {
     const id = normalizeInquiryId(standaloneChecklistInquiry.id);
@@ -6612,6 +6618,10 @@ if (from < earliestDate) {
                                               type="button"
                                               onClick={() => {
                                                  if (task.on_hold === true) return;
+                                                 if (task.title === "Fullfør kontrolliste for Rapport 2") {
+                                                   setStandaloneWorkInquiry(inquiry);
+                                                   return;
+                                                 }
                                                  if (isRetrospectiveTask(task)) {
                                                    const id = normalizeInquiryId(inquiry.id);
                                                    if (!id) return;
