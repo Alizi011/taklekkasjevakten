@@ -1,5 +1,6 @@
 import AdminCaseOrganizations from "../components/AdminCaseOrganizations";
 import AdminPhotoVisibility from "../components/AdminPhotoVisibility";
+import AdminRetrospectiveChecklistTask from "../components/AdminRetrospectiveChecklistTask";
 import AgreementPreviewButton from "@/components/AgreementPreviewButton";
 import AdminAgreementProgress from "../components/AdminAgreementProgress";
 import AdminAgreementSigningCaseNotice from "../components/AdminAgreementSigningCaseNotice";
@@ -5446,6 +5447,7 @@ export default function InquiryDetail({
             </div>
             <div className="text-xs text-slate-400">Registrert taktype: <strong className="text-white">{inquiry.roof_type || inquiry.roofType || "Ukjent"}</strong></div>
           </div>
+          <AdminRetrospectiveChecklistTask inquiryId={inquiryId} />
           <div className="grid gap-3 md:grid-cols-3">
             {checklistTemplateOptions.map((item) => (
               <button key={item.key} type="button"
