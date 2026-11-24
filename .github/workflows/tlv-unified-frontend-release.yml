@@ -1,0 +1,202 @@
+name: TLV unified frontend release
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Successful administrative work override package run ID
+        required: true
+        type: string
+      release_sha:
+        description: Exact candidate commit SHA
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: tlv-production-operations
+  cancel-in-progress: false
+env:
+  RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+  RELEASE_SHA: ${{ inputs.release_sha }}
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Validate immutable release identifiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$RELEASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+      - name: Verify immutable candidate run, repo, commit and successful release build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID" > /tmp/tlv-release-run.json
+          jq -e --arg repo "$GITHUB_REPOSITORY" --arg sha "$RELEASE_SHA" '
+            .conclusion == "success" and
+            .event == "push" and
+            .name == "TLV administrative work override release package (NO deployment)" and
+            .head_branch == "feature/tlv-admin-work-override-20261124" and
+            .head_sha == $sha and
+            ((.head_repository.full_name | ascii_downcase) == ($repo | ascii_downcase))
+          ' /tmp/tlv-release-run.json >/dev/null
+          echo "Pinned successful candidate verified: $RELEASE_SHA"
+      - name: Download pinned, non-production frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tlv-admin-work-override-frontend-candidate
+          run-id: ${{ inputs.release_run_id }}
+          github-token: ${{ github.token }}
+          path: release
+      - name: Validate artifact checksum and strict static-file allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          test -s dist/index.html && test -s release-checksums.txt
+          test -z "$(find dist -type l -print -quit)"
+          test -z "$(find dist -type f -name '*.php' -print -quit)"
+          while IFS= read -r -d '' file; do
+            rel="${file#dist/}"
+            case "$rel" in
+              index.html|robots.txt|site.webmanifest) ;;
+              assets/index-*.js|assets/index-*.css)
+                [[ "$rel" =~ ^assets/index-[A-Za-z0-9_-]+\.(js|css)$ ]] || exit 1 ;;
+              *.png|*.jpg|*.jpeg|*.webp|*.svg|*.ico)
+                [[ "$rel" != */* ]] || exit 1 ;;
+              *) echo "::error::Unexpected release asset: $rel"; exit 1 ;;
+            esac
+          done < <(find dist -type f -print0)
+          test "$(find dist -type f | wc -l)" -eq "$(wc -l < release-checksums.txt)"
+          sha256sum --check release-checksums.txt >/dev/null
+          js="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' dist/index.html | head -1)"
+          css="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.css' dist/index.html | head -1)"
+          test -s "dist/$js" && test -s "dist/$css"
+          echo "Candidate hashes and index asset references verified"
+      - name: Check single override source placement
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          path: candidate-source
+          persist-credentials: false
+      - name: Validate administrative override placement
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(grep -c '<AdminWorkOverride ' candidate-source/src/pages/InquiryDetail.tsx)" = 1
+          ! grep -q '<AdminWorkOverride ' candidate-source/src/components/DirectOfferCaseProcess.tsx
+          grep -q 'data-testid="admin-work-override"' candidate-source/src/components/AdminWorkOverride.tsx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-frontend
+          path: release/
+          if-no-files-found: error
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    env:
+      LIVE_APPROVED: ${{ vars.TLV_ENABLE_LIVE }}
+      FUNCTIONAL_APPROVED: ${{ vars.TLV_FUNCTIONAL_TEST_OK }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-frontend
+          path: release
+      - name: Require both established production release approvals
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$LIVE_APPROVED" != yes || "$FUNCTIONAL_APPROVED" != yes ]]; then
+            echo "::error::Release blocked: production vars TLV_ENABLE_LIVE and TLV_FUNCTIONAL_TEST_OK must both be yes."
+            exit 1
+          fi
+          echo "Existing production release approval gates verified"
+      - name: Configure pinned production SSH identity
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.TLV_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.TLV_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY" && test -n "$KNOWN_HOSTS"
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+      - name: Transfer candidate only to nonpublic one.com staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          STAGE="tlv-github-staging/$RELEASE_SHA"
+          "${SSH[@]}" "$REMOTE" "umask 077; test ! -e '$STAGE' && mkdir -p '$STAGE'"
+          rsync -az -e "ssh -i $HOME/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes" \
+            release/dist release/release-checksums.txt "$REMOTE:$STAGE/"
+          "${SSH[@]}" "$REMOTE" "cd '$STAGE' && sha256sum --check release-checksums.txt >/dev/null && test -s dist/index.html && echo STAGE_CHECKSUMS_VERIFIED"
+          echo "Nonpublic stage ready; no live frontend files changed"
+      - name: Preflight staged files
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          "${SSH[@]}" "$REMOTE" "TLV_ENABLE_LIVE=no TLV_FUNCTIONAL_TEST_OK=no bash -s -- 'preflight' '$RELEASE_SHA' ''" < .github/scripts/tlv-frontend-deploy.sh
+      - name: Publish via pre-existing locked, reversible TLV release engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          "${SSH[@]}" "$REMOTE" "TLV_ENABLE_LIVE=yes TLV_FUNCTIONAL_TEST_OK=yes bash -s -- 'publish' '$RELEASE_SHA' ''" \
+            < .github/scripts/tlv-frontend-deploy.sh | tee /tmp/tlv-activation-output.txt
+          grep -q "PUBLISH COMPLETED: $RELEASE_SHA" /tmp/tlv-activation-output.txt
+          line="$(grep '^ROLLBACK USING:' /tmp/tlv-activation-output.txt | tail -1)"
+          backup="$(awk '{print $3}' <<<"$line")"
+          digest="$(awk '{print $4}' <<<"$line")"
+          [[ "$backup" =~ ^tlv-before-github-[0-9]{8}-[0-9]{6}(-[0-9]+)?\.tar\.gz$ ]]
+          [[ "$digest" =~ ^[a-f0-9]{64}$ ]]
+          printf '%s\n' "$backup" > /tmp/tlv-publish-backup-name
+          printf '%s\n' "$digest" > /tmp/tlv-publish-backup-sha
+          echo "PUBLISH_ROLLBACK_ARCHIVE=$backup"
+      - name: Smoke check actual public website and rollback on failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          validate_live() {
+            local expected_js expected_css live_html js css
+            expected_js="$("${SSH[@]}" "$REMOTE" "cd tlv-github-staging/$RELEASE_SHA && grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' dist/index.html | head -1")"
+            expected_css="$("${SSH[@]}" "$REMOTE" "cd tlv-github-staging/$RELEASE_SHA && grep -oE 'assets/index-[A-Za-z0-9_-]+\.css' dist/index.html | head -1")"
+            [[ -n "$expected_js" && -n "$expected_css" ]] || return 1
+            "${SSH[@]}" "$REMOTE" "cmp -s /webroots/www/index.html tlv-github-staging/$RELEASE_SHA/dist/index.html && cmp -s /webroots/www/$expected_js tlv-github-staging/$RELEASE_SHA/dist/$expected_js && cmp -s /webroots/www/$expected_css tlv-github-staging/$RELEASE_SHA/dist/$expected_css" || return 1
+            for path in / /admin /min-side /prosjekt /bedriftsportal; do
+              live_html="$(curl --fail --silent --show-error --location --retry 2 --max-time 25 -H 'Cache-Control: no-cache' "https://taklekkasjevakten.no$path?tlv_release_check=$RELEASE_SHA")" || return 1
+              grep -Fq "$expected_js" <<<"$live_html" || return 1
+              grep -Fq "$expected_css" <<<"$live_html" || return 1
+              echo "PUBLIC_ROUTE_OK: $path"
+            done
+            curl --fail --silent --show-error --location --max-time 40 -o /dev/null "https://taklekkasjevakten.no/$expected_js" || return 1
+            curl --fail --silent --show-error --location --max-time 40 -o /dev/null "https://taklekkasjevakten.no/$expected_css" || return 1
+            echo 'POST_PUBLISH_PUBLIC_SMOKE_PASSED'
+          }
+          if validate_live; then exit 0; fi
+          echo 'PUBLIC_SMOKE_FAILED: attempting verified rollback' >&2
+          backup="$(cat /tmp/tlv-publish-backup-name)"
+          digest="$(cat /tmp/tlv-publish-backup-sha)"
+          "${SSH[@]}" "$REMOTE" "TLV_ENABLE_LIVE=yes TLV_FUNCTIONAL_TEST_OK=yes bash -s -- 'rollback' '$backup' '$digest'" \
+            < .github/scripts/tlv-frontend-deploy.sh || echo 'CRITICAL: automatic rollback failed; manual recovery required' >&2
+          exit 1
