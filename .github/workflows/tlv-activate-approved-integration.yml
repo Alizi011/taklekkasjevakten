@@ -15,9 +15,9 @@ jobs:
     environment: production
     timeout-minutes: 20
     env:
-      RELEASE_SHA: 'c205ec712fe36671116440230bb81a925e54d9e0'
-      EXPECTED_PRE_RELEASE_BACKUP: 'tlv-before-github-20261124-130106-1.tar.gz'
-      EXPECTED_PRE_RELEASE_BACKUP_SHA256: '7e26960e1a39d648075d9893c05f522a6ef890aab8226b40cd46ec6bb20d2ed7'
+      RELEASE_SHA: '5e41eccea8675fcc1037735f4e181e41aa927b2f'
+      EXPECTED_PRE_RELEASE_BACKUP: 'tlv-before-github-20261124-132727-1.tar.gz'
+      EXPECTED_PRE_RELEASE_BACKUP_SHA256: '097ed4f2b48121d56f1090ceaa46c93eb8bbed0d84ba37f38df3996ebecee1c5'
       LIVE_APPROVED: ${{ vars.TLV_ENABLE_LIVE }}
       FUNCTIONAL_APPROVED: ${{ vars.TLV_FUNCTIONAL_TEST_OK }}
     steps:
