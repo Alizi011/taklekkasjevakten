@@ -1,3 +1,5 @@
+import AdminWorkOverride, { type WorkOverride } from "./AdminWorkOverride";
+import { useState } from "react";
 import {
   CheckCircle2,
   Clock3,
@@ -19,6 +21,7 @@ type Props = {
   onOpenOffer: () => void;
   onOpenPlanning?: () => void;
   onOpenReport2?: () => void;
+  inquiryId?: number;
 };
 
 export default function DirectOfferCaseProcess({
@@ -26,7 +29,9 @@ export default function DirectOfferCaseProcess({
   onOpenOffer,
   onOpenPlanning,
   onOpenReport2,
+  inquiryId,
 }: Props) {
+  const [actualWork, setActualWork] = useState<WorkOverride | null>(null);
   const status = offer.status;
   const accepted = status === "akseptert";
   const rejected = status === "avvist";
@@ -64,15 +69,15 @@ export default function DirectOfferCaseProcess({
     },
     {
       title: "Planlegging og utførelse",
-      detail: accepted
+      detail: actualWork ? `Utført ${actualWork.started_on} – ${actualWork.completed_on}` : accepted
         ? "Avtal tidspunkt og klargjør utførelse"
         : "Aktiveres etter kundens aksept",
-      state: accepted ? "active" : "waiting",
+      state: actualWork ? "done" : accepted ? "active" : "waiting",
     },
     {
       title: "Rapport 2 – Utførelsesrapport",
       detail: "Dokumenterer utført arbeid, bilder og sluttkontroll",
-      state: "waiting",
+      state: actualWork ? "active" : "waiting",
     },
     {
       title: "Årlig vedlikeholdsoppfølging",
@@ -113,7 +118,7 @@ export default function DirectOfferCaseProcess({
         Åpne tilbud
       </button>
 
-      {accepted && onOpenPlanning && (
+      {accepted && !actualWork && onOpenPlanning && (
         <button
           type="button"
           onClick={onOpenPlanning}
@@ -147,7 +152,8 @@ export default function DirectOfferCaseProcess({
                   : Clock3;
 
           return (
-            <div key={step.title} className="flex items-start gap-3">
+            <div key={step.title}>
+            <div className="flex items-start gap-3">
               <Icon
                 className={`mt-0.5 h-5 w-5 shrink-0 ${
                   step.state === "done"
@@ -167,6 +173,8 @@ export default function DirectOfferCaseProcess({
                   {step.detail}
                 </p>
               </div>
+            </div>
+            {index === 2 && inquiryId && <AdminWorkOverride key={inquiryId} inquiryId={inquiryId} onSaved={setActualWork}/>}
             </div>
           );
         })}
