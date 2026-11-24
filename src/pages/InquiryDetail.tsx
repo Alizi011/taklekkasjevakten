@@ -3810,6 +3810,8 @@ export default function InquiryDetail({
     key={inquiryId}
     inquiryId={inquiryId}
     offer={directProcessOffer}
+    onActualWork={setActualWork}
+    onAcceptance={setPhoneAcceptance}
     onOpenOffer={() => setAdminCaseTab("offer")}
   />
 ) : (
