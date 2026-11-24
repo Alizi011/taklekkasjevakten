@@ -1,0 +1,31 @@
+name: Verify admin-led leak-search completion frontend
+on:
+  push:
+    branches: [feature/tlv-leak-search-completion-20261124]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - name: Ensure admin owns completion and manager display is read-only
+        run: |
+          grep -Fq 'admin_leak_search_completion.php' src/components/AdminLeakSearchCompletion.tsx
+          grep -Fq 'Etterspør sjekkliste' src/components/AdminRetrospectiveChecklistTask.tsx
+          grep -Fq 'project_manager_leak_search_completion.php' src/components/ProjectManagerLeakSearchCompletion.tsx
+          if grep -Fq 'action: "complete"' src/components/ProjectManagerLeakSearchCompletion.tsx; then exit 1; fi
+      - name: Ensure retrospective safety defaults in source
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'status: retrospective ? undefined' src/components/checklist/ChecklistManager.tsx
+          grep -Fq 'if (retrospective && !item.note?.trim())' src/components/checklist/ChecklistManager.tsx
+          echo 'RETROSPECTIVE_CHECKLIST_SAFE_DEFAULTS_PASS'
