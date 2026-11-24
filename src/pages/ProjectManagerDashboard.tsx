@@ -2328,6 +2328,7 @@ export default function ProjectManagerDashboard({
     offer_id?: number;
     offer_number?: string;
     title: string;
+    description?: string | null;
     status: string;
     on_hold?: boolean;
   }>>([]);
