@@ -4,9 +4,16 @@ import { apiUrl } from "../lib/api";
 type WorkType = "service" | "vedlikehold" | "varig_utbedring";
 const workTypes: Record<WorkType,string> = { service: "Service", vedlikehold: "Vedlikehold", varig_utbedring: "Varig utbedring" };
 export type WorkOverride = { work_type: WorkType; started_on: string; completed_on: string; note?: string | null; recorded_at?: string };
-type Result = { success?: boolean; message?: string; work?: WorkOverride | null; task?: { id: number; status: string } | null };
-type Props = { inquiryId: number; onSaved?: (work: WorkOverride | null) => void };
-export default function AdminWorkOverride({ inquiryId, onSaved }: Props) {
+export type PhoneAcceptance = { accepted_on: string | null; received_by: string; scope: string; note?: string | null; recorded_at: string };
+export const phoneScopeLabels: Record<string,string> = { lekkasjesok:"Lekkasjesøk", service:"Service", vedlikehold:"Vedlikehold", varig_utbedring:"Varig utbedring", lekkasjesok_og_service:"Lekkasjesøk og service" };
+type Result = { acceptance?: PhoneAcceptance | null; success?: boolean; message?: string; work?: WorkOverride | null; task?: { id: number; status: string } | null };
+type Props = { inquiryId: number; onSaved?: (work: WorkOverride | null) => void; onAcceptance?: (value: PhoneAcceptance | null) => void };
+export default function AdminWorkOverride({ inquiryId, onSaved, onAcceptance }: Props) {
+  const [acceptance,setAcceptance]=useState<PhoneAcceptance|null>(null);
+  const [scope,setScope]=useState("");
+  const [receiver,setReceiver]=useState("");
+  const [acceptDate,setAcceptDate]=useState("");
+  const [acceptNote,setAcceptNote]=useState("");
   const [work, setWork] = useState<WorkOverride | null>(null);
   const [type, setType] = useState<WorkType | "">("");
   const [start, setStart] = useState("");
@@ -25,6 +32,12 @@ export default function AdminWorkOverride({ inquiryId, onSaved }: Props) {
     setStart(data.work?.started_on || ""); setEnd(data.work?.completed_on || "");
     setNote(data.work?.note || ""); setDirty(false);
     onSaved?.(data.work || null);
+    setAcceptance(data.acceptance || null);
+    setScope(data.acceptance?.scope || "");
+    setReceiver(data.acceptance?.received_by || "");
+    setAcceptDate(data.acceptance?.accepted_on || "");
+    setAcceptNote(data.acceptance?.note || "");
+    onAcceptance?.(data.acceptance || null);
   };
   useEffect(() => {
     const controller = new AbortController();
@@ -55,9 +68,31 @@ export default function AdminWorkOverride({ inquiryId, onSaved }: Props) {
     } catch (e) { setError(e instanceof Error ? e.message : "Operasjonen mislyktes."); }
     finally { setBusy(false); }
   };
+  const saveAcceptance = async () => {
+    if (!available || busy || !scope || !receiver.trim()) return;
+    setBusy(true);setError("");setNotice("");
+    try {
+      const res=await fetch(endpoint,{method:"POST",credentials:"include",cache:"no-store",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save_phone_acceptance",inquiry_id:inquiryId,scope,received_by:receiver,accepted_on:acceptDate||null,note:acceptNote})});
+      const data=await res.json() as Result;
+      if (!res.ok||!data.success) throw new Error(data.message||"Kunne ikke lagre muntlig aksept.");
+      setAcceptance(data.acceptance||null);onAcceptance?.(data.acceptance||null);
+      setNotice(data.message||"Muntlig aksept registrert.");
+    } catch(e) {setError(e instanceof Error?e.message:"Lagring feilet.");}
+    finally {setBusy(false);}
+  };
   return <details className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/5 p-3" open={work ? undefined : true}>
     <summary className="cursor-pointer text-xs font-black text-amber-200">Administrativ overstyring</summary>
     <div className="mt-3 space-y-3">
+      <div className="space-y-2 border-b border-slate-700 pb-3">
+        <h4 className="text-xs font-bold text-white">Muntlig kundeaksept</h4>
+        <p className="text-xs text-slate-300">Registrer tidligere telefonaksept. Oppretter ikke tilbud eller signatur.</p>
+        {acceptance && <p className="text-xs text-emerald-300">Registrert: {phoneScopeLabels[acceptance.scope]} · mottatt av {acceptance.received_by}</p>}
+        <label className="block text-xs">Hva kunden aksepterte<select value={scope} onChange={e=>setScope(e.target.value)} disabled={!available||busy} className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 p-2"><option value="">Velg</option>{Object.entries(phoneScopeLabels).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>
+        <label className="block text-xs">Mottatt av<input value={receiver} maxLength={150} onChange={e=>setReceiver(e.target.value)} disabled={!available||busy} placeholder="Prosjektansvarlig / navn" className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 p-2"/></label>
+        <label className="block text-xs">Dato for aksept (hvis kjent)<input type="date" value={acceptDate} max={today} onChange={e=>setAcceptDate(e.target.value)} disabled={!available||busy} className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 p-2"/></label>
+        <label className="block text-xs">Merknad<textarea value={acceptNote} maxLength={1000} onChange={e=>setAcceptNote(e.target.value)} disabled={!available||busy} className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 p-2"/></label>
+        <button type="button" onClick={()=>void saveAcceptance()} disabled={!available||busy||!scope||!receiver.trim()} className="w-full rounded-lg border border-emerald-500/40 p-2 text-xs font-bold text-emerald-200 disabled:opacity-40">Registrer muntlig kundeaksept</button>
+      </div>
       <p className="text-xs text-slate-300">Registrer faktiske arbeidsdatoer. Dette er ikke en teknisk sluttkontroll eller en kundegodkjenning.</p>
       {work && <p className="text-xs font-bold text-emerald-300">{workTypes[work.work_type]} utført: {work.started_on} – {work.completed_on}</p>}
       <label className="block text-xs text-slate-200">Faktisk utført arbeid
