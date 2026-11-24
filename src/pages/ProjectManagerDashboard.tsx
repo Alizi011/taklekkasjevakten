@@ -2102,6 +2102,8 @@ export default function ProjectManagerDashboard({
   const [dashboardPhotosLoading, setDashboardPhotosLoading] = useState(false);
   // PM_CASE_INLINE_TABS_V1: Read-only case information, independent of work editor pages.
   const [casePanelTab, setCasePanelTab] = useState<CasePanelTab>("oversikt");
+  // Open the existing checklist alone for delegated retrospective tasks.
+  const [focusedChecklistInquiryId, setFocusedChecklistInquiryId] = useState<number | null>(null);
   const [casePanelFiles, setCasePanelFiles] = useState<PreinspectionFile[]>([]);
   const [casePanelFilesBusy, setCasePanelFilesBusy] = useState(false);
   const [casePanelFilesError, setCasePanelFilesError] = useState("");
@@ -5091,6 +5093,7 @@ if (from < earliestDate) {
     if (!id) return;
 
     // PM_OPEN_INQUIRY_OVERVIEW_V1
+    setFocusedChecklistInquiryId(null);
     setActiveInquiryId(id);
     setFieldWorkspaceTab("oversikt");
     setView("felt");
@@ -6574,15 +6577,13 @@ if (from < earliestDate) {
                                               onClick={() => {
                                                  if (task.on_hold === true) return;
                                                  if (isRetrospectiveTask(task)) {
-                                                   // Admin preview must never impersonate the project manager.
-                                                   if (onBackToAdmin) {
-                                                     openInquiry(inquiry);
-                                                     setCasePanelTab("sjekklister");
-                                                   } else {
-                                                     setActiveInquiryId(normalizeInquiryId(inquiry.id));
-                                                     setFieldWorkspaceTab("kontroll");
-                                                     setView("felt");
-                                                   }
+                                                   const id = normalizeInquiryId(inquiry.id);
+                                                   if (!id) return;
+                                                   // A direct checklist task is not the general case workspace.
+                                                   // No admin preview may create an employee session or save results.
+                                                   setActiveInquiryId(id);
+                                                   setFocusedChecklistInquiryId(id);
+                                                   setView("felt");
                                                    return;
                                                  }
                                                  if (onBackToAdmin) {
@@ -7010,7 +7011,39 @@ if (from < earliestDate) {
           </div>
         )}
 
-        {view === "felt" && overviewInquiry && (
+        {view === "felt" && overviewInquiry &&
+          focusedChecklistInquiryId === normalizeInquiryId(overviewInquiry.id) ? (
+          <section className="space-y-4" aria-label="Fullfør manglende sjekkliste">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-[#231912] p-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-wider text-amber-300">
+                  Sak #{normalizeInquiryId(overviewInquiry.id)} · Etterregistrering
+                </p>
+                <h2 className="mt-1 text-lg font-black text-white">Fullfør manglende sjekkliste</h2>
+                <p className="mt-1 text-xs text-slate-300">
+                  {fullAddress(overviewInquiry)} · Den eksisterende sjekklisten, med lagrede punkter bevart.
+                </p>
+              </div>
+              <button type="button" onClick={() => {
+                setFocusedChecklistInquiryId(null);
+                setFieldWorkspaceTab("oversikt");
+              }} className="rounded-lg border border-slate-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-slate-800">
+                Åpne hele oppdraget
+              </button>
+            </div>
+            <ChecklistManager
+              retrospective
+              inquiryId={normalizeInquiryId(overviewInquiry.id)}
+              initialRoofType={overviewInquiry.roof_type || overviewInquiry.roofType || "Flatt tak"}
+              onChange={() => fetchChecklistSummary(normalizeInquiryId(overviewInquiry.id))}
+              onComplete={async () => {
+                await fetchChecklistSummary(normalizeInquiryId(overviewInquiry.id));
+                setFocusedChecklistInquiryId(null);
+                setFieldWorkspaceTab("oppsummering");
+              }}
+            />
+          </section>
+        ) : view === "felt" && overviewInquiry && (
           <div className="space-y-6">
             {fieldSchedule?.id && fieldSchedule.schedule_date &&
               ["bekreftet", "planlagt"].includes(String(fieldSchedule.status || "").toLowerCase()) &&
