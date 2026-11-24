@@ -1,0 +1,149 @@
+name: TLV isolated browser smoke - pinned frontend release
+on:
+  push:
+    branches:
+      - integration/tlv-prod-core-20261123
+    paths:
+      - .github/workflows/tlv-browser-smoke.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Download pinned release, not development build
+        uses: actions/download-artifact@v4
+        with:
+          name: tlv-integration-frontend-candidate
+          run-id: 45279836105
+          github-token: ${{ github.token }}
+          path: release
+      - name: Verify and start isolated release candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          test -s dist/index.html && test -s release-checksums.txt
+          sha256sum --check release-checksums.txt >/dev/null
+          cd ..
+          npm ci --no-audit --no-fund
+          npm install --no-save --package-lock=false playwright
+          npx playwright install --with-deps chromium
+          npx vite preview --host 127.0.0.1 --port 4182 --strictPort --outDir release/dist >/tmp/tlv-preview.log 2>&1 &
+          echo $! > /tmp/tlv-preview.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:4182/ -o /dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4182/ -o /dev/null
+      - name: Exercise live browser routes with fake API data
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import { chromium } from 'playwright';
+          import fs from 'node:fs';
+          const browser = await chromium.launch({headless:true});
+          const context = await browser.newContext({ viewport:{ width:1280,height:850 }, serviceWorkers:'block' });
+          await context.route('https://api.taklekkasjevakten.no/**', async route => {
+            const url = route.request().url();
+            if (url.includes('tlv_admin_auth.php')) {
+              await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({success:true,authenticated:false})});
+              return;
+            }
+            await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({success:false,message:'Isolert test – ingen produksjonstilkobling'})});
+          });
+          await context.route('https://**', async route => {
+            const url=new URL(route.request().url());
+            if (url.hostname==='127.0.0.1') return route.continue();
+            await route.abort();
+          });
+          const paths=[
+            ['/', 'Forside'],
+            ['/om-lekkasjesok','Lekkasjesøk'],
+            ['/faq','FAQ'],
+            ['/admin','Administrator-login'],
+            ['/min-side','Kundeportal'],
+            ['/prosjekt','Prosjektlederportal'],
+            ['/bedriftsportal','Bedriftsportal'],
+          ];
+          const errors=[];
+          fs.mkdirSync('browser-evidence',{recursive:true});
+          const page=await context.newPage();
+          page.on('pageerror',error=>errors.push(String(error.message)));
+          for (let i=0;i<paths.length;i++) {
+            const [pathname,label]=paths[i];
+            const response=await page.goto('http://127.0.0.1:4182'+pathname,{waitUntil:'domcontentloaded',timeout:30000});
+            await page.waitForTimeout(1200);
+            if (!response || response.status()!==200) throw new Error(label+' returned HTTP '+response?.status());
+            const root=page.locator('#root');
+            const text=await root.innerText();
+            if (text.trim().length<20) throw new Error(label+' blank root: '+text.slice(0,200));
+            await page.screenshot({path:'browser-evidence/'+i+'-'+label.replace(/[^a-z0-9]/gi,'-')+'.png',fullPage:false});
+            console.log('PASS',label,'HTTP',response.status(),'rendered_chars',text.length,'sample',text.slice(0,90).replace(/\\s+/g,' '));
+          }
+          if (errors.length) {
+            console.log('BROWSER_JS_ERRORS',JSON.stringify(errors.slice(0,15)));
+            throw new Error('Uncaught JavaScript errors during smoke tests');
+          }
+          // Built source contract: verified Core endpoint is restricted to admin case page.
+          const html=fs.readFileSync('release/dist/index.html','utf8');
+          const jsMatch=html.match(/assets\/index-[\w-]+\.js/);
+          if(!jsMatch) throw new Error('No candidate JS asset');
+          const js=fs.readFileSync('release/dist/'+jsMatch[0],'utf8');
+          for(const phrase of ['admin_core_case_photos.php','Importerte bilder fra Perun Core']) {
+            if(!js.includes(phrase)) throw new Error('Missing Core photo feature: '+phrase);
+          }
+          console.log('PASS Core photo UI contract included in candidate JS');
+
+          // A separate authenticated-admin simulation: all API responses are
+          // explicit mocks, never use or retrieve a real admin session.
+          const adminContext = await browser.newContext({viewport:{width:1280,height:850},serviceWorkers:'block'});
+          await adminContext.route('https://api.taklekkasjevakten.no/**', async route => {
+            const u=route.request().url();
+            if (u.includes('tlv_admin_auth.php') && u.includes('action=session')) {
+              await route.fulfill({status:200,contentType:'application/json',
+                body:JSON.stringify({success:true,authenticated:true})});
+              return;
+            }
+            await route.fulfill({status:200,contentType:'application/json',
+              body:JSON.stringify({success:false,message:'Testrespons: ingen produksjonsdata'})});
+          });
+          await adminContext.route('https://**', async route => {
+            const u=new URL(route.request().url());
+            if (u.hostname==='127.0.0.1') return route.continue();
+            await route.abort();
+          });
+          const adminPage=await adminContext.newPage();
+          const adminErrors=[];
+          adminPage.on('pageerror',error=>adminErrors.push(String(error.message)));
+          const adminResponse=await adminPage.goto('http://127.0.0.1:4182/admin',
+            {waitUntil:'domcontentloaded',timeout:30000});
+          await adminPage.waitForTimeout(2500);
+          const adminText=await adminPage.locator('#root').innerText();
+          console.log('ADMIN_MOCK_RESULT',JSON.stringify({
+            http:adminResponse?.status(),chars:adminText.length,sample:adminText.slice(0,260),
+            errors:adminErrors.slice(0,5)
+          }));
+          await adminPage.screenshot({path:'browser-evidence/7-Admin-Mock.png',fullPage:false});
+          if (adminResponse?.status()!==200 || adminText.trim().length<60 || adminErrors.length) {
+            throw new Error('Simulated authenticated-admin page failed to render cleanly');
+          }
+          console.log('PASS simulated authenticated admin frontend (all API requests mocked)');
+          await adminContext.close();
+          await browser.close();
+          JS
+      - name: Store browser screenshots for review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tlv-isolated-browser-smoke-screens
+          path: browser-evidence/
+          retention-days: 7
+          if-no-files-found: ignore

@@ -3,34 +3,76 @@ import { CheckCircle2, Clock3 } from "lucide-react";
 import { apiUrl } from "../lib/api";
 
 type Proposal = { id: number; version_no: number; status: string; proposed_start_date: string; estimated_duration: string };
+type Agreement = { id: number; status: string; document_sha256: string | null };
 type Props = { inquiryId: number; sessionToken: string; offerAccepted: boolean; report2Published?: boolean; refreshKey?: number; previewMode?: boolean; onOpenAgreement: () => void };
 
 const labels = ["Oppfølgingstilbud", "Bekreft oppstart", "Arbeidsavtale", "Signering", "Utførelse", "Rapport 2"];
 
 export default function CustomerFollowupTimeline({ inquiryId, sessionToken, offerAccepted, report2Published = false, refreshKey = 0, previewMode = false, onOpenAgreement }: Props) {
   const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [agreement, setAgreement] = useState<Agreement | null>(null);
+  const [reloadCount, setReloadCount] = useState(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   useEffect(() => {
-    if (!offerAccepted || (!previewMode && !sessionToken) || inquiryId <= 0) return;
+    if (!offerAccepted || (!previewMode && !sessionToken) || inquiryId <= 0) {
+      setProposal(null);
+      setAgreement(null);
+      return;
+    }
     const controller = new AbortController();
     const load = async () => {
       setLoading(true);
+      setAgreement(null);
       try {
         const r = await fetch(apiUrl(previewMode ? "/admin_agreement_schedule_read.php" : "/customer_agreement_schedule.php"), { method: "POST", credentials: previewMode ? "include" : "omit", headers: { "Content-Type": "application/json" }, cache: "no-store", signal: controller.signal, body: JSON.stringify(previewMode ? { inquiry_id: inquiryId } : { action: "list", inquiry_id: inquiryId, session_token: sessionToken }) });
         const data = await r.json();
         if (!r.ok || data.success !== true) throw new Error(data.message || "Kunne ikke hente avtalestatus.");
         const rows = (Array.isArray(data.proposals) ? data.proposals : []) as Proposal[];
         if (!controller.signal.aborted) { setProposal([...rows].sort((a,b) => b.version_no-a.version_no || b.id-a.id)[0] || null); setError(""); }
+        // Read-only Core agreement status, independent from date approval.
+        try {
+          const agreementResponse = await fetch(apiUrl("/customer_agreements_overview.php"), {
+            method: "POST",
+            credentials: previewMode ? "include" : "omit",
+            headers: { "Content-Type": "application/json" },
+            cache: "no-store",
+            signal: controller.signal,
+            body: JSON.stringify(previewMode
+              ? { inquiry_id: inquiryId, admin_preview: true }
+              : { inquiry_id: inquiryId, session_token: sessionToken }),
+          });
+          const agreementData = await agreementResponse.json();
+          if (!agreementResponse.ok || agreementData.success !== true) {
+            throw new Error(agreementData.message || "Kunne ikke hente signeringsstatus.");
+          }
+          if (!controller.signal.aborted) {
+            setAgreement((Array.isArray(agreementData.agreements) ? agreementData.agreements[0] : null) || null);
+          }
+        } catch (agreementError) {
+          if (!controller.signal.aborted) {
+            setError(agreementError instanceof Error ? agreementError.message : "Kunne ikke hente signeringsstatus.");
+          }
+        }
       } catch (e) { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : "Kunne ikke hente avtalestatus."); }
       finally { if (!controller.signal.aborted) setLoading(false); }
     };
     void load();
     return () => controller.abort();
-  }, [offerAccepted, previewMode, sessionToken, inquiryId, refreshKey]);
+  }, [offerAccepted, previewMode, sessionToken, inquiryId, refreshKey, reloadCount]);
+  useEffect(() => {
+    if (!offerAccepted) return;
+    const onReturn = () => setReloadCount(n => n + 1);
+    window.addEventListener("focus", onReturn);
+    return () => window.removeEventListener("focus", onReturn);
+  }, [offerAccepted]);
   if (!offerAccepted) return null;
   const approved = proposal?.status === "approved";
-  const current = approved ? 2 : 1;
+  const documentReady = Boolean(agreement?.document_sha256);
+  const signed = agreement?.status === "signed";
+  const signingStarted = agreement?.status === "sent_for_signature" || agreement?.status === "partially_signed";
+  const signingReady = agreement?.status === "ready_for_signature";
+  const current = signed ? 4 : signingStarted || signingReady ? 3 : documentReady || approved ? 2 : 1;
   const summary = proposal
     ? `${new Intl.DateTimeFormat("nb-NO", { day: "numeric", month: "short" }).format(
         new Date(`${proposal.proposed_start_date.slice(0, 10)}T12:00:00`)
@@ -48,7 +90,7 @@ export default function CustomerFollowupTimeline({ inquiryId, sessionToken, offe
       <div className="relative min-w-0">
         <div className="relative grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-3">
           {labels.map((label, index) => {
-            const done = index === 0 || (index === 1 && approved) || (index === 5 && report2Published);
+            const done = index === 0 || (index === 1 && approved) || (index === 2 && documentReady) || (index === 3 && signed) || (index === 5 && report2Published);
             const active = index === current && !report2Published;
             return (
               <div key={label} className="min-w-0">
@@ -86,14 +128,27 @@ export default function CustomerFollowupTimeline({ inquiryId, sessionToken, offe
         </p>
       )}
 
+      <p className="mt-3 text-xs text-slate-300">
+        {signed ? "Arbeidsavtalen er signert."
+          : agreement?.status === "partially_signed" ? "Avtalen er delvis signert."
+          : agreement?.status === "sent_for_signature" ? "Avtalen er sendt til signering."
+          : signingReady ? "Arbeidsavtalen er klar for signering."
+          : documentReady ? "Arbeidsavtalen er opprettet."
+          : approved ? "Oppstart er godkjent; avtale og signering må kontrolleres."
+          : "Avventer godkjenning av oppstart."}
+      </p>
       {!previewMode && !report2Published && (
-        <div className="mt-4 flex justify-end">
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" disabled={loading} onClick={() => setReloadCount(n => n + 1)}
+            className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-200 disabled:opacity-50">
+            {loading ? "Oppdaterer …" : "Oppdater status"}
+          </button>
           <button
             type="button"
             onClick={onOpenAgreement}
             className="rounded-lg border border-amber-500/30 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-500/10"
           >
-            {approved ? "Se arbeidsavtale" : "Åpne datobekreftelse"}
+            {documentReady ? "Se arbeidsavtale" : approved ? "Se avtalestatus" : "Åpne datobekreftelse"}
           </button>
         </div>
       )}

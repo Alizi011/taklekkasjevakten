@@ -1,0 +1,103 @@
+name: TLV live versus integration parity (read only)
+on:
+  push:
+    branches:
+      - integration/tlv-prod-core-20261123
+    paths:
+      - .github/workflows/tlv-production-parity.yml
+      - src/**
+permissions:
+  contents: read
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Build integration frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Retrieve active public frontend assets only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/tlv-live
+          curl --fail --silent --show-error --location --max-time 40 --retry 2 \
+            -H 'Cache-Control: no-cache' \
+            'https://taklekkasjevakten.no/?tlv_compare=20261123' -o /tmp/tlv-live/index.html
+          LIVE_JS="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' /tmp/tlv-live/index.html | head -1)"
+          LIVE_CSS="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.css' /tmp/tlv-live/index.html | head -1)"
+          test -n "$LIVE_JS" && test -n "$LIVE_CSS"
+          curl --fail --silent --show-error --location --max-time 65 --retry 2 \
+            "https://taklekkasjevakten.no/$LIVE_JS" -o /tmp/tlv-live/live.js
+          curl --fail --silent --show-error --location --max-time 40 --retry 2 \
+            "https://taklekkasjevakten.no/$LIVE_CSS" -o /tmp/tlv-live/live.css
+          echo "LIVE_JS=$LIVE_JS"
+          echo "LIVE_CSS=$LIVE_CSS"
+      - name: Compare build and meaningful UI phrases
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib, re
+          live=pathlib.Path('/tmp/tlv-live/live.js').read_bytes()
+          idx=pathlib.Path('dist/index.html').read_text()
+          asset=re.search(r'assets/index-[A-Za-z0-9_-]+\.js',idx)
+          assert asset
+          local=pathlib.Path('dist')/asset.group()
+          own=local.read_bytes()
+          print('INTEGRATION_JS='+asset.group())
+          for k,b in [('LIVE',live),('INTEGRATION',own)]:
+              print(k+'_SHA256='+hashlib.sha256(b).hexdigest())
+              print(k+'_BYTES='+str(len(b)))
+          print('EXACT_MATCH='+str(live==own))
+          text={k:b.decode('utf-8',errors='replace') for k,b in [('LIVE',live),('INTEGRATION',own)]}
+          # We compare stable, specific Norwegian UI messages, not minifier identifiers.
+          phrases=[
+              'Core-status kunne ikke hentes',
+              'Jeg har kontrollert at dette tilbudet',
+              'Dokumentoversikten fra Perun Core',
+              'Flere bestillere, sameier og forvaltere',
+              'Velg hvilke bilder kunden får se',
+              'Klargjøring endrer kun status til invited',
+              'Signataren er registrert',
+              'Ingen arbeidsavtale er opprettet ennå',
+              'Arbeidsavtalen er ferdig signert',
+              'Finner du ikke riktig signatar',
+              'Importerte bilder fra Perun Core',
+              'Riktig signatar er registrert',
+              'Prosjektansvarlig har foreslått oppstart',
+              'Administrativ pause endrer ikke tilbud',
+              'Bilder fra Perun Core',
+              'Core-prosjekt',
+              'Kundeportalen',
+              'Rapport 1',
+          ]
+          print('=== FEATURE-PHRASE CHECK: present=1 absent=0 (not a functionality guarantee) ===')
+          for p in phrases:
+              print('PHRASE | '+str(int(p in text['LIVE']))+' | '+str(int(p in text['INTEGRATION']))+' | '+p)
+          def norwegian_messages(s):
+              # Heuristic extract of text strings between quotes containing clear prose.
+              candidates=set()
+              for m in re.finditer(r'(?<!\\)["\x27]([^"\x27\\\n]{25,240})["\x27]',s):
+                  v=m.group(1).strip()
+                  if len(v)<32 or len(v)>200 or len(v.split())<5: continue
+                  if not any(ch in v for ch in 'æøåÆØÅ'): continue
+                  if any(x in v for x in ['className','=>','function','https://','style=','{','}','<','>',';','&&','px-','bg-','rounded-','border-']): continue
+                  if sum(c.isalpha() for c in v)<24: continue
+                  candidates.add(v)
+              return candidates
+          a= norwegian_messages(text['LIVE'])
+          b= norwegian_messages(text['INTEGRATION'])
+          print('LIVE_NORWEGIAN_MESSAGES='+str(len(a)))
+          print('INTEGRATION_NORWEGIAN_MESSAGES='+str(len(b)))
+          unique=sorted(a-b)
+          print('LIVE_UNMATCHED_MESSAGES='+str(len(unique)))
+          print('=== LIVE ONLY SAMPLE (MANUAL REVIEW REQUIRED) ===')
+          for p in unique[:110]: print('LIVE_ONLY: '+p)
+          print('=== COMPARISON_FINISHED_NO_PRODUCTION_WRITES ===')
+          PY

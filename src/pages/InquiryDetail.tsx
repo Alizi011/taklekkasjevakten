@@ -58,6 +58,9 @@ import AdminOfferDecision from "../components/AdminOfferDecision";
 import CasePhotoGallery from "../components/CasePhotoGallery";
 import CaseClosureControl from "../components/CaseClosureControl";
 import type { CoreCaseStatusView } from "../components/CoreCaseStatusBadge";
+type CoreCasePhoto = { id: number; caption?: string | null; taken_at?: string | null; imported_at?: string | null };
+type CoreCasePhotoResponse = { success?: boolean; inquiry_id?: number; photos?: CoreCasePhoto[]; message?: string };
+
 export interface Inquiry {
   id: string;
   customer_id?: number | string | null;
@@ -472,6 +475,10 @@ export default function InquiryDetail({
 
   const [checklists, setChecklists] = useState<ChecklistRow[]>([]);
   const [photos, setPhotos] = useState<PhotoRow[]>([]);
+  const [coreCasePhotos, setCoreCasePhotos] = useState<CoreCasePhoto[]>([]);
+  const [coreCasePhotosError, setCoreCasePhotosError] = useState("");
+  const corePhotoUrl = (id: number) =>
+    apiUrl(`/admin_core_case_photos.php?inquiry_id=${encodeURIComponent(String(inquiryId))}&photo_id=${encodeURIComponent(String(id))}`);
   const [report, setReport] = useState<ReportData | null>(null);
   const [completionReport, setCompletionReport] =
     useState<CompletionReportMini | null>(null);
@@ -2288,6 +2295,28 @@ export default function InquiryDetail({
     }
   };
 
+  // Independent admin-only lookup: no changes to legacy TLV photos or customer access.
+  useEffect(() => {
+    if (!Number.isInteger(inquiryId) || inquiryId < 1) return;
+    let active = true;
+    setCoreCasePhotos([]);
+    setCoreCasePhotosError("");
+    fetch(apiUrl(`/admin_core_case_photos.php?inquiry_id=${encodeURIComponent(String(inquiryId))}`), {
+      credentials: "include",
+      cache: "no-store"
+    })
+      .then(async res => {
+        const data = await res.json() as CoreCasePhotoResponse;
+        if (!res.ok || !data.success || data.inquiry_id !== inquiryId || !Array.isArray(data.photos)) {
+          throw new Error(data.message || "Core-bilder kunne ikke lastes.");
+        }
+        return data.photos;
+      })
+      .then(items => { if (active) setCoreCasePhotos(items); })
+      .catch(err => { if (active) setCoreCasePhotosError(err instanceof Error ? err.message : "Core-bilder kunne ikke lastes."); });
+    return () => { active = false; };
+  }, [inquiryId]);
+
   const fetchFieldStatus = async () => {
     if (!inquiryId) return;
 
@@ -3586,6 +3615,36 @@ export default function InquiryDetail({
                       <button type="button" onClick={() => setOverviewInlineMedia("overview")} className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800">Tilbake til oversikt</button>
                     </div>
                     {/* TLV_ADMIN_PHOTOS_INLINE_V2 */}
+                    <div className="space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
+                      <div>
+                        <h4 className="text-sm font-bold text-white">Importerte prosjektbilder fra Perun Core ({coreCasePhotos.length})</h4>
+                        <p className="mt-1 text-xs text-slate-400">
+                          Bildene tilhører dette TLV-prosjektet og er kun tilgjengelige for administrator.
+                          De er ikke automatisk godkjent for kundevisning eller markedsføring.
+                        </p>
+                      </div>
+                      {coreCasePhotosError && (
+                        <p role="alert" className="text-xs text-amber-300">{coreCasePhotosError}</p>
+                      )}
+                      {coreCasePhotos.length > 0 ? (
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                          {coreCasePhotos.map(photo => (
+                            <a key={photo.id} href={corePhotoUrl(photo.id)} target="_blank"
+                              rel="noopener noreferrer"
+                              className="overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
+                              <img src={corePhotoUrl(photo.id)} alt={photo.caption || `Prosjektbilde #${photo.id}`}
+                                loading="lazy" className="h-40 w-full object-cover" />
+                              <div className="space-y-1 p-3">
+                                <p className="break-words text-xs text-white">{photo.caption || `Bilde #${photo.id}`}</p>
+                                <p className="text-[11px] text-slate-400">Core-bilde #{photo.id} · Kun administrator</p>
+                              </div>
+                            </a>
+                          ))}
+                        </div>
+                      ) : !coreCasePhotosError ? (
+                        <p className="text-xs text-slate-400">Ingen importerte Core-bilder registrert på saken.</p>
+                      ) : null}
+                    </div>
                     <AdminPhotoVisibility inquiryId={inquiryId} photos={photos} />
                     <div className="space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
                       <h4 className="text-xs font-bold text-slate-100">Bilder sendt inn av kunden</h4>
@@ -3668,7 +3727,14 @@ export default function InquiryDetail({
                 )}
                 <div className={showBrregInline || showDocumentsInOverview || overviewInlineMedia !== "overview" ? "hidden" : "grid gap-3 p-4 md:grid-cols-2"}>
                   <div className="rounded-xl border border-slate-700/70 bg-slate-950/40 p-4"><div className="flex items-center justify-between"><h3 className="text-sm font-bold">Siste dokumenter</h3><button type="button" onClick={() => { setShowDocumentsInOverview(true); setShowBrregInline(false); }} className="text-xs font-semibold text-cyan-300">Vis alle →</button></div><div className="mt-4 space-y-2">{report && <button type="button" onClick={() => setAdminCaseTab("reports")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" />Rapport 1 · {reportStatusLabel(report.status)}</button>}{caseOffers.slice().sort((a,b)=>b.id-a.id).slice(0,2).map(o=><button type="button" key={o.id} onClick={() => setAdminCaseTab("offer")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" /><span className="min-w-0 truncate">{o.offer_number || `Tilbud #${o.id}`} · {o.status}</span></button>)}{!report && caseOffers.length===0 && <p className="text-xs text-slate-400">Ingen dokumenter registrert</p>}</div></div>
-                  <CasePhotoGallery key={inquiryId} images={photos.filter((photo) => Boolean(photo.photo_url)).map((photo) => ({ id: photo.id, src: apiAssetUrl(photo.photo_url), caption: photo.caption_text }))} />
+                  <div className="min-w-0">
+                    <CasePhotoGallery key={inquiryId} images={[
+                      ...photos.filter(photo => Boolean(photo.photo_url)).map(photo => ({ id: photo.id, src: apiAssetUrl(photo.photo_url), caption: photo.caption_text })),
+                      ...coreCasePhotos.map(photo => ({ id: -photo.id, src: corePhotoUrl(photo.id), caption: photo.caption || "Importert prosjektbilde" })),
+                    ]} />
+                    {coreCasePhotos.length > 0 && <p className="mt-2 text-[11px] text-slate-400">Inkluderer {coreCasePhotos.length} importerte Core-bilder · kun administrator</p>}
+                    {coreCasePhotosError && <p role="alert" className="mt-2 text-xs text-amber-300">{coreCasePhotosError}</p>}
+                  </div>
                 </div>
               </div>
             </div>
@@ -5559,6 +5625,24 @@ export default function InquiryDetail({
                     </p>
                   )}
                 </div>
+
+                {(coreCasePhotos.length > 0 || coreCasePhotosError) && (
+                  <div className="space-y-3 border-t border-slate-800 pt-4">
+                    <h4 className="text-sm font-bold text-white">Importerte bilder fra Perun Core ({coreCasePhotos.length})</h4>
+                    <p className="text-xs text-slate-400">Administratorvisning · bildene er ikke automatisk synlige for kunden. Opprinnelig opptaksdato er ikke bekreftet.</p>
+                    {coreCasePhotosError && <p role="alert" className="text-xs text-amber-300">{coreCasePhotosError}</p>}
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {coreCasePhotos.map(photo => (
+                        <a key={photo.id} href={corePhotoUrl(photo.id)} target="_blank" rel="noopener noreferrer"
+                          className="overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
+                          <img src={corePhotoUrl(photo.id)} alt={photo.caption || "Core-bilde"}
+                            loading="lazy" className="h-44 w-full object-cover"/>
+                          <p className="break-words p-3 text-xs text-slate-200">{photo.caption || `Core-bilde #${photo.id}`}</p>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {photos.length > 0 && (
                   <div className="space-y-3 border-t border-slate-800 pt-4">
