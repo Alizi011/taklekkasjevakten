@@ -7494,8 +7494,8 @@ if (from < earliestDate) {
                 <section className="rounded-xl border border-emerald-500/30 bg-emerald-500/[0.04] p-4">
                   <h3 className="text-sm font-black text-white">Lekkasjesøk utført – registrer utførelsesdato</h3>
                   <p className="mt-2 text-xs text-slate-300">
-                    Prosjektansvarlig må logge inn i sin egen portal for å bekrefte utført arbeid og dato.
-                    Administratorforhåndsvisningen er skrivebeskyttet.
+                    Datoen registreres av administrator fra sakens Sjekklister-fane.
+                    Denne forhåndsvisningen er skrivebeskyttet.
                   </p>
                 </section>
               ) : (
@@ -7503,7 +7503,7 @@ if (from < earliestDate) {
                   inquiryId={normalizeInquiryId(overviewInquiry.id)}
                   onStateChange={onLeakCompletionStateChange}
                 />
-              )))}
+              ))}
 
                         {!isDigitalInspection &&
               fieldWorkspaceTab === "oversikt" &&
