@@ -2335,6 +2335,7 @@ export default function ProjectManagerDashboard({
   }>>([]);
   const [quickAgreementTaskId, setQuickAgreementTaskId] = useState<number | null>(null);
   const isRetrospectiveTask = (task: { title: string }) =>
+    task.title === "Fullfør manglende sjekkliste" ||
     task.title === "Etterregistrer sjekkliste og Rapport 1";
   const [coreTasksError, setCoreTasksError] = useState("");
   const [coreTasksLoading, setCoreTasksLoading] = useState(true);
