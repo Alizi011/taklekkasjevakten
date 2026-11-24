@@ -7,7 +7,7 @@ import ProjectManagerHeritage from "../components/project-manager/ProjectManager
 import InquiryWorkflowOverview from "../components/project-manager/InquiryWorkflowOverview";
 import ProjectManagerReportApproval from "../components/ProjectManagerReportApproval";
 import NewManualInquiryModal from "../components/NewManualInquiryModal";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -47,6 +47,7 @@ import {
 } from "lucide-react";
 import ChecklistManager from "../components/checklist/ChecklistManager";
 import ProjectManagerRetrospectivePhotos from "../components/ProjectManagerRetrospectivePhotos";
+import ProjectManagerLeakSearchCompletion from "../components/ProjectManagerLeakSearchCompletion";
 import { isActiveCustomerMessageNotification } from "../lib/customerMessageAlerts";
 import PhotoWithAudioNote from "../components/PhotoWithAudioNote";
 import LiveInspectionRoom from "../components/LiveInspectionRoom";
@@ -2205,6 +2206,14 @@ export default function ProjectManagerDashboard({
   const [editingFieldSchedule, setEditingFieldSchedule] = useState(false);
   const [fieldWorkspaceTab, setFieldWorkspaceTab] =
     useState<FieldWorkspaceTab>("oversikt");
+  const [leakCompletionByInquiry, setLeakCompletionByInquiry] = useState<
+    Record<number, "loading" | "not_completed" | "completed" | "error">
+  >({});
+  const onLeakCompletionStateChange = useCallback((inquiryId: number,
+    status: "loading" | "not_completed" | "completed" | "error") => {
+    setLeakCompletionByInquiry(previous =>
+      previous[inquiryId] === status ? previous : { ...previous, [inquiryId]: status });
+  }, []);
   const [offerGeneratorOpen, setOfferGeneratorOpen] = useState(false);
   const [offerGeneratorService, setOfferGeneratorService] =
     useState<OfferService>("lekkasjesok");
@@ -7480,6 +7489,19 @@ if (from < earliestDate) {
 
                         {!isDigitalInspection &&
               fieldWorkspaceTab === "oversikt" &&
+              fieldServiceForInquiry(overviewInquiry) === "lekkasjesok" &&
+              !onBackToAdmin && (
+                <ProjectManagerLeakSearchCompletion
+                  inquiryId={normalizeInquiryId(overviewInquiry.id)}
+                  onStateChange={onLeakCompletionStateChange}
+                />
+              )}
+
+                        {!isDigitalInspection &&
+              fieldWorkspaceTab === "oversikt" &&
+              !initialFieldworkFinished &&
+              (fieldServiceForInquiry(overviewInquiry) !== "lekkasjesok" ||
+                leakCompletionByInquiry[normalizeInquiryId(overviewInquiry.id)] === "not_completed") &&
               String(overviewInquiry.stage || "").toLowerCase() === "utfonring_felt" &&
               ["tildelt_prosjektansvarlig", "tilbud_sendt"].includes(
                 overviewInquiryStatus
