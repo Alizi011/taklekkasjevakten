@@ -4543,12 +4543,7 @@ export default function CustomerDashboard({
               </div>
 
 
-          {factualTimeline ? (
-            <div className="mt-6 space-y-4" data-testid="customer-factual-timeline">
-              {(actualLeakDate || oralInitial || reportPublished || initialFieldService === "lekkasjesok") && renderFactualPhase(1, "Undersøkelse og rapport", phaseOne)}
-              {(oralFollowup || actualWorkLabel || completionReportPublished) && renderFactualPhase(2, workName + " og dokumentasjon", phaseTwo)}
-            </div>
-          ) : (
+          {!factualTimeline && (
           <div className={followupOfferAccepted ? "mt-6 min-w-0 rounded-t-2xl border border-b-0 border-slate-700/70 bg-slate-900/40 p-4" : "mt-6 min-w-0 rounded-2xl border border-slate-700/70 bg-slate-900/40 p-4"}>
             <div className="mb-4 flex items-center justify-between gap-4">
               <div>
@@ -4677,6 +4672,12 @@ export default function CustomerDashboard({
                   : "Du kan følge status, avtaler og dokumentasjon fra menyen.")}
               </p>
 
+              {factualTimeline && (
+                <div className="mt-6 space-y-4" data-testid="customer-factual-timeline">
+                  {(actualLeakDate || oralInitial || reportPublished || initialFieldService === "lekkasjesok") && renderFactualPhase(1, "Undersøkelse og rapport", phaseOne)}
+                  {(oralFollowup || actualWorkLabel || completionReportPublished) && renderFactualPhase(2, workName + " og dokumentasjon", phaseTwo)}
+                </div>
+              )}
               {showFactualNext && (
                 <div className="mt-5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
                   <div className="flex items-center gap-2 text-cyan-200"><Info className="h-4 w-4"/><p className="text-xs font-bold">Prosjektansvarlig følger opp</p></div>
