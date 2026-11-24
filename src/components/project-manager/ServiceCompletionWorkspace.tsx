@@ -60,6 +60,9 @@ interface CompletionData {
   status?: string | null;
   work_summary?: string | null;
   warranty_start_date?: string | null;
+  warranty_years?: number | null;
+  source_offer_id?: number | null;
+  completed_at?: string | null;
   warranty_notes?: string | null;
 }
 
@@ -76,6 +79,7 @@ interface Props {
   employeeId?: number | null;
   employeeName?: string | null;
   onFinished?: () => void;
+  historicalWork?: { work_type: "service" | "vedlikehold" | "varig_utbedring"; started_on: string; completed_on: string };
 }
 
 const boolValue = (value: unknown) => Boolean(Number(value));
@@ -156,7 +160,10 @@ export default function ServiceCompletionWorkspace({
   employeeId = null,
   employeeName = null,
   onFinished,
+  historicalWork,
 }: Props) {
+  const historical = Boolean(historicalWork);
+  const actualWorkType = historicalWork?.work_type === "varig_utbedring" ? "varig_utbedring" : "service";
   const reportItems = useMemo(() => extractRecommendedItems(reportText), [reportText]);
 
   const [completion, setCompletion] = useState<CompletionData | null>(null);
@@ -265,6 +272,8 @@ export default function ServiceCompletionWorkspace({
     return null;
   };
 
+  const normalizeItem = (item: WorkItem): WorkItem => historical ? { ...item, result_status: item.result_status || "ikke_vurdert", result_tg: item.result_tg || "ikke_vurdert" } : normalizeWorkItem(item);
+
   const load = async () => {
     setLoading(true);
     setError("");
@@ -281,7 +290,7 @@ export default function ServiceCompletionWorkspace({
 
       const savedItems: WorkItem[] = Array.isArray(data.items)
         ? data.items.map((item: any) =>
-            normalizeWorkItem({
+            normalizeItem({
               ...item,
               item_status: item.item_status || "ikke_vurdert",
               result_status: item.result_status || "ikke_vurdert",
@@ -402,6 +411,7 @@ export default function ServiceCompletionWorkspace({
   };
 
   const setExecutionStatus = (index: number, status: ItemStatus) => {
+    if (historical) { patchItem(index, { item_status: status, result_status: "ikke_vurdert", result_tg: "ikke_vurdert" }); return; }
     if (status === "utfort") {
       // Standard ved utbedring/reparasjon: TG1.
       // Hvis prosjektansvarlig senere velger "Erstattet", settes TG0 automatisk.
@@ -439,6 +449,7 @@ export default function ServiceCompletionWorkspace({
   };
 
   const setResultStatus = (index: number, status: ResultStatus) => {
+    if (historical) { patchItem(index, { result_status: status, result_tg: "ikke_vurdert" }); return; }
     const automaticTg: ResultTg =
       status === "erstattet"
         ? "TG0"
@@ -505,14 +516,15 @@ export default function ServiceCompletionWorkspace({
         action: "save_completion",
         completion_id: completion?.id || null,
         inquiry_id: inquiryId,
-        work_type: "service",
-        completed_at: null,
+        work_type: actualWorkType,
+        ...(historical ? { source_offer_id: completion?.source_offer_id ?? null } : {}),
+        completed_at: historical ? historicalWork?.completed_on + " 00:00:00" : null,
         completed_by_employee_id: employeeId,
         completed_by_name: employeeName,
         work_summary: "Arbeid registrert mot anbefalte tiltak i publisert rapport.",
         additional_work: generalComment || null,
         deviations: null,
-        warranty_years: 5,
+        warranty_years: historical ? (completion?.warranty_years ?? 0) : 5,
         warranty_start_date: completion?.warranty_start_date || null,
         warranty_notes: warrantyNotes || null,
         status: "utkast",
@@ -535,7 +547,7 @@ export default function ServiceCompletionWorkspace({
         action: "save_items",
         completion_id: completionId,
         items: items.map((rawItem, index) => {
-          const normalized = normalizeWorkItem(rawItem);
+          const normalized = normalizeItem(rawItem);
           return {
             source_checklist_item_id:
               normalized.source_checklist_item_id || null,
@@ -646,10 +658,10 @@ export default function ServiceCompletionWorkspace({
     setError("");
 
     try {
-      const completedAt = finish
+      const completedAt = historicalWork ? historicalWork.completed_on + " 00:00:00" : finish
         ? new Date().toISOString().slice(0, 19).replace("T", " ")
         : null;
-      const warrantyStartDate = finish
+      const warrantyStartDate = historical ? completion?.warranty_start_date || null : finish
         ? new Date().toISOString().slice(0, 10)
         : completion?.warranty_start_date || null;
 
@@ -665,7 +677,8 @@ export default function ServiceCompletionWorkspace({
           action: "save_completion",
           completion_id: completion?.id || null,
           inquiry_id: inquiryId,
-          work_type: "service",
+          work_type: actualWorkType,
+        ...(historical ? { source_offer_id: completion?.source_offer_id ?? null } : {}),
           completed_at: completedAt,
           completed_by_employee_id: employeeId,
           completed_by_name: employeeName,
@@ -682,7 +695,7 @@ export default function ServiceCompletionWorkspace({
             )
               ? "Se tiltaksposter med status delvis eller ikke utført."
               : null,
-          warranty_years: 5,
+          warranty_years: historical ? (completion?.warranty_years ?? 0) : 5,
           warranty_start_date: warrantyStartDate,
           warranty_notes: warrantyNotes || null,
           status: finish ? "arbeid_ferdig" : "utkast",
@@ -705,7 +718,7 @@ export default function ServiceCompletionWorkspace({
           action: "save_items",
           completion_id: completionId,
           items: items.map((rawItem, index) => {
-            const item = normalizeWorkItem(rawItem);
+            const item = normalizeItem(rawItem);
 
             return {
               source_checklist_item_id:
@@ -775,7 +788,7 @@ export default function ServiceCompletionWorkspace({
     }
   };
 
-  const normalizedItems = items.map(normalizeWorkItem);
+  const normalizedItems = items.map(normalizeItem);
 
   const incompleteItems = normalizedItems.filter(
     (item) =>
@@ -806,7 +819,7 @@ export default function ServiceCompletionWorkspace({
     : 0;
 
   const isItemComplete = (item: WorkItem) => {
-    const normalized = normalizeWorkItem(item);
+    const normalized = normalizeItem(item);
     return (
       normalized.item_status !== "ikke_vurdert" &&
       normalized.result_status !== "ikke_vurdert" &&
@@ -941,7 +954,7 @@ export default function ServiceCompletionWorkspace({
             <div className="space-y-2.5">
               {items.map((item, index) => {
                 const active = index === activeItemIndex;
-                const normalized = normalizeWorkItem(item);
+                const normalized = normalizeItem(item);
                 const docs = documentationForItem(item);
                 const complete = isItemComplete(item);
                 const currentPendingImage =
@@ -1505,9 +1518,9 @@ export default function ServiceCompletionWorkspace({
                 <div className="flex items-start gap-3">
                   <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-black text-white">5 års garanti på utført arbeid</p>
+                    <p className="text-xs font-black text-white">{historical ? "Eksisterende garantivilkår beholdes" : "5 års garanti på utført arbeid"}</p>
                     <p className="mt-1 text-[10px] leading-4 text-slate-500">
-                      Garantistart settes automatisk til datoen arbeidet markeres ferdig.
+                      {historical ? "Etterregistrering fastsetter ikke ny garanti eller garantistart." : "Garantistart settes automatisk til datoen arbeidet markeres ferdig."}
                     </p>
                     <input
                       value={warrantyNotes}
@@ -1571,7 +1584,7 @@ export default function ServiceCompletionWorkspace({
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-black text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-35 sm:flex-none"
               >
                 <CheckCircle2 className="h-4 w-4" />
-                Marker arbeid ferdig
+                {historical ? "Fullfør kontrolliste" : "Marker arbeid ferdig"}
               </button>
             </div>
           </div>
