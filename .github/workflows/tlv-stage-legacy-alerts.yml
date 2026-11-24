@@ -1,0 +1,106 @@
+name: Stage TLV legacy-message notification fix (no publication)
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/tlv-stage-legacy-alerts.yml
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: tlv-production-operations
+  cancel-in-progress: false
+jobs:
+  stage-and-backup:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    env:
+      RELEASE_RUN_ID: '45369023393'
+      RELEASE_SHA: '36a2c27b68186da62c5249d8941b88387156ad21'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify immutable candidate run, repo, commit and successful release build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID" > /tmp/tlv-release-run.json
+          jq -e --arg repo "$GITHUB_REPOSITORY" --arg sha "$RELEASE_SHA" '
+            .conclusion == "success" and
+            .event == "push" and
+            .name == "TLV legacy message alerts release package (NO deployment)" and
+            .head_branch == "fix/tlv-legacy-customer-message-alerts-20261124" and
+            .head_sha == $sha and
+            ((.head_repository.full_name | ascii_downcase) == ($repo | ascii_downcase))
+          ' /tmp/tlv-release-run.json >/dev/null
+          echo "Pinned successful candidate verified: $RELEASE_SHA"
+      - name: Download pinned, non-production frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tlv-legacy-alerts-frontend-candidate
+          run-id: 45369023393
+          github-token: ${{ github.token }}
+          path: release
+      - name: Validate artifact checksum and strict static-file allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          test -s dist/index.html && test -s release-checksums.txt
+          test -z "$(find dist -type l -print -quit)"
+          test -z "$(find dist -type f -name '*.php' -print -quit)"
+          while IFS= read -r -d '' file; do
+            rel="${file#dist/}"
+            case "$rel" in
+              index.html|robots.txt|site.webmanifest) ;;
+              assets/index-*.js|assets/index-*.css)
+                [[ "$rel" =~ ^assets/index-[A-Za-z0-9_-]+\.(js|css)$ ]] || exit 1 ;;
+              *.png|*.jpg|*.jpeg|*.webp|*.svg|*.ico)
+                [[ "$rel" != */* ]] || exit 1 ;;
+              *) echo "::error::Unexpected release asset: $rel"; exit 1 ;;
+            esac
+          done < <(find dist -type f -print0)
+          test "$(find dist -type f | wc -l)" -eq "$(wc -l < release-checksums.txt)"
+          sha256sum --check release-checksums.txt >/dev/null
+          js="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' dist/index.html | head -1)"
+          css="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.css' dist/index.html | head -1)"
+          test -s "dist/$js" && test -s "dist/$css"
+          echo "Candidate hashes and index asset references verified"
+      - name: Configure production environment SSH credentials
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.TLV_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.TLV_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY" && test -n "$KNOWN_HOSTS"
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+      - name: Transfer candidate only to nonpublic one.com staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          STAGE="tlv-github-staging/$RELEASE_SHA"
+          "${SSH[@]}" "$REMOTE" "umask 077; test ! -e '$STAGE' && mkdir -p '$STAGE'"
+          rsync -az -e "ssh -i $HOME/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes" \
+            release/dist release/release-checksums.txt "$REMOTE:$STAGE/"
+          "${SSH[@]}" "$REMOTE" "cd '$STAGE' && sha256sum --check release-checksums.txt >/dev/null && test -s dist/index.html && echo STAGE_CHECKSUMS_VERIFIED"
+          echo "Nonpublic stage ready; no live frontend files changed"
+      - name: Run existing preflight and create verified rollback backup without publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          "${SSH[@]}" "$REMOTE" "TLV_ENABLE_LIVE=no TLV_FUNCTIONAL_TEST_OK=no bash -s -- 'preflight' '$RELEASE_SHA' ''" \
+            < .github/scripts/tlv-frontend-deploy.sh
+          "${SSH[@]}" "$REMOTE" "TLV_ENABLE_LIVE=no TLV_FUNCTIONAL_TEST_OK=no bash -s -- 'backup' '$RELEASE_SHA' ''" \
+            < .github/scripts/tlv-frontend-deploy.sh
+          echo "STAGING_AND_ROLLBACK_BACKUP_COMPLETE - LIVE_SITE_UNCHANGED"
