@@ -142,9 +142,21 @@ jobs:
           REMOTE="c2d9sf1au_ssh@ssh.c2d9sf1au.service.one"
           SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
           STAGE="tlv-github-staging/$RELEASE_SHA"
-          "${SSH[@]}" "$REMOTE" "umask 077; test ! -e '$STAGE' && mkdir -p '$STAGE'"
-          rsync -az -e "ssh -i $HOME/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes" \
-            release/dist release/release-checksums.txt "$REMOTE:$STAGE/"
+          stage_state="$("${SSH[@]}" "$REMOTE" "if test -L '$STAGE'; then exit 1; elif test -d '$STAGE'; then echo existing; elif test -e '$STAGE'; then exit 1; else umask 077; mkdir -p '$STAGE'; echo created; fi")"
+          case "$stage_state" in
+            created)
+              rsync -az -e "ssh -i $HOME/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes" \
+                release/dist release/release-checksums.txt "$REMOTE:$STAGE/"
+              ;;
+            existing)
+              echo "Existing immutable staging directory found; verifying against candidate"
+              ;;
+            *) echo "::error::Unexpected staging state"; exit 1 ;;
+          esac
+          "${SSH[@]}" "$REMOTE" "cat '$STAGE/release-checksums.txt'" | cmp -s - release/release-checksums.txt || {
+            echo "::error::Existing stage manifest differs from verified candidate; no overwrite permitted"
+            exit 1
+          }
           "${SSH[@]}" "$REMOTE" "cd '$STAGE' && sha256sum --check release-checksums.txt >/dev/null && test -s dist/index.html && echo STAGE_CHECKSUMS_VERIFIED"
           echo "Nonpublic stage ready; no live frontend files changed"
       - name: Preflight staged files
