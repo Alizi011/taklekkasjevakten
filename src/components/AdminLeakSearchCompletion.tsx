@@ -15,14 +15,12 @@ export default function AdminLeakSearchCompletion({ inquiryId }: { inquiryId: nu
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [showChecklistRequest, setShowChecklistRequest] = useState(false);
 
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
     setLoading(true);
     setCompletion(null);
-    setShowChecklistRequest(false);
     setError("");
     setNotice("");
     void fetch(apiUrl(`/admin_leak_search_completion.php?inquiry_id=${encodeURIComponent(String(inquiryId))}`), {
@@ -81,11 +79,7 @@ export default function AdminLeakSearchCompletion({ inquiryId }: { inquiryId: nu
               Lekkasjesøk utført {format(completion.performed_on)}
             </p>
             <p className="text-xs text-slate-400">Registrert {completion.recorded_at} · administrator</p>
-            <button type="button" onClick={() => setShowChecklistRequest(v => !v)}
-              className="rounded-lg bg-amber-400 px-4 py-2.5 text-xs font-black text-slate-950">
-              {showChecklistRequest ? "Skjul etterspørsel" : "Etterspør sjekkliste"}
-            </button>
-            {showChecklistRequest && <AdminRetrospectiveChecklistTask inquiryId={inquiryId}/>}
+            <AdminRetrospectiveChecklistTask inquiryId={inquiryId}/>
           </div>
         ) : !error ? (
           <div className="space-y-3">
