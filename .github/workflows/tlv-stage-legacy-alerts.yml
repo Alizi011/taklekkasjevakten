@@ -16,8 +16,8 @@ jobs:
     environment: production
     timeout-minutes: 20
     env:
-      RELEASE_RUN_ID: '45369023393'
-      RELEASE_SHA: '36a2c27b68186da62c5249d8941b88387156ad21'
+      RELEASE_RUN_ID: '45370343194'
+      RELEASE_SHA: '372342c777e33e5dc4e1e4f9962e07e79a16f41a'
     steps:
       - uses: actions/checkout@v4
       - name: Verify immutable candidate run, repo, commit and successful release build
@@ -40,7 +40,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: tlv-legacy-alerts-frontend-candidate
-          run-id: 45369023393
+          run-id: 45370343194
           github-token: ${{ github.token }}
           path: release
       - name: Validate artifact checksum and strict static-file allowlist
