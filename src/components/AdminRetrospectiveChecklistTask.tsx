@@ -60,7 +60,7 @@ export default function AdminRetrospectiveChecklistTask({ inquiryId }: { inquiry
   }, [refresh]);
 
   const createTask = async () => {
-    if (saving || task || !workDate || reason.trim().length < 15) return;
+    if (saving || task) return;
     setSaving(true);
     setError("");
     setMessage("");
@@ -91,10 +91,9 @@ export default function AdminRetrospectiveChecklistTask({ inquiryId }: { inquiry
     <section className="space-y-4 rounded-xl border border-amber-500/35 bg-amber-500/[0.04] p-4"
       aria-label="Etterregistrering av sjekkliste">
       <div>
-        <h4 className="text-sm font-black text-white">Etterregistrering av utført oppdrag</h4>
+        <h4 className="text-sm font-black text-white">Fullfør manglende sjekkliste</h4>
         <p className="mt-1 text-xs leading-5 text-slate-300">
-          Be registrert prosjektansvarlig komplettere manglende sjekkliste i ettertid,
-          før Rapport 1 sendes til faglig godkjenning. Dette er ikke ny feltkontroll.
+          Tildel prosjektansvarlig oppgaven med å fylle ut den eksisterende sjekklisten. Allerede lagrede punkter og vedlegg beholdes.
         </p>
       </div>
       {loading ? <p className="text-xs text-slate-300">Kontrollerer eksisterende oppgaver …</p> :
@@ -112,26 +111,25 @@ export default function AdminRetrospectiveChecklistTask({ inquiryId }: { inquiry
         ) : !error ? (
           <div className="grid gap-3">
             <label className="space-y-1 text-xs font-semibold text-white">
-              Oppgitt dato for utført arbeid
+              Dato for utført arbeid (valgfritt)
               <input type="date" value={workDate} onChange={e => setWorkDate(e.target.value)}
                 max={new Date().toLocaleDateString("en-CA")}
                 className="block w-full max-w-xs rounded-lg border border-slate-600 bg-slate-950 p-2 text-white"/>
             </label>
             <label className="space-y-1 text-xs font-semibold text-white">
-              Hvorfor etterregistreres kontrollen, og hvilket grunnlag finnes?
+              Merknad til prosjektansvarlig (valgfritt)
               <textarea value={reason} onChange={e => setReason(e.target.value)}
                 rows={3} maxLength={2000}
-                placeholder="Beskriv allerede utført arbeid, tilgjengelige bilder/notater og manglende registrering ..."
+                placeholder="For eksempel: Sjekklisten mangler etter tidligere utført lekkasjesøk. Bruk eksisterende bilder og arbeidsnotater."
                 className="block w-full rounded-lg border border-slate-600 bg-slate-950 p-3 text-white"/>
             </label>
             <p className="text-[11px] text-amber-200">
-              Arbeidsdatoen oppgis historisk. Opprettelsestidspunktet blir registrert av serveren.
-              Ikke oppgi udokumenterte observasjoner som bekreftede funn.
+              Oppgaven opprettes med dagens dato. Dersom arbeidsdatoen er ukjent, kan prosjektansvarlig avklare den når sjekklisten fylles ut.
             </p>
             <button type="button" onClick={() => void createTask()}
-              disabled={saving || !workDate || reason.trim().length < 15}
+              disabled={saving}
               className="w-fit rounded-lg bg-amber-400 px-4 py-2.5 text-xs font-black text-slate-950 disabled:opacity-40">
-              {saving ? "Tildeler …" : "Be prosjektansvarlig etterregistrere"}
+              {saving ? "Tildeler …" : "Tildel etterregistrering"}
             </button>
           </div>
         ) : null}
