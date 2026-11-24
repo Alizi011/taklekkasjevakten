@@ -1,5 +1,4 @@
-import AdminWorkOverride, { type WorkOverride, type PhoneAcceptance } from "./AdminWorkOverride";
-import { useState } from "react";
+import type { WorkOverride } from "./AdminWorkOverride";
 import {
   CheckCircle2,
   Clock3,
@@ -21,9 +20,7 @@ type Props = {
   onOpenOffer: () => void;
   onOpenPlanning?: () => void;
   onOpenReport2?: () => void;
-  inquiryId?: number;
-  onAcceptance?: (value: PhoneAcceptance | null) => void;
-  onActualWork?: (value: WorkOverride | null) => void;
+  actualWorkOverride?: WorkOverride | null;
 };
 
 export default function DirectOfferCaseProcess({
@@ -31,11 +28,9 @@ export default function DirectOfferCaseProcess({
   onOpenOffer,
   onOpenPlanning,
   onOpenReport2,
-  inquiryId,
-  onAcceptance,
-  onActualWork,
+  actualWorkOverride = null,
 }: Props) {
-  const [actualWork, setActualWork] = useState<WorkOverride | null>(null);
+  const actualWork = actualWorkOverride;
   const status = offer.status;
   const accepted = status === "akseptert";
   const rejected = status === "avvist";
@@ -178,7 +173,6 @@ export default function DirectOfferCaseProcess({
                 </p>
               </div>
             </div>
-            {index === 2 && inquiryId && <AdminWorkOverride key={inquiryId} inquiryId={inquiryId} onSaved={value=>{setActualWork(value);onActualWork?.(value);}} onAcceptance={onAcceptance}/>}
             </div>
           );
         })}
