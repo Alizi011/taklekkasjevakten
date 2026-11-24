@@ -3719,6 +3719,17 @@ export default function ProjectManagerDashboard({
     setDocumentOverview(Object.fromEntries(entries));
   };
 
+  // One-time migration baseline: conversations predating the 24 Nov 2026
+  // platform cutover remain in history, but do not create outstanding-action
+  // notifications. Any NEW customer message, including in an older thread,
+  // is still surfaced. No messages or read_at values are modified.
+  const customerNotificationCutover = "2026-11-24 00:00:00";
+  const isPostCutoverMessage = (message: { created_at?: unknown }): boolean => {
+    const created = String(message.created_at || "").replace("T", " ").slice(0, 19);
+    // Unknown dates must remain actionable rather than silently hidden.
+    return !created || created >= customerNotificationCutover;
+  };
+
   const fetchUnreadMessageCount = async (items: Inquiry[]) => {
     if (!Array.isArray(items) || items.length === 0) {
       setUnreadMessageCount(0);
@@ -3760,13 +3771,15 @@ export default function ProjectManagerDashboard({
               const threadId = Number(message.thread_id) || 0;
               if (threadId && message.sender_type === "customer" &&
                   message.recipient_type === "project_manager" &&
+                  isPostCutoverMessage(message) &&
                   Number(message.id) > (lastReplyByThread.get(threadId) || 0)) {
                 pendingByThread.set(threadId, [...(pendingByThread.get(threadId) || []), message]);
               }
             }
             const unread = visible.filter(
               (message: any) => message.sender_type === "customer" &&
-                message.recipient_type === "project_manager" && !message.read_at
+                message.recipient_type === "project_manager" &&
+                isPostCutoverMessage(message) && !message.read_at
             ).length;
             return {
               unread,
