@@ -3794,7 +3794,7 @@ export default function InquiryDetail({
                 />
               </div>
               {rightPanelTab === "override" && (
-                <AdminWorkOverride key={inquiryId} inquiryId={inquiryId} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>
+                <button type="button" onClick={() => setRightPanelTab("process")} className="mt-3 w-full rounded-xl border border-amber-500/35 p-3 text-xs font-bold text-amber-200">Åpne administrativ arbeidsregistrering i saksprosessen</button>
               )}
               {adminCaseTab === "overview" && rightPanelTab === "process" && (
                 <div role="tabpanel">
@@ -3816,10 +3816,8 @@ export default function InquiryDetail({
 {directProcessOffer ? (
   <DirectOfferCaseProcess
     key={inquiryId}
-    inquiryId={inquiryId}
     offer={directProcessOffer}
-    onActualWork={setActualWork}
-    onAcceptance={setPhoneAcceptance}
+    actualWorkOverride={actualWork}
     onOpenOffer={() => setAdminCaseTab("offer")}
   />
 ) : (
@@ -3850,7 +3848,7 @@ export default function InquiryDetail({
                 
   </>
 )}
-                  {!directProcessOffer && <AdminWorkOverride key={inquiryId} inquiryId={inquiryId} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>}
+                  <AdminWorkOverride key={inquiryId} inquiryId={inquiryId} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>
                   {actualWork && <div className="mt-4 rounded-xl border border-emerald-500/30 p-3"><p className="text-sm font-bold text-emerald-300">Arbeid utført · {formatDate(actualWork.completed_on)}</p><button type="button" onClick={()=>setAdminCaseTab("reports")} className="mt-2 text-xs font-bold text-cyan-300">Rapport 2 – Utførelsesrapport →</button></div>}
                   <div className="mt-6 space-y-4 border-t border-white/10 pt-5">
                   {(() => {
