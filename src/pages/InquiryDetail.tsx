@@ -1,7 +1,7 @@
 import AdminCaseOrganizations from "../components/AdminCaseOrganizations";
 import AdminPhotoVisibility from "../components/AdminPhotoVisibility";
 import AdminLeakSearchCompletion from "../components/AdminLeakSearchCompletion";
-import AdminWorkOverride from "../components/AdminWorkOverride";
+import AdminWorkOverride, { type WorkOverride, type PhoneAcceptance, phoneScopeLabels } from "../components/AdminWorkOverride";
 import AgreementPreviewButton from "@/components/AgreementPreviewButton";
 import AdminAgreementProgress from "../components/AdminAgreementProgress";
 import AdminAgreementSigningCaseNotice from "../components/AdminAgreementSigningCaseNotice";
@@ -466,6 +466,20 @@ export default function InquiryDetail({
   onPreviewTechnician,
 }: InquiryDetailProps) {
   const inquiryId = Number(inquiry.id);
+  const [actualLeakDate,setActualLeakDate]=useState<string|null>(null);
+  const [actualWork,setActualWork]=useState<WorkOverride|null>(null);
+  const [phoneAcceptance,setPhoneAcceptance]=useState<PhoneAcceptance|null>(null);
+  const [leakStatusError,setLeakStatusError]=useState("");
+  const originalLeakSearch=[inquiry.inquiry_type,inquiry.recommended_service].some(v=>String(v||"").toLowerCase()==="lekkasjesok");
+  useEffect(()=>{
+    const controller=new AbortController();
+    setActualLeakDate(null);setLeakStatusError("");setActualWork(null);setPhoneAcceptance(null);
+    if(originalLeakSearch) void fetch(apiUrl("/admin_leak_search_completion.php?inquiry_id="+inquiryId),{credentials:"include",cache:"no-store",signal:controller.signal})
+      .then(async res=>{const data=await res.json();if(!res.ok||!data.success)throw new Error(data.message||"Kunne ikke hente utførelsesdato.");if(!controller.signal.aborted)setActualLeakDate(data.completion?.performed_on||null);})
+      .catch(e=>{if(!controller.signal.aborted)setLeakStatusError(e instanceof Error?e.message:"Kunne ikke hente utførelsesdato.");});
+    return ()=>controller.abort();
+  },[inquiryId,originalLeakSearch]);
+
   const isDigitalBefaring = inquiry.stage === "digital_befaring";
   const orderedService = orderedServiceLabel(
     inquiry.inquiry_type || inquiry.type
@@ -3772,7 +3786,7 @@ export default function InquiryDetail({
                 />
               </div>
               {rightPanelTab === "override" && (
-                <AdminWorkOverride key={inquiryId} inquiryId={inquiryId}/>
+                <AdminWorkOverride key={inquiryId} inquiryId={inquiryId} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>
               )}
               {adminCaseTab === "overview" && rightPanelTab === "process" && (
                 <div role="tabpanel">
@@ -3815,17 +3829,19 @@ export default function InquiryDetail({
               {[inquiry.inquiry_type, inquiry.recommended_service].some(value => String(value || "").toLowerCase() === "lekkasjesok") && !isReportPublished && (
                 <button type="button" onClick={() => setAdminCaseTab("checklists")}
                   className="mt-3 w-full rounded-xl border border-emerald-500/35 bg-emerald-500/[0.06] px-4 py-3 text-left text-xs font-bold text-emerald-200 hover:bg-emerald-500/15">
-                  Registrer utført lekkasjesøk / etterspør sjekkliste
+                  {actualLeakDate ? "Lekkasjesøk utført – åpne sjekkliste" : "Registrer utført lekkasjesøk / etterspør sjekkliste"}
                 </button>
               )}
               <div className="mt-5 space-y-6 border-t border-white/10 pt-5">
-                <div className="flex gap-3"><CheckCircle2 className={`mt-0.5 h-5 w-5 shrink-0 ${isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{orderedService} {isReportPublished ? "gjennomført" : "bestilt"}</p><p className="mt-1 text-[11px] text-slate-400">{hasRecordedSchedule ? displayedSchedule : "Tidspunkt ikke registrert"}</p><button type="button" onClick={() => setAdminCaseTab("checklists")} className="mt-2 block text-left text-xs font-semibold text-cyan-300 hover:underline">Åpne sjekkliste →</button><button type="button" onClick={() => setAdminCaseTab("field")} className="mt-1 block text-left text-xs font-semibold text-cyan-300 hover:underline">Feltdokumentasjon →</button></div></div>
+                <div className="flex gap-3"><CheckCircle2 className={`mt-0.5 h-5 w-5 shrink-0 ${actualLeakDate || isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{orderedService} {actualLeakDate ? "utført" : isReportPublished ? "gjennomført" : "bestilt"}</p><p className="mt-1 text-[11px] text-slate-400">{actualLeakDate ? `Utført ${formatDate(actualLeakDate)}` : leakStatusError ? "Utførelsesstatus kunne ikke hentes" : hasRecordedSchedule ? displayedSchedule : "Tidspunkt ikke registrert"}</p><button type="button" onClick={() => setAdminCaseTab("checklists")} className="mt-2 block text-left text-xs font-semibold text-cyan-300 hover:underline">Åpne sjekkliste →</button><button type="button" onClick={() => setAdminCaseTab("field")} className="mt-1 block text-left text-xs font-semibold text-cyan-300 hover:underline">Feltdokumentasjon →</button></div></div>
                 <div className="flex gap-3"><FileCheck2 className={`mt-0.5 h-5 w-5 shrink-0 ${isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{isReportPublished ? "Rapport 1 publisert" : report ? `Rapport 1 – ${reportStatusLabel(report.status)}` : "Rapport 1 avventer"}</p><p className="mt-1 text-[11px] text-slate-400">{isReportPublished ? "Kvalitetssikret og publisert" : "Rapportstatus og behandling"}</p><button type="button" onClick={() => setAdminCaseTab("reports")} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">{report ? "Åpne rapport →" : "Åpne rapportarbeid →"}</button></div></div>
                 <div className="flex gap-3"><Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" /><div className="min-w-0"><p className="text-sm font-bold text-white">{isFollowupDecided ? followupStageTitle : "Videre oppfølging"}</p><p className="mt-1 text-[11px] text-slate-400">{isFollowupDecided ? followupStageDetail : isReportPublished ? "Avventer valg av tiltak" : "Etter rapportpublisering"}</p>{activeFollowupOffer?.offer_number && <p className="mt-1 text-[11px] text-slate-500">{activeFollowupOffer.offer_number} · {activeFollowupOffer.status}</p>}{activeFollowupOffer?.status === "utkast" && isReportPublished ? <button type="button" onClick={() => {setFollowupOfferForGenerator(activeFollowupOffer);setShowFollowupOfferGenerator(true);}} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">Åpne tilbudsutkast →</button> : isReportPublished ? <button type="button" onClick={() => activeFollowupOffer ? setAdminCaseTab("offer") : openFollowupSelection()} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">Administrer videre oppfølging →</button> : null}</div></div>
               </div>
                 
   </>
 )}
+                  {!directProcessOffer && <AdminWorkOverride key={inquiryId} inquiryId={inquiryId} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>}
+                  {actualWork && <div className="mt-4 rounded-xl border border-emerald-500/30 p-3"><p className="text-sm font-bold text-emerald-300">Arbeid utført · {formatDate(actualWork.completed_on)}</p><button type="button" onClick={()=>setAdminCaseTab("reports")} className="mt-2 text-xs font-bold text-cyan-300">Rapport 2 – Utførelsesrapport →</button></div>}
                   <div className="mt-6 space-y-4 border-t border-white/10 pt-5">
                   {(() => {
                     const current = acceptedRepairOffer;
@@ -3854,8 +3870,7 @@ export default function InquiryDetail({
                     ) : (
                       <div className="space-y-3">
                         <p className="text-[10px] font-black uppercase tracking-widest text-cyan-300">Avtaleoppfølging</p>
-                        <p className="text-sm font-bold text-white">Ingen akseptert utbedringstilbud registrert</p>
-                        <p className="text-xs text-slate-400">{caseOffers.length} tilbud i historikken. Avtaleoppfølging aktiveres når et utbedringstilbud er akseptert.</p>
+                        {phoneAcceptance ? <><p className="text-sm font-bold text-emerald-300">Muntlig kundeaksept registrert</p><p className="text-xs text-slate-300">{phoneScopeLabels[phoneAcceptance.scope]} · mottatt av {phoneAcceptance.received_by}{phoneAcceptance.accepted_on ? " · "+formatDate(phoneAcceptance.accepted_on) : ""}</p><p className="text-xs text-slate-400">Ingen digital utbedringstilbudsaksept registrert.</p></> : <><p className="text-sm font-bold text-white">Ingen digital utbedringstilbudsaksept registrert</p><p className="text-xs text-slate-400">Muntlig aksept kan registreres under Administrativ overstyring. {caseOffers.length} tilbud i historikken.</p></>}
                         <button type="button" onClick={() => setAdminCaseTab("offer")} className="text-xs font-bold text-cyan-300 hover:underline">Åpne tilbudshistorikk →</button>
                       </div>
                     );
