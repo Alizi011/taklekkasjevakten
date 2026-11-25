@@ -2884,6 +2884,8 @@ export default function CustomerDashboard({
   const originalWorkFinished = reportPublished || completionReportPublished;
   const actualProgress = inquiryData?.actual_progress;
   const actualLeakDate = actualProgress?.leak_performed_on || null;
+  const isLeakSearchReport = initialFieldService === "lekkasjesok" || Boolean(actualLeakDate);
+  const customerReportLabel = isLeakSearchReport ? "Lekkasjesøkrapport" : "Tilstandsrapport";
   const actualWork = actualProgress?.work;
   const oralScope = String(actualProgress?.phone_acceptance?.scope || "");
   const oralInitial = oralScope === "lekkasjesok" || oralScope === "lekkasjesok_og_service";
@@ -3903,7 +3905,7 @@ export default function CustomerDashboard({
                               <FileCheck2 className="h-5 w-5 text-emerald-300" />
                             </div>
                             <div>
-                              <p className="text-sm font-black text-white">Tilstandsrapport</p>
+                              <p className="text-sm font-black text-white">{customerReportLabel}</p>
                               <p className="mt-1 text-[11px] text-slate-400">
                                 Publisert {reportPublishedDate || "og tilgjengelig nå"}
                               </p>
@@ -4257,7 +4259,7 @@ export default function CustomerDashboard({
                       <div className="flex min-w-0 items-center gap-3">
                         <FileText className="h-5 w-5 shrink-0 text-emerald-300" />
                         <div className="min-w-0">
-                          <p className="text-xs font-black text-white">Tilstandsrapport</p>
+                          <p className="text-xs font-black text-white">{customerReportLabel}</p>
                           <p className="mt-1 text-[10px] text-slate-500">
                             Publisert {reportPublishedDate || ""}
                           </p>
@@ -4458,8 +4460,8 @@ export default function CustomerDashboard({
 
               {factualTimeline && reportPublished && (
                 <section className="mt-6 rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.06] p-4 md:p-5">
-                  <div className="flex items-start gap-3"><FileCheck2 className="mt-1 h-5 w-5 shrink-0 text-emerald-300"/><div><h3 className="text-sm font-black text-emerald-200">Rapporten fra undersøkelsen er klar!</h3><p className="mt-2 text-xs text-slate-300">Rapport 1 – Teknisk rapport{reportPublishedDate ? " · Publisert "+reportPublishedDate : ""}</p></div></div>
-                  <button type="button" onClick={() => openCustomerPortalView("documents")} className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-slate-950 hover:bg-emerald-300"><FileText className="h-4 w-4"/>Se rapporten</button>
+                  <div className="flex items-start gap-3"><FileCheck2 className="mt-1 h-5 w-5 shrink-0 text-emerald-300"/><div><h3 className="text-sm font-black text-emerald-200">{isLeakSearchReport ? "Rapporten fra lekkasjesøket er klar!" : "Rapporten fra undersøkelsen er klar!"}</h3><p className="mt-2 text-xs text-slate-300">Rapport 1 – {customerReportLabel}{reportPublishedDate ? " · Publisert "+reportPublishedDate : ""}</p></div></div>
+                  <button type="button" onClick={handleDownloadReport} className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-slate-950 hover:bg-emerald-300"><FileText className="h-4 w-4"/>Åpne rapport (PDF)</button>
                 </section>
               )}
               {/* DITT PROSJEKT - OVERSIKT */}
@@ -4690,7 +4692,7 @@ export default function CustomerDashboard({
                 <div className="mt-5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
                   <div className="flex items-center gap-2 text-cyan-200"><Info className="h-4 w-4"/><p className="text-xs font-bold">Prosjektansvarlig følger opp</p></div>
                   <p className="mt-2 text-[11px] leading-5 text-slate-400">Ingen handling kreves fra deg for dette steget nå.</p>
-                  {(reportPublished || completionReportPublished) && <button type="button" onClick={() => openCustomerPortalView("documents")} className="mt-3 flex items-center gap-2 text-xs font-bold text-cyan-300"><FileText className="h-4 w-4"/>Åpne dokumenter <ArrowRight className="h-3 w-3"/></button>}
+                  {completionReportPublished && <button type="button" onClick={handleDownloadCompletionReport} className="mt-3 flex items-center gap-2 text-xs font-bold text-cyan-300"><FileText className="h-4 w-4"/>Åpne utførelsesrapport (PDF)</button>}
                 </div>
               )}
               {(followupOfferAccepted || acceptedDirectFixedOffer) ? (
@@ -4802,14 +4804,14 @@ export default function CustomerDashboard({
                     Fyll ut opplysninger
                   </button>
                 )}
-                {reportPublished && !followupOfferAccepted && (
+                {reportPublished && !followupOfferAccepted && !factualTimeline && (
                   <button
                     type="button"
-                    onClick={() => openCustomerPortalView("documents")}
+                    onClick={handleDownloadReport}
                     className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs font-black text-emerald-200"
                   >
                     <FileText className="h-4 w-4" />
-                    Se rapport i dokumenter
+                    Åpne rapport (PDF)
                   </button>
                 )}
               </div>
@@ -5433,7 +5435,7 @@ export default function CustomerDashboard({
                     </p>
                     <p className="mt-2 text-xs text-slate-400">
                       {reportPublished
-                        ? "Tilstandsrapporten er ferdig og vises som hovedinnhold rett under fremdriften."
+                        ? customerReportLabel + " er ferdig og tilgjengelig i kundeportalen."
                         : "Rapporten blir tilgjengelig her når feltarbeid, dokumentasjon og kvalitetssikring er ferdig."}
                     </p>
                     {reportPublished && (
@@ -5796,7 +5798,7 @@ export default function CustomerDashboard({
 
                     <div>
                       <h2 className="text-2xl md:text-3xl font-black text-white">
-                        Tilstandsrapport
+                        {customerReportLabel}
                       </h2>
                       <p className="mt-1.5 max-w-2xl text-xs md:text-sm leading-6 text-slate-400">
                         Rapporten er ferdig kvalitetssikret og tilgjengelig i kundeportalen.
