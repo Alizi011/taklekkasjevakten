@@ -31,7 +31,7 @@ export default function HistoricalReport2Checklist({ inquiryId, address, adminPr
           setWork(data.work);
           setReportText(reportData.report?.admin_final || reportData.report?.ai_draft || "");
           const [completionRes,report2Res]=await Promise.all([
-            fetch(apiUrl("/work_completion.php?inquiry_id="+inquiryId),{credentials:"include",cache:"no-store",signal}),
+            fetch(apiUrl("/work_completion.php?inquiry_id="+inquiryId),{credentials:"omit",cache:"no-store",signal}),
             fetch(apiUrl("/completion_reports.php?inquiry_id="+inquiryId),{credentials:"include",cache:"no-store",signal})
           ]);
           const completion=await completionRes.json();
