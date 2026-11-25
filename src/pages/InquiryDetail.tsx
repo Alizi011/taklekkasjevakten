@@ -815,8 +815,17 @@ export default function InquiryDetail({
   }, [inquiryId]);
 
   const [adminSignaturePending, setAdminSignaturePending] = useState(false);
-  const [adminCaseTab, setAdminCaseTab] =
+  const [adminCaseTab, setAdminCaseTabValue] =
     useState<AdminCaseTab>(initialTab);
+  const [requestedReport, setRequestedReport] = useState<"rapport1" | "rapport2" | undefined>();
+  const setAdminCaseTab = (tab: AdminCaseTab) => {
+    setRequestedReport(undefined);
+    setAdminCaseTabValue(tab);
+  };
+  const openSpecificReport = (kind: "rapport1" | "rapport2") => {
+    setRequestedReport(kind);
+    setAdminCaseTabValue("reports");
+  };
   const [showBrregInline, setShowBrregInline] = useState(false);
   const [showDocumentsInOverview, setShowDocumentsInOverview] = useState(false);
   // Separate read-only tabs inside the existing case overview; do not switch adminCaseTab.
@@ -3849,7 +3858,7 @@ export default function InquiryDetail({
   </>
 )}
                   <AdminWorkOverride key={`admin-work-override-${inquiryId}`} inquiryId={inquiryId} projectManagerName={currentProjectManager?.name} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>
-                  {actualWork && <div className="mt-4 rounded-xl border border-emerald-500/30 p-3"><p className="text-sm font-bold text-emerald-300">Arbeid utført · {formatDate(actualWork.completed_on)}</p><button type="button" onClick={()=>setAdminCaseTab("reports")} className="mt-2 text-xs font-bold text-cyan-300">Rapport 2 – Utførelsesrapport →</button></div>}
+                  {actualWork && <div className="mt-4 rounded-xl border border-emerald-500/30 p-3"><p className="text-sm font-bold text-emerald-300">Arbeid utført · {formatDate(actualWork.completed_on)}</p><button type="button" onClick={()=>openSpecificReport("rapport2")} className="mt-2 text-xs font-bold text-cyan-300">Rapport 2 – Utførelsesrapport →</button></div>}
                   <div className="mt-6 space-y-4 border-t border-white/10 pt-5">
                   {(() => {
                     const current = acceptedRepairOffer;
@@ -5965,7 +5974,7 @@ export default function InquiryDetail({
 
         {!isDigitalBefaring && (
           <div id="reports" className={`${adminCaseTab === "reports" ? "" : "hidden"} scroll-mt-6`}>
-            <AdminReportReview inquiryId={inquiryId} onChanged={() => {
+            <AdminReportReview inquiryId={inquiryId} requestedReport={requestedReport} onBack={requestedReport ? () => setAdminCaseTab("overview") : undefined} onChanged={() => {
               setReportStatusBeforeRefresh(report?.status || null);
               void fetchFieldStatus();
             }} />
