@@ -5859,6 +5859,24 @@ if (from < earliestDate) {
   const reportReturned =
     report?.status === "returnert_til_prosjektansvarlig";
   const overviewInquiry = activeInquiry;
+  const [caseOralStatus, setCaseOralStatus] = useState<{ inquiryId: number; acceptance: { scope: string; accepted_on?: string | null } | null; work: { work_type: string; completed_on: string } | null } | null>(null);
+  useEffect(() => {
+    const id = Number(activeInquiryId || 0);
+    setCaseOralStatus(null);
+    if (!id) return;
+    const controller = new AbortController();
+    const preview = Boolean(onBackToAdmin);
+    const token = preview ? null : window.localStorage.getItem("taklekkasjevakten_project_manager_session");
+    if (!preview && !token) return () => controller.abort();
+    void fetch(apiUrl(preview ? `/admin_work_override.php?inquiry_id=${id}` : "/project_manager_work_override.php"),
+      preview ? { credentials: "include", cache: "no-store", signal: controller.signal } :
+        { method: "POST", cache: "no-store", signal: controller.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ inquiry_id: id, action: "status", session_token: token }) })
+      .then(async response => {
+        const data = await response.json();
+        if (!controller.signal.aborted && response.ok && data.success) setCaseOralStatus({ inquiryId: id, acceptance: data.acceptance || null, work: data.work || null });
+      }).catch(() => { /* Preserve existing status card when enrichment is unavailable. */ });
+    return () => controller.abort();
+  }, [activeInquiryId, onBackToAdmin]);
   const overviewInquiryStatus = overviewInquiry
     ? effectiveWorkflowStatus(overviewInquiry)
     : "";
@@ -7420,6 +7438,13 @@ if (from < earliestDate) {
                         const status = String(offer?.status || "").toLowerCase();
                         const proposal = workflow?.proposal;
                         const dateStatus = String(proposal?.status || "").toLowerCase();
+                        const oral = caseOralStatus?.inquiryId === normalizeInquiryId(overviewInquiry.id) ? caseOralStatus : null;
+                        const scope = oral?.acceptance?.scope || "";
+                        // Preserve actual digital offers; oral acceptance is shown only in their absence.
+                        const oralFollowup = !offer && ["service", "vedlikehold", "varig_utbedring", "lekkasjesok_og_service"].includes(scope);
+                        const oralWorkName = scope === "vedlikehold" ? "Vedlikehold" : scope === "varig_utbedring" ? "Utbedring" : "Servicearbeid";
+                        const matchingWork = oralFollowup && oral?.work && oral.work.work_type === (scope === "lekkasjesok_og_service" ? "service" : scope) ? oral.work : null;
+                        const report2Task = coreTasks.find(task => task.inquiry_id === normalizeInquiryId(overviewInquiry.id) && task.title === "Fullfør kontrolliste for Rapport 2" && task.status === "open");
 
                         return (
                           <div className="mt-3 space-y-3">
@@ -7436,19 +7461,19 @@ if (from < earliestDate) {
 
                             <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
                               <p className="text-[10px] font-bold uppercase text-cyan-300">
-                                Nytt utbedringstilbud
+                                {oralFollowup ? "Muntlig kundeaksept" : "Nytt utbedringstilbud"}
                               </p>
                               <p className="mt-1 text-sm font-bold text-white">
-                                {offer?.title || offer?.offer_number ||
-                                  "Oppfølgingstilbud ikke funnet"}
+                                {oralFollowup ? oralWorkName : offer?.title || offer?.offer_number || "Oppfølgingstilbud ikke funnet"}
                               </p>
                               <p className="mt-1 text-xs text-slate-300">
-                                {status === "akseptert" ? "Akseptert av kunden" :
+                                {oralFollowup ? "Muntlig akseptert" + (oral?.acceptance?.accepted_on ? " · " + oral.acceptance.accepted_on.split("-").reverse().join(".") : "") : status === "akseptert" ? "Akseptert av kunden" :
                                  status === "publisert" ? "Publisert – avventer kundens aksept" :
                                  status === "avvist" ? "Avslått" :
                                  status ? `Status: ${status}` :
                                  "Tilbudsstatus ikke tilgjengelig"}
                               </p>
+                              {matchingWork && <p className="mt-2 text-xs font-bold text-emerald-300">{oralWorkName} utført {matchingWork.completed_on.split("-").reverse().join(".")}</p>}
                             </div>
 
                             {status === "akseptert" && (
@@ -7506,7 +7531,7 @@ if (from < earliestDate) {
                                 />
                               ) : (
                                 <p className="mt-1 text-xs leading-5 text-white">
-                                  {status === "publisert"
+                                  {oralFollowup ? (report2Task ? report2Task.title : completionReport ? "Rapport 2 – " + reportStatusLabel(completionReport.status as ReportStatus) : matchingWork ? "Følg opp dokumentasjon av utført arbeid." : "Muntlig kundeaksept registrert.") : status === "publisert"
                                     ? "Avventer kundens aksept av utbedringstilbudet."
                                     : status === "akseptert" && dateStatus === "approved"
                                       ? "Følg opp arbeidsavtale og signering."
