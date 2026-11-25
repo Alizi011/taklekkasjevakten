@@ -1222,11 +1222,31 @@ export default function ServiceCompletionWorkspace({
                                     className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[10px] font-black text-blue-300 transition hover:bg-blue-500/15" 
                                   >
                                     <Camera className="h-3.5 w-3.5" />
-                                    + Bilde
+                                    Ta bilde
                                     <input
                                       type="file"
                                       accept="image/*"
                                       capture="environment"
+                                      className="hidden"
+                                      disabled={readOnly || Boolean(uploadingKey)}
+                                      onChange={(event) => {
+                                        const file = event.target.files?.[0];
+                                        if (file) {
+                                          setPendingImage({ itemIndex: index, file });
+                                        }
+                                        event.target.value = "";
+                                      }}
+                                    />
+                                  </label>
+
+                                  <label
+                                    className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[10px] font-black text-blue-300 transition hover:bg-blue-500/15" 
+                                  >
+                                    <Camera className="h-3.5 w-3.5" />
+                                    Velg fra bildebibliotek
+                                    <input
+                                      type="file"
+                                      accept="image/*"
                                       className="hidden"
                                       disabled={readOnly || Boolean(uploadingKey)}
                                       onChange={(event) => {
