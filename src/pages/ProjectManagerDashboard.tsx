@@ -2347,6 +2347,7 @@ export default function ProjectManagerDashboard({
     description?: string | null;
     status: string;
     on_hold?: boolean;
+    actual_work?: { work_type: string; completed_on: string } | null;
   }>>([]);
   const [quickAgreementTaskId, setQuickAgreementTaskId] = useState<number | null>(null);
   const isRetrospectiveTask = (task: { title: string }) =>
@@ -6598,7 +6599,11 @@ if (from < earliestDate) {
                                               {nextAction}
                                             </p>
                                             <p className="mt-1 text-xs text-slate-300">
-                                              {task.title === "Arbeidsavtale: fastsett oppstartsdato" ? (
+                                              {task.title === "Fullfør kontrolliste for Rapport 2" && task.actual_work?.completed_on ? (
+                                                <span className="text-emerald-300">
+                                                  {task.actual_work.work_type === "service" ? "Servicearbeid" : task.actual_work.work_type === "vedlikehold" ? "Vedlikehold" : task.actual_work.work_type === "varig_utbedring" ? "Utbedring" : "Arbeid"} utført {task.actual_work.completed_on.split("-").reverse().join(".")}
+                                                </span>
+                                              ) : task.title === "Arbeidsavtale: fastsett oppstartsdato" ? (
                                                 "Utbedringsarbeid · Oppstartsdato ikke fastsatt"
                                               ) : (
                                                 <>
