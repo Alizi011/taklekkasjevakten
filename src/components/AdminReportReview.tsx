@@ -147,6 +147,7 @@ interface AdminReportReviewProps {
   address?: string;
   onBack?: () => void;
   onChanged?: () => void;
+  requestedReport?: "rapport1" | "rapport2";
 }
 
 function statusLabel(status?: ReportStatus) {
@@ -373,12 +374,14 @@ export default function AdminReportReview({
   address,
   onBack,
   onChanged,
+  requestedReport,
 }: AdminReportReviewProps) {
   const [report, setReport] = useState<ReportData | null>(null);
   const [approvalLocked, setApprovalLocked] = useState(false);
   const [completionReport, setCompletionReport] =
     useState<CompletionReportData | null>(null);
   const [completionDraft, setCompletionDraft] = useState("");
+  const [completionLoadError, setCompletionLoadError] = useState("");
   const [reportApprovals, setReportApprovals] = useState<ReportApprovals>({});
   const [completionApprovals, setCompletionApprovals] = useState<ReportApprovals>({});
   const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
@@ -655,6 +658,7 @@ export default function AdminReportReview({
           ? completionData.report || null
           : null;
 
+      setCompletionLoadError(completionRes.ok && completionData.success ? "" : (completionData.message || "Kunne ikke hente Rapport 2."));
       setCompletionReport(nextCompletionReport);
       setCompletionDraft(
         nextCompletionReport?.admin_final ||
@@ -707,7 +711,7 @@ export default function AdminReportReview({
 
   useEffect(() => {
     if (inquiryId > 0) void loadReviewData();
-  }, [inquiryId]);
+  }, [inquiryId, requestedReport]);
 
   const loadReportApprovals = async (
     reportType: "rapport1" | "rapport2",
@@ -1756,7 +1760,22 @@ export default function AdminReportReview({
     );
   }
 
-  if (completionReportIsAdminFlow && completionReport) {
+  if (requestedReport === "rapport2" && (!completionReportIsAdminFlow || !completionReport)) {
+    return (
+      <div className="rounded-2xl border border-slate-700 bg-[#0b0f17] p-5 text-white" data-testid="admin-report2-status">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-black">Rapport 2 – Utførelsesrapport</h2>
+          {onBack && <button type="button" onClick={onBack} className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-bold">Tilbake til sak</button>}
+        </div>
+        {error || completionLoadError ? <p role="alert" className="mt-3 text-sm text-red-300">{error || completionLoadError}</p> :
+          completionReport ? <p className="mt-3 text-sm text-slate-300">Rapport 2: {statusLabel(completionReport.status)}. Rapporten er ennå ikke tilgjengelig for administrativ kvalitetssikring.</p> :
+          <p className="mt-3 text-sm text-slate-300">Rapport 2 er ikke opprettet ennå.</p>}
+        <button type="button" onClick={() => void loadReviewData()} className="mt-4 rounded-xl border border-cyan-500/30 px-4 py-2 text-xs font-bold text-cyan-200">Oppdater rapportstatus</button>
+      </div>
+    );
+  }
+
+  if (requestedReport !== "rapport1" && completionReportIsAdminFlow && completionReport) {
     const completionPdfSrc = completionReport.pdf_url
       ? apiAssetUrl(completionReport.pdf_url)
       : "";
