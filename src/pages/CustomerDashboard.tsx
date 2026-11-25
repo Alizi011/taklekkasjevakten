@@ -2947,22 +2947,20 @@ export default function CustomerDashboard({
   const renderFactualPhase = (number: number, heading: string, milestones: Milestone[]) => {
     const done = milestones.filter(item => item.state === "done").length;
     return (
-      <section data-testid={`actual-progress-phase-${number}`} className="overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-900/45">
-        <div className="flex items-center gap-3 border-b border-slate-700/60 bg-slate-800/30 p-4">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cyan-500/10 text-cyan-300">{number === 1 ? <ClipboardList className="h-5 w-5"/> : <Hammer className="h-5 w-5"/>}</div>
-          <div className="min-w-0 flex-1"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Fase {number}</p><h3 className="mt-1 text-sm font-black text-white">{heading}</h3></div>
-          <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold text-emerald-300">{done === milestones.length ? "Fullført" : `${done} av ${milestones.length}`}</span>
+      <section data-testid={`actual-progress-phase-${number}`} className="min-w-0 p-4">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0"><p className={`text-[9px] font-black uppercase tracking-[0.15em] ${number === 1 ? "text-slate-500" : "text-amber-400"}`}>Fase {number} · {heading}</p><h3 className="mt-1 text-sm font-black text-white">{number === 1 ? "Undersøkelse og rapport" : workName + " og dokumentasjon"}</h3></div>
+          <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1 text-[10px] font-bold text-emerald-300">{done === milestones.length ? "Fullført" : `${done} av ${milestones.length}`}</span>
         </div>
-        <div className="mx-4 mt-4 h-1.5 overflow-hidden rounded-full bg-slate-700/70"><div className="h-full rounded-full bg-emerald-400 transition-all motion-reduce:transition-none" style={{width: `${done / milestones.length * 100}%`}}/></div>
-        <ol className="space-y-0 p-4">
+        <ol className="grid gap-y-4" style={{gridTemplateColumns: `repeat(${Math.min(milestones.length, 5)}, minmax(0, 1fr))`}}>
           {milestones.map((item, index) => (
-            <li key={item.title} className="relative flex gap-3 pb-4 last:pb-0">
-              {index < milestones.length - 1 && <div aria-hidden="true" className={`absolute left-[15px] top-8 h-[calc(100%-24px)] w-px ${item.state === "done" ? "bg-emerald-500/35" : "bg-slate-700"}`}/>}
-              <div className={`relative z-10 grid h-8 w-8 shrink-0 place-items-center rounded-full border ${item.state === "done" ? "border-emerald-500/40 bg-[#123329] text-emerald-300" : item.state === "current" ? "border-amber-400/50 bg-[#362b16] text-amber-300" : "border-slate-700 bg-slate-900 text-slate-500"}`}>
+            <li key={item.title} className="relative min-w-0 px-1 text-center">
+              {index < milestones.length - 1 && <div aria-hidden="true" className={`absolute left-1/2 right-[-50%] top-[18px] h-px ${item.state === "done" && milestones[index+1].state === "done" ? "bg-emerald-500/60" : "bg-slate-700"}`}/>}
+              <div className={`relative z-10 mx-auto grid h-9 w-9 place-items-center rounded-full border ${item.state === "done" ? "border-emerald-500/40 bg-[#123329] text-emerald-300" : item.state === "current" ? "border-amber-400/50 bg-[#362b16] text-amber-300" : "border-slate-700 bg-slate-900 text-slate-500"}`}>
                 {item.state === "done" ? <CheckCircle2 className="h-4 w-4"/> : item.state === "current" ? <Clock3 className="h-4 w-4"/> : <span className="text-xs">{index+1}</span>}
               </div>
-              <div className="min-w-0 flex-1 pt-0.5"><p className={`text-xs font-bold ${item.state === "pending" ? "text-slate-400" : "text-white"}`}>{item.title}</p><p className="mt-1 text-[11px] text-slate-400">{item.detail}</p></div>
-              {item.state === "current" && <span className="self-start rounded-full bg-amber-500/10 px-2 py-1 text-[9px] font-bold text-amber-300">Neste steg</span>}
+              <p className={`mt-2 break-words text-[10px] font-bold ${item.state === "done" ? "text-emerald-300" : item.state === "current" ? "text-amber-200" : "text-slate-500"}`}>{item.title}</p>
+              <p className="mt-1 break-words text-[10px] leading-4 text-slate-400">{item.detail}</p>
             </li>
           ))}
         </ol>
@@ -4458,6 +4456,12 @@ export default function CustomerDashboard({
                 </section>
               )}
 
+              {factualTimeline && reportPublished && (
+                <section className="mt-6 rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.06] p-4 md:p-5">
+                  <div className="flex items-start gap-3"><FileCheck2 className="mt-1 h-5 w-5 shrink-0 text-emerald-300"/><div><h3 className="text-sm font-black text-emerald-200">Rapporten fra undersøkelsen er klar!</h3><p className="mt-2 text-xs text-slate-300">Rapport 1 – Teknisk rapport{reportPublishedDate ? " · Publisert "+reportPublishedDate : ""}</p></div></div>
+                  <button type="button" onClick={() => openCustomerPortalView("documents")} className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-slate-950 hover:bg-emerald-300"><FileText className="h-4 w-4"/>Se rapporten</button>
+                </section>
+              )}
               {/* DITT PROSJEKT - OVERSIKT */}
               <div className="mt-6 space-y-4">
                 <div className="flex items-start justify-between gap-3">
@@ -4547,6 +4551,12 @@ export default function CustomerDashboard({
               </div>
 
 
+          {factualTimeline && (
+            <div className="mt-6 min-w-0 divide-y divide-slate-700/60 overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-900/40" data-testid="customer-factual-timeline">
+              {(actualLeakDate || oralInitial || reportPublished || initialFieldService === "lekkasjesok") && renderFactualPhase(1, "Undersøkelse og rapport", phaseOne)}
+              {(oralFollowup || actualWorkLabel || completionReportPublished) && renderFactualPhase(2, workName + " og dokumentasjon", phaseTwo)}
+            </div>
+          )}
           {!factualTimeline && (
           <div className={followupOfferAccepted ? "mt-6 min-w-0 rounded-t-2xl border border-b-0 border-slate-700/70 bg-slate-900/40 p-4" : "mt-6 min-w-0 rounded-2xl border border-slate-700/70 bg-slate-900/40 p-4"}>
             <div className="mb-4 flex items-center justify-between gap-4">
@@ -4676,12 +4686,6 @@ export default function CustomerDashboard({
                   : "Du kan følge status, avtaler og dokumentasjon fra menyen.")}
               </p>
 
-              {factualTimeline && (
-                <div className="mt-6 space-y-4" data-testid="customer-factual-timeline">
-                  {(actualLeakDate || oralInitial || reportPublished || initialFieldService === "lekkasjesok") && renderFactualPhase(1, "Undersøkelse og rapport", phaseOne)}
-                  {(oralFollowup || actualWorkLabel || completionReportPublished) && renderFactualPhase(2, workName + " og dokumentasjon", phaseTwo)}
-                </div>
-              )}
               {showFactualNext && (
                 <div className="mt-5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
                   <div className="flex items-center gap-2 text-cyan-200"><Info className="h-4 w-4"/><p className="text-xs font-bold">Prosjektansvarlig følger opp</p></div>
