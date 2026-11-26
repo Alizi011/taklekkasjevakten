@@ -6416,7 +6416,7 @@ if (from < earliestDate) {
                               <div key={String(inquiry.id)} className="flex flex-col gap-3 rounded-xl border border-amber-500/20 bg-slate-950/40 p-4 sm:flex-row sm:items-center sm:justify-between">
                                 <div>
                                   <p className="text-xs font-black text-white">Oppdrag #{inquiry.id} – {customerName(inquiry)}</p>
-                                  <p className="mt-1 text-[13px] text-amber-200">{onBackToAdmin ? "Rapport 1 venter på prosjektansvarliges faglige kontroll." : "Rapport 1 er sendt fra administrator. Faglig godkjenning kreves."}</p>
+                                  <p className="mt-1 text-[13px] text-amber-200">{(() => { const id = String(normalizeInquiryId(inquiry.id)); const pending = [approvalStates[id] === "awaiting_pm" ? "Rapport 1" : "", report2ApprovalStates[id] === "awaiting_pm" ? "Rapport 2" : ""].filter(Boolean).join(" og "); return onBackToAdmin ? `${pending} venter på prosjektansvarliges faglige kontroll.` : `${pending} er sendt fra administrator. Faglig godkjenning kreves.`; })()}</p>
                                 </div>
                                 <button type="button" onClick={() => openApproval(inquiry)} className="shrink-0 rounded-xl bg-[#ff951a] px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-orange-400">
                                   {onBackToAdmin ? "Se rapport (kun visning)" : "Åpne til godkjenning"} <ArrowUpRight className="ml-1 inline h-4 w-4" />
