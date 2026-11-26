@@ -381,6 +381,8 @@ export default function AdminReportReview({
   const [completionReport, setCompletionReport] =
     useState<CompletionReportData | null>(null);
   const [completionDraft, setCompletionDraft] = useState("");
+  const [completionWorkflowState, setCompletionWorkflowState] = useState<string>("loading");
+  useEffect(() => { setCompletionWorkflowState("loading"); }, [inquiryId, completionReport?.id]);
   const [lastCompletionPreview, setLastCompletionPreview] = useState<{ inquiryId: number; reportId: number; url: string } | null>(null);
   useEffect(() => {
     if (completionReport?.pdf_url) {
@@ -911,16 +913,16 @@ export default function AdminReportReview({
     setMessage("");
 
     try {
-      await updateCompletionReport({
-        admin_final: completionDraft.trim(),
-        status:
-          completionReport.status === "sendt_til_admin"
-            ? "under_gjennomgang"
-            : completionReport.status,
-      });
+      if (completionWorkflowState !== "approved") {
+        await updateCompletionReport({
+          admin_final: completionDraft.trim(),
+          status: "under_gjennomgang",
+        });
+      }
 
       const res = await fetch(apiUrl("/generate_completion_report_pdf.php"), {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ inquiry_id: inquiryId }),
       });
@@ -1757,6 +1759,14 @@ export default function AdminReportReview({
   void handleReturn;
   void handleApprove;
   void handlePublish;
+  void handleCompletionReturn;
+  void handleCompletionApprove;
+  void handleCompletionPublish;
+  void completionReturning;
+  void completionApproving;
+  void completionPublishing;
+  void approvalBusy;
+  void setReportApproval;
 
   if (loading) {
     return (
@@ -1789,10 +1799,8 @@ export default function AdminReportReview({
     const completionPreviewUrl = completionReport.pdf_url || previousPreview;
     const completionPdfSrc = completionPreviewUrl ? apiAssetUrl(completionPreviewUrl) : "";
     const completionPdfStale = Boolean(completionPreviewUrl && (!completionReport.pdf_url || completionDraft.trim() !== (completionReport.admin_final || completionReport.ai_draft || "").trim()));
-    const completionEditable =
-      completionReport.status === "sendt_til_admin" ||
-      completionReport.status === "under_gjennomgang" ||
-      completionReport.status === "godkjent";
+    const completionEditable = ["editing", "returned"].includes(completionWorkflowState) && completionReport.status !== "publisert";
+    const completionCanGenerate = completionEditable || completionWorkflowState === "approved";
 
     return (
       <div className="min-h-screen bg-[#070a11] text-white">
@@ -1903,21 +1911,7 @@ export default function AdminReportReview({
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-slate-800 bg-[#0b0f17] p-5">
-                <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
-                  Kommentar ved retur
-                </p>
-                <textarea
-                  value={completionReturnNote}
-                  onChange={(event) =>
-                    setCompletionReturnNote(event.target.value)
-                  }
-                  disabled={completionReport.status === "publisert"}
-                  rows={4}
-                  placeholder="Beskriv hva prosjektansvarlig må korrigere i Utførelsesrapport..."
-                  className="mt-3 w-full rounded-2xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-200 outline-none focus:border-red-500/40 disabled:opacity-50"
-                />
-              </section>
+
             </div>
 
             <aside className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0b0f17] xl:sticky xl:top-[96px]">
@@ -1936,7 +1930,7 @@ export default function AdminReportReview({
                     type="button"
                     onClick={handleCompletionPdf}
                     disabled={
-                      completionPdfBusy || !completionDraft.trim() || !completionEditable
+                      completionPdfBusy || completionSaving || !completionDraft.trim() || !completionCanGenerate
                     }
                     className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3.5 py-2 text-xs font-extrabold disabled:opacity-50"
                   >
@@ -1972,48 +1966,11 @@ export default function AdminReportReview({
             </aside>
           </section>
 
-          <section className="rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.04] p-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.12em] text-cyan-300">
-                  Faglig ansvar · Rapport 2
-                </p>
-                <p className="mt-1 text-xs font-extrabold text-white">
-                  Arbeidsledelse og utførelse
-                </p>
-                <p className="mt-1 text-[10px] leading-5 text-slate-500">
-                  Når Miroslav godkjenner, vises teksten i PDF-en: «Arbeidet har blitt ledet av bygningsingeniør Miroslav Subanovic og utført av Perun AS.»
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setReportApproval(
-                    "rapport2",
-                    completionReport.id,
-                    "work_lead",
-                    !report2WorkLeadApproved
-                  )
-                }
-                disabled={approvalBusy === "rapport2-work_lead" || completionReport.status === "publisert"}
-                className={`flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-extrabold disabled:opacity-50 ${
-                  report2WorkLeadApproved
-                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                    : "border-slate-700 bg-slate-900 text-slate-300"
-                }`}
-              >
-                {approvalBusy === "rapport2-work_lead" ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : report2WorkLeadApproved ? (
-                  <CheckCircle2 className="h-4 w-4" />
-                ) : (
-                  <ShieldCheck className="h-4 w-4" />
-                )}
-                {report2WorkLeadApproved ? "Godkjent av Miroslav" : "Miroslav godkjenner"}
-              </button>
-            </div>
-          </section>
+          <ReportApprovalWorkflow key={`rapport2-${completionReport.id}`} reportType="rapport2" inquiryId={inquiryId} reportId={completionReport.id}
+            dirty={completionSaving || completionPdfBusy || completionDraft.trim() !== (completionReport.admin_final || "").trim()}
+            pdfUrl={completionReport.pdf_url}
+            onState={setCompletionWorkflowState}
+            onUpdated={() => { void loadReviewData(); onChanged?.(); }} />
 
           {completionReport.status !== "publisert" ? (
             <section className="rounded-2xl border border-slate-700 bg-slate-950 p-4">
@@ -2023,7 +1980,7 @@ export default function AdminReportReview({
                     Utførelsesrapporten følger samme kontrollflyt som Teknisk rapport.
                   </p>
                   <p className="mt-1 text-[10px] text-slate-500">
-                    Returner ved feil, eller godkjenn og publiser etter at PDF er kontrollert.
+                    Lagre rapporten og bruk godkjenningspanelet over.
                   </p>
                 </div>
 
@@ -2032,7 +1989,7 @@ export default function AdminReportReview({
                     type="button"
                     onClick={handleCompletionSave}
                     disabled={
-                      completionSaving ||
+                      completionSaving || completionPdfBusy ||
                       !completionDraft.trim() ||
                       !completionEditable
                     }
@@ -2046,64 +2003,6 @@ export default function AdminReportReview({
                     Lagre
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={handleCompletionReturn}
-                    disabled={
-                      completionReturning ||
-                      !completionReturnNote.trim()
-                    }
-                    className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-xs font-extrabold text-red-300 disabled:opacity-50"
-                  >
-                    {completionReturning ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RotateCcw className="h-4 w-4" />
-                    )}
-                    Returner
-                  </button>
-
-                  {completionReport.status === "godkjent" ? (
-                    <button
-                      type="button"
-                      onClick={handleCompletionPublish}
-                      disabled={
-                        completionPublishing ||
-                        !completionDraft.trim() ||
-                        !completionReport.pdf_url ||
-                        completionPdfStale ||
-                        !report2WorkLeadApproved
-                      }
-                      className="flex items-center gap-2 rounded-xl bg-[#F5B800] px-5 py-2.5 text-xs font-black text-slate-950 disabled:opacity-50"
-                    >
-                      {completionPublishing ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4" />
-                      )}
-                      Publiser utførelsesrapport
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleCompletionApprove}
-                      disabled={
-                        completionApproving ||
-                        !completionDraft.trim() ||
-                        !completionReport.pdf_url ||
-                        completionPdfStale ||
-                        !report2WorkLeadApproved
-                      }
-                      className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs font-extrabold text-emerald-300 disabled:opacity-50"
-                    >
-                      {completionApproving ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <ShieldCheck className="h-4 w-4" />
-                      )}
-                      Godkjenn utførelsesrapport
-                    </button>
-                  )}
                 </div>
               </div>
             </section>
