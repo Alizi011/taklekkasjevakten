@@ -2933,6 +2933,7 @@ export default function CustomerDashboard({
     : actualLeakDate && !reportPublished ? (actualProgress?.report_approved ? "Rapporten er godkjent og avventer publisering." : "Rapporten kvalitetssikres før publisering.")
     : oralInitial ? "Oppdraget er avtalt muntlig. Prosjektansvarlig følger opp gjennomføringen." : "";
   const showFactualNext = factualTimeline && Boolean(factualNextTitle) && !followupOfferReady && !(followupOfferAccepted || acceptedDirectFixedOffer);
+  const documentedHistoricalWork = showFactualNext && Boolean(reportPublished && completionReportPublished);
   type Milestone = { title: string; detail: string; state: "done" | "current" | "pending" };
   const phaseOne: Milestone[] = [
     { title: "Bestilling mottatt", detail: "Oppdrag registrert", state: "done" },
@@ -4458,14 +4459,26 @@ export default function CustomerDashboard({
                 </section>
               )}
 
-              {factualTimeline && reportPublished && (
-                <section className="mt-6 rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.06] p-4 md:p-5">
-                  <div className="flex items-start gap-3"><FileCheck2 className="mt-1 h-5 w-5 shrink-0 text-emerald-300"/><div><h3 className="text-sm font-black text-emerald-200">{isLeakSearchReport ? "Rapporten fra lekkasjesøket er klar!" : "Rapporten fra undersøkelsen er klar!"}</h3><p className="mt-2 text-xs text-slate-300">Rapport 1 – {customerReportLabel}{reportPublishedDate ? " · Publisert "+reportPublishedDate : ""}</p></div></div>
-                  <button type="button" onClick={handleDownloadReport} className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-slate-950 hover:bg-emerald-300"><FileText className="h-4 w-4"/>Åpne rapport (PDF)</button>
+              {factualTimeline && (reportPublished || completionReportPublished) && (
+                <section className="mt-6 overflow-hidden rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.04]" data-testid="customer-published-reports">
+                  <div className="border-b border-emerald-500/15 px-4 py-4 md:px-5">
+                    <div className="flex items-center gap-2 text-emerald-300"><FileCheck2 className="h-5 w-5 shrink-0"/><h3 className="text-sm font-black">{documentedHistoricalWork ? "Arbeidet er utført og dokumentert" : "Dine rapporter"}</h3></div>
+                    <p className="mt-1 text-xs leading-5 text-slate-400">{documentedHistoricalWork ? "Begge rapportene er kvalitetssikret og tilgjengelige nedenfor." : "Publiserte rapporter fra arbeidet på eiendommen."}</p>
+                  </div>
+                  <div className="divide-y divide-slate-700/50 px-4 md:px-5">
+                    {reportPublished && <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+                      <div className="flex min-w-0 flex-1 items-start gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-emerald-500/10 text-emerald-300"><FileText className="h-5 w-5"/></div><div className="min-w-0"><p className="text-xs font-bold text-white">Rapport 1 – {customerReportLabel}</p><p className="mt-1 text-[11px] leading-4 text-slate-400">{isLeakSearchReport ? "Lekkasjesøk og tekniske funn" : "Undersøkelse og tekniske funn"}</p><p className="mt-1 text-[10px] font-semibold text-emerald-300">Publisert{reportPublishedDate ? " " + reportPublishedDate : ""}</p></div></div>
+                      <button type="button" onClick={handleDownloadReport} className="shrink-0 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-xs font-bold text-emerald-200 hover:bg-emerald-500/20">Åpne PDF →</button>
+                    </div>}
+                    {completionReportPublished && <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+                      <div className="flex min-w-0 flex-1 items-start gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-emerald-500/10 text-emerald-300"><FileText className="h-5 w-5"/></div><div className="min-w-0"><p className="text-xs font-bold text-white">Rapport 2 – Utførelsesrapport</p><p className="mt-1 text-[11px] leading-4 text-slate-400">Utført arbeid og sluttdokumentasjon</p><p className="mt-1 text-[10px] font-semibold text-emerald-300">Publisert</p></div></div>
+                      <button type="button" onClick={handleDownloadCompletionReport} className="shrink-0 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-xs font-bold text-emerald-200 hover:bg-emerald-500/20">Åpne PDF →</button>
+                    </div>}
+                  </div>
                 </section>
               )}
               {/* DITT PROSJEKT - OVERSIKT */}
-              <div className="mt-6 space-y-4">
+              {!documentedHistoricalWork && <div className="mt-6 space-y-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
@@ -4550,8 +4563,7 @@ export default function CustomerDashboard({
                     </div>
                   </div>
                 </div>
-              </div>
-
+              </div>}
 
           {factualTimeline && (
             <div className="mt-6 min-w-0 divide-y divide-slate-700/60 overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-900/40" data-testid="customer-factual-timeline">
@@ -4662,7 +4674,7 @@ export default function CustomerDashboard({
                   }
                 }
               `}</style>
-              <p className="text-[9px] font-black uppercase tracking-[0.16em] text-amber-400">Neste steg</p>
+              <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${documentedHistoricalWork ? "text-emerald-300" : "text-amber-400"}`}>{documentedHistoricalWork ? "Oppdragsstatus" : "Neste steg"}</p>
               <h3 className="mt-2 text-lg font-black text-white">
                 {showFactualNext ? factualNextTitle : acceptedDirectFixedOffer && !followupOfferAccepted && customerStartDatePending ? "Godkjenn foreslått oppstartsdato"
                   : (followupOfferAccepted || acceptedDirectFixedOffer) && customerStartDateApproved ? "Utbedring avtalt"
@@ -4690,9 +4702,9 @@ export default function CustomerDashboard({
 
               {showFactualNext && (
                 <div className="mt-5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
-                  <div className="flex items-center gap-2 text-cyan-200"><Info className="h-4 w-4"/><p className="text-xs font-bold">Prosjektansvarlig følger opp</p></div>
-                  <p className="mt-2 text-[11px] leading-5 text-slate-400">Ingen handling kreves fra deg for dette steget nå.</p>
-                  {completionReportPublished && <button type="button" onClick={handleDownloadCompletionReport} className="mt-3 flex items-center gap-2 text-xs font-bold text-cyan-300"><FileText className="h-4 w-4"/>Åpne utførelsesrapport (PDF)</button>}
+                  <div className={`flex items-center gap-2 ${documentedHistoricalWork ? "text-emerald-300" : "text-cyan-200"}`}>{documentedHistoricalWork ? <CheckCircle2 className="h-4 w-4"/> : <Info className="h-4 w-4"/>}<p className="text-xs font-bold">{documentedHistoricalWork ? "Ingen handling kreves fra deg" : "Prosjektansvarlig følger opp"}</p></div>
+                  <p className="mt-2 text-[11px] leading-5 text-slate-400">{documentedHistoricalWork ? "Ta gjerne kontakt med prosjektansvarlig hvis du har spørsmål om rapportene eller arbeidet." : "Ingen handling kreves fra deg for dette steget nå."}</p>
+                  {completionReportPublished && !documentedHistoricalWork && <button type="button" onClick={handleDownloadCompletionReport} className="mt-3 flex items-center gap-2 text-xs font-bold text-cyan-300"><FileText className="h-4 w-4"/>Åpne utførelsesrapport (PDF)</button>}
                 </div>
               )}
               {(followupOfferAccepted || acceptedDirectFixedOffer) ? (
