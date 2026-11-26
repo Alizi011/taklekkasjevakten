@@ -3716,14 +3716,14 @@ export default function InquiryDetail({
                     </div>
                     {loadingFieldStatus ? <p className="text-xs text-slate-400">Henter rapporter …</p> : (
                       <div className="space-y-4">
-                        {([ { key: "rapport-1", label: "Rapport 1 – Teknisk rapport", data: report }, { key: "rapport-2", label: "Rapport 2 – Utførelsesrapport", data: completionReport } ] as const).map(item => (
+                        {([ { key: "rapport-1", label: "Rapport 1 – Teknisk rapport", data: report }, { key: "rapport-2", label: "Rapport 2 – Utførelsesrapport", data: completionReport } ] as const).filter(item => !directProcessOffer || item.key === "rapport-2").map(item => (
                           <article key={item.key} className="space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <h4 className="text-sm font-bold text-white">{item.label}</h4>
                               <span className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300">{item.data ? reportStatusLabel(item.data.status || undefined) : "Ikke registrert"}</span>
                             </div>
                             {item.data?.status === "publisert" && item.key === "rapport-1" && <button type="button" onClick={() => openReportEditor("rapport1")} className="text-xs font-semibold text-slate-400 hover:text-white">Administrer revisjon av Rapport 1</button>}
-                            {!item.data ? <p className="text-xs text-slate-400">Rapporten er ikke opprettet.</p> :
+                            {!item.data ? <><p className="text-xs text-slate-400">Rapporten er ikke opprettet.</p>{item.key === "rapport-2" && directProcessOffer?.status === "akseptert" && <button type="button" onClick={() => { if (actualWork) { openSpecificReport("rapport2"); } else { setRightPanelTab("process"); requestAnimationFrame(() => { const el = document.getElementById(`work-registration-${inquiryId}`) as HTMLDetailsElement | null; if (el) { el.open = true; el.scrollIntoView({behavior:"smooth",block:"start"}); } }); } }} className="text-xs font-bold text-cyan-300">{actualWork ? "Åpne rapportarbeid →" : "Registrer utført arbeid →"}</button>}</> :
                               item.data.pdf_url ? (
                                 <div className="space-y-2">
                                   {item.data.status !== "publisert" && <iframe src={customerAttachmentUrl(item.data.pdf_url)} title={`${item.label} for sak ${inquiry.id}`} loading="lazy" className="h-[520px] w-full rounded-lg border border-slate-700 bg-white" />}
@@ -3844,6 +3844,10 @@ export default function InquiryDetail({
     key={`direct-process-${inquiryId}`}
     offer={directProcessOffer}
     actualWorkOverride={actualWork}
+    reportStatus={completionReport?.status}
+    closed={isCaseClosed}
+    onRegisterWork={() => { const el = document.getElementById(`work-registration-${inquiryId}`) as HTMLDetailsElement | null; if (el) { el.open = true; el.scrollIntoView({behavior:"smooth",block:"start"}); } }}
+    onOpenReport2={() => openSpecificReport("rapport2")}
     onOpenOffer={() => setAdminCaseTab("offer")}
   />
 ) : (
@@ -3874,9 +3878,9 @@ export default function InquiryDetail({
                 
   </>
 )}
-                  <AdminWorkOverride key={`admin-work-override-${inquiryId}`} inquiryId={inquiryId} projectManagerName={currentProjectManager?.name} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>
-                  {actualWork && <div className="mt-4 grid grid-cols-[minmax(0,1fr)_minmax(0,42%)] items-start gap-2 rounded-xl border border-emerald-500/30 p-3"><div className="min-w-0"><p className="text-sm font-bold text-emerald-300">Arbeid utført</p><p className="mt-1 text-[11px] text-slate-400">{formatDate(actualWork.completed_on)}</p></div><button type="button" onClick={()=>openSpecificReport("rapport2")} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">{completionReport?.status === "publisert" && completionReport.pdf_url ? "Rapport 2 – PDF →" : "Rapport 2 – Utførelsesrapport →"}</button></div>}
-                  <div className="mt-6 space-y-4 border-t border-white/10 pt-5">
+                  <AdminWorkOverride key={`admin-work-override-${inquiryId}`} directWork={Boolean(directProcessOffer?.status === "akseptert")} inquiryId={inquiryId} projectManagerName={currentProjectManager?.name} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>
+                  {actualWork && !directProcessOffer && <div className="mt-4 grid grid-cols-[minmax(0,1fr)_minmax(0,42%)] items-start gap-2 rounded-xl border border-emerald-500/30 p-3"><div className="min-w-0"><p className="text-sm font-bold text-emerald-300">Arbeid utført</p><p className="mt-1 text-[11px] text-slate-400">{formatDate(actualWork.completed_on)}</p></div><button type="button" onClick={()=>openSpecificReport("rapport2")} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">{completionReport?.status === "publisert" && completionReport.pdf_url ? "Rapport 2 – PDF →" : "Rapport 2 – Utførelsesrapport →"}</button></div>}
+                  {!directProcessOffer && <div className="mt-6 space-y-4 border-t border-white/10 pt-5">
                   {(() => {
                     const current = acceptedRepairOffer;
                     const otherOffers = caseOffers.filter(item => item.id !== current?.id).length;
@@ -3909,7 +3913,7 @@ export default function InquiryDetail({
                       </div>
                     );
                   })()}
-                  </div>
+                  </div>}
                   <CaseClosureControl key={`case-closure-${inquiryId}`} inquiryId={inquiryId} coreStatus={coreCaseStatus} offers={caseOffers} pendingAdminSignature={adminSignaturePending} />
 </div>
               )}
