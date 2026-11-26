@@ -15,10 +15,13 @@ type Props = {
 /** Admin-only case view. Local preparation; no unverified write API is invoked. */
 export default function CaseClosureControl({ inquiryId, coreStatus, offers, pendingAdminSignature }: Props) {
   const [open, setOpen] = useState(false);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState("completed");
   const [maintenance, setMaintenance] = useState("");
   const [note, setNote] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  const [invoiceConfirmed, setInvoiceConfirmed] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const notifyCompletion = status === "completed" || status === "closed";
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [previewDate, setPreviewDate] = useState(closurePreviewDate);
@@ -30,8 +33,8 @@ export default function CaseClosureControl({ inquiryId, coreStatus, offers, pend
 
   const submitClosure = async () => {
     if (
-      saving ||
-      !confirmed ||
+      saving || saved ||
+      !confirmed || (notifyCompletion && !invoiceConfirmed) ||
       existingClosure ||
       coreStatus.state !== "available" ||
       errors.length > 0
@@ -51,7 +54,8 @@ export default function CaseClosureControl({ inquiryId, coreStatus, offers, pend
             inquiry_id: inquiryId,
             status,
             maintenance,
-            note: note.trim()
+            note: note.trim(),
+            invoice_confirmed: notifyCompletion && invoiceConfirmed
           })
         }
       );
@@ -65,6 +69,9 @@ export default function CaseClosureControl({ inquiryId, coreStatus, offers, pend
         );
       }
 
+      setSaved(true);
+      const warning = Array.isArray(result.notification_warnings) ? result.notification_warnings.join("\n") : "";
+      if (warning) { setSaveError("Saken er avsluttet. Varsler krever oppfølging:\n"+warning); return; }
       window.location.reload();
     } catch (error) {
       setSaveError(
@@ -79,7 +86,7 @@ export default function CaseClosureControl({ inquiryId, coreStatus, offers, pend
 
   return (
     <div className="mt-6 border-t border-white/10 pt-5">
-      <Dialog.Root open={open} onOpenChange={(value) => { if (value) setPreviewDate(closurePreviewDate()); setOpen(value); }}>
+      <Dialog.Root open={open} onOpenChange={(value) => { if (saving) return; if (!value && saved) { window.location.reload(); return; } if (value) setPreviewDate(closurePreviewDate()); setOpen(value); }}>
         <Dialog.Trigger asChild>
           <button type="button" className="w-full rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm font-bold text-rose-200 hover:bg-rose-500/20">Avslutt sak</button>
         </Dialog.Trigger>
@@ -130,21 +137,22 @@ export default function CaseClosureControl({ inquiryId, coreStatus, offers, pend
                 <textarea id={`${fieldId}-note`} required value={note} onChange={(event) => setNote(event.target.value)} placeholder="Begrunn avslutningen og beskriv eventuell videre oppfølging" className="mt-2 min-h-28 w-full rounded-lg border border-slate-700 bg-slate-950 p-3 text-sm" />
               </label>
               <label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} className="mt-0.5" />Jeg har kontrollert status, uavklarte forhold og valg om videre oppfølging.</label>
+              {notifyCompletion && <div className="space-y-2 rounded-xl border border-cyan-500/30 p-3 text-xs text-slate-200"><p className="font-bold text-cyan-200">Avslutningsvarsler</p><p>Kunden får SMS med takk, fakturainformasjon og personlig kundeportallenke (30 dager). Prosjektansvarlig får SMS og internt varsel. Betaling følges opp i Perun.</p><label className="flex items-start gap-2"><input type="checkbox" checked={invoiceConfirmed} onChange={e=>setInvoiceConfirmed(e.target.checked)} className="mt-0.5"/>Jeg bekrefter at arbeidet er ferdigstilt, relevante rapporter er publisert og faktura er sendt.</label></div>}
               {errors.length > 0 && <ul className="list-inside list-disc text-xs text-slate-400">{errors.map((error) => <li key={error}>{error}</li>)}</ul>}
               <div className="flex flex-wrap justify-end gap-2">
-                <Dialog.Close asChild><button type="button" className="rounded-lg border border-slate-600 px-4 py-3 text-xs font-bold">Lukk uten lagring</button></Dialog.Close>
+                <Dialog.Close asChild><button type="button" className="rounded-lg border border-slate-600 px-4 py-3 text-xs font-bold">{saved ? "Lukk og oppdater" : "Lukk uten lagring"}</button></Dialog.Close>
                 <button
                   type="submit"
                   disabled={
-                    saving ||
-                    !confirmed ||
+                    saving || saved ||
+                    !confirmed || (notifyCompletion && !invoiceConfirmed) ||
                     existingClosure ||
                     coreStatus.state !== "available" ||
                     errors.length > 0
                   }
                   className="rounded-lg bg-rose-600 px-4 py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {saving ? "Lagrer avslutning…" : "Bekreft avslutning"}
+                  {saving ? "Avslutter og varsler…" : saved ? "Saken er avsluttet" : "Bekreft avslutning"}
                 </button>
               </div>
             </form>
