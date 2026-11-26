@@ -2076,6 +2076,7 @@ export default function ProjectManagerDashboard({
   const [unansweredCustomerMessages, setUnansweredCustomerMessages] = useState<Array<{ inquiryId: number; threadId: number; oldestAt: string; count: number }>>([]);
 
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
+  const [closedCoreInquiryIds, setClosedCoreInquiryIds] = useState<Set<number>>(new Set());
   const [teamOverview, setTeamOverview] = useState<Record<string, InquiryTeam>>({});
   const [staffEmployees, setStaffEmployees] = useState<StaffEmployee[]>([]);
   const [teamTechnicianDrafts, setTeamTechnicianDrafts] = useState<Record<string, string>>({});
@@ -3839,7 +3840,7 @@ export default function ProjectManagerDashboard({
         ? Number(previewEmployee.id)
         : null;
 
-      const assignedInquiries = employeeId
+      const candidateInquiries = employeeId
         ? allInquiries.filter((inquiry) => {
             const manager =
               teams[inquiry.id.toString()]?.project_manager;
@@ -3869,6 +3870,40 @@ export default function ProjectManagerDashboard({
           })
         : allInquiries;
 
+      // Core is authoritative for completed/closed/stopped cases.
+      const ids = candidateInquiries.map(item => normalizeInquiryId(item.id)).filter(id => id > 0);
+      const statusRows: Array<{ inquiry_id: number; status: string }> = [];
+      if (ids.length) {
+        const adminPreview = Boolean(onBackToAdmin);
+        const token = adminPreview ? null : window.localStorage.getItem("taklekkasjevakten_project_manager_session");
+        if (!adminPreview && !token) throw new Error("Prosjektlederinnlogging kreves for å hente saksstatus.");
+        if (adminPreview) {
+          const response = await fetch(apiUrl("/admin_core_case_status.php"), {credentials:"include",cache:"no-store"});
+          const result = await response.json();
+          if (!response.ok || result.success !== true || !Array.isArray(result.cases)) throw new Error("Kunne ikke bekrefte saksstatus fra Core.");
+          statusRows.push(...result.cases);
+        } else {
+          for (let offset=0; offset<ids.length; offset+=100) {
+            const response = await fetch(apiUrl("/project_manager_core_case_status.php"), {
+              method:"POST", credentials:"include", cache:"no-store", headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({session_token:token,inquiry_ids:ids.slice(offset,offset+100)})
+            });
+            const result = await response.json();
+            if (!response.ok || result.success !== true || !Array.isArray(result.cases)) throw new Error("Kunne ikke bekrefte saksstatus fra Core.");
+            statusRows.push(...result.cases);
+          }
+        }
+      }
+      const statusById = new Map(statusRows.map(row=>[Number(row.inquiry_id),String(row.status)]));
+      const closedIds = new Set<number>();
+      const assignedInquiries = candidateInquiries.filter(item => {
+        const id = normalizeInquiryId(item.id);
+        const status = statusById.get(id);
+        const closed = status ? ["completed","closed","stopped"].includes(status) : String(item.status || "").toLowerCase()==="avsluttet";
+        if (closed) closedIds.add(id);
+        return !closed;
+      });
+      setClosedCoreInquiryIds(closedIds);
       setInquiries(assignedInquiries);
       await Promise.all([
         fetchReportOverview(assignedInquiries),
@@ -3913,6 +3948,9 @@ export default function ProjectManagerDashboard({
   useEffect(() => {
     fetchInquiries();
     fetchStaffEmployees();
+    const refreshOnFocus = () => { void fetchInquiries(); };
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
   }, [previewEmployee?.id]);
 
   const yesNoLabel = (value: unknown) => {
@@ -6174,7 +6212,8 @@ if (from < earliestDate) {
                 {(() => {
                   const now = new Date();
 
-                  const actionableTasks = coreTasks
+                  const activeCoreTasks = coreTasks.filter(task => !closedCoreInquiryIds.has(Number(task.inquiry_id)));
+                  const actionableTasks = activeCoreTasks
                     .map((task) => ({
                       task,
                       inquiry: inquiries.find(
@@ -6191,7 +6230,7 @@ if (from < earliestDate) {
 
                   // PM_CORE_TASKS_V2
                   const unmatchedCoreTasks =
-                    coreTasks.length - actionableTasks.length;
+                    activeCoreTasks.length - actionableTasks.length;
 
                   const todayItems = scheduledInquiries.filter((item) =>
                     sameDay(item.booking, now)
