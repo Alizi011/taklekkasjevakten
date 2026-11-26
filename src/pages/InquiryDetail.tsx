@@ -722,17 +722,20 @@ export default function InquiryDetail({
 
   // Les organisasjonsnummer fra eksisterende kundeprofil, uten å lagre eller endre kunden.
   const [overviewOrganizationNumber, setOverviewOrganizationNumber] = useState<string | null>(null);
+  const [overviewCustomerType, setOverviewCustomerType] = useState<string>("");
   useEffect(() => {
     const controller = new AbortController();
     setOverviewOrganizationNumber(null);
+    setOverviewCustomerType("");
     if (!inquiryId) return () => controller.abort();
     void fetch(apiUrl(`/customer_profile.php?inquiry_id=${inquiryId}`), {
       credentials: "include", signal: controller.signal,
     }).then(async response => {
       if (!response.ok) return;
-      const data: { success?: boolean; customer?: { organization_number?: string | null } } = await response.json();
+      const data: { success?: boolean; customer?: { organization_number?: string | null; customer_type?: string | null } } = await response.json();
       if (!controller.signal.aborted && data.success) {
         setOverviewOrganizationNumber(String(data.customer?.organization_number || "").trim());
+        setOverviewCustomerType(String(data.customer?.customer_type || "").trim());
       }
     }).catch(() => { /* Vis utilgjengelig, ikke et oppdiktet organisasjonsnummer. */ });
     return () => controller.abort();
@@ -2782,10 +2785,8 @@ export default function InquiryDetail({
       : "Tidspunkt må avtales"
     : `Bestilt: ${orderedService}`;
 
-  const brregCaseTypes = [
-    String(inquiry.customer_type || "").trim().toLowerCase(),
-    String(customerProfileForm.customer_type || "").trim().toLowerCase(),
-  ].filter(Boolean);
+  const resolvedCustomerType = String(customerProfileForm.customer_type || overviewCustomerType || inquiry.customer_type || "").trim().toLowerCase();
+  const brregCaseTypes = [resolvedCustomerType].filter(Boolean);
 
   const isExplicitPrivateCustomer = brregCaseTypes.some(type =>
     /^(privatperson|privat|private|person)$/.test(type)
@@ -3213,7 +3214,7 @@ export default function InquiryDetail({
                       </select>
                     </div>
 
-                    <div>
+                    {!isExplicitPrivateCustomer && <div>
                       <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
                         Organisasjonsnummer
                       </label>
@@ -3228,7 +3229,7 @@ export default function InquiryDetail({
                         placeholder="9 siffer"
                         className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-3 text-xs text-white outline-none focus:border-cyan-500"
                       />
-                    </div>
+                    </div>}
 
                     <div>
                       <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
@@ -3537,7 +3538,7 @@ export default function InquiryDetail({
                       <button type="button" onClick={() => setShowHeritageModal(true)} className="inline-flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-200"><ShieldCheck className="h-4 w-4" />{heritageButtonLabel}<Info className="h-3.5 w-3.5" /></button>
                     </div>
                     <div className="mt-4 grid gap-x-4 gap-y-4 border-t border-white/10 pt-4 text-sm sm:grid-cols-2">
-                      <div className="min-w-0"><p className="text-xs text-slate-400">Org.nr</p><p className="mt-1 font-bold text-white">{(() => { const raw = String(customerProfile?.organization_number?.trim() || overviewOrganizationNumber || "").replace(/\s/g, ""); return /^\d{9}$/.test(raw) ? raw.replace(/(\d{3})(\d{3})(\d{3})/, "$1 $2 $3") : raw || (overviewOrganizationNumber === null ? "Hentes …" : "Ikke registrert"); })()}</p></div>
+                      {(!isExplicitPrivateCustomer && (showBrregTab || Boolean(brregCaseOrgNumber))) && <div className="min-w-0"><p className="text-xs text-slate-400">Org.nr</p><p className="mt-1 font-bold text-white">{(() => { const raw = String(customerProfile?.organization_number?.trim() || overviewOrganizationNumber || "").replace(/\s/g, ""); return /^\d{9}$/.test(raw) ? raw.replace(/(\d{3})(\d{3})(\d{3})/, "$1 $2 $3") : raw || (overviewOrganizationNumber === null ? "Hentes …" : "Ikke registrert"); })()}</p></div>}
                       <div className="min-w-0"><p className="text-xs text-slate-400">Adresse</p><p className="mt-1 font-bold text-white">{inquiry.address || "Ikke oppgitt"}</p></div>
                       <div className="min-w-0"><p className="text-xs text-slate-400">Kontaktperson</p><p className="mt-1 break-words font-bold text-white">{caseContactName || (inquiry as Inquiry & { contact_name?: string; contact_person?: string }).contact_name || (inquiry as Inquiry & { contact_person?: string }).contact_person || "Ikke oppgitt"}</p></div>
                       <div className="min-w-0"><p className="text-xs text-slate-400">Postnr / poststed</p><p className="mt-1 font-bold text-white">{[inquiry.postal_code, inquiry.city].filter(Boolean).join(" ") || "Ikke oppgitt"}</p></div>
