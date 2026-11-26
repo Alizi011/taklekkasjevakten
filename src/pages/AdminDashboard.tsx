@@ -2094,11 +2094,28 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     const match = /^inquiry:(\d+)$/.exec(project.source_reference || "");
     return !match || !knownInquiryIds.has(Number(match[1]));
   });
-  const baseStatusCounts = countCoreStatusRows(dashboardRows, coreStatusForRow, coreStatusSourceAvailable);
+  // Commercial acceptance is separate from Core case lifecycle.
+  // A pending initial offer is not an active execution project.
+  const awaitsInitialOfferAcceptance = (inq: Inquiry): boolean => {
+    const originals = (overviewOffers[String(inq.id)] || []).filter(o => o.offer_context !== "followup");
+    if (originals.some(o => o.status === "akseptert")) return false;
+    const summary = reportStatuses[String(inq.id)];
+    if (summary?.status) return false;
+    const latest = [...originals].sort((a,b)=>b.id-a.id)[0];
+    const status = String(latest?.status || (inq as any).latest_offer_status || "").toLowerCase();
+    return status === "publisert" || status === "utkast" ||
+      (!status && ["tilbud_sendt","venter_pa_tilbud"].includes(String(inq.status||"").toLowerCase()));
+  };
+  const pendingOfferRows = dashboardRows.filter(row => {
+    const core = coreStatusForRow(row);
+    return core.state === "available" && core.status === "active" && awaitsInitialOfferAcceptance(row);
+  });
+  const activeExecutionRows = dashboardRows.filter(row => !pendingOfferRows.includes(row));
+  const baseStatusCounts = countCoreStatusRows(activeExecutionRows, coreStatusForRow, coreStatusSourceAvailable);
   const coreStatusCounts = baseStatusCounts && !historicalLoading && !historicalError
     ? { ...baseStatusCounts, completed: baseStatusCounts.completed + unlinkedHistorical.length }
     : baseStatusCounts;
-  const coreFilteredRows = filterCoreStatusRows(dashboardRows, coreStatusFilter, coreStatusForRow, coreStatusCounts !== null);
+  const coreFilteredRows = coreStatusFilter === "pending_offer" ? pendingOfferRows : filterCoreStatusRows(coreStatusFilter === "active" && filterType !== "avventer_kunde" && filterType !== "venter_pa_tilbud" && workTab !== "kunde" ? activeExecutionRows : dashboardRows, coreStatusFilter, coreStatusForRow, coreStatusCounts !== null);
   const historicalCompletedVisible = activeSubTab === "aktive" &&
     coreStatusFilter === "completed" && !historicalLoading && !historicalError;
   const historicalSearch = searchQuery.trim().toLocaleLowerCase("nb-NO");
@@ -2112,6 +2129,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
   const openDashboardView = (tab: "aktive" | "handling" | "rapporter" | "avsluttede", filter = "alle") => {
     setActiveSubTab(tab);
+    setCoreStatusFilter(filter === "avventer_kunde" || filter === "venter_pa_tilbud" ? "all" : "active");
     setWorkTab("alle");
     setFilterType(filter);
     setSearchQuery("");
@@ -2863,6 +2881,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     <CoreCaseStatusFilter
                       value={coreStatusFilter}
                       counts={coreStatusCounts}
+                      pendingOfferCount={pendingOfferRows.length}
                       unavailableMessage={coreCaseStatuses.state === "loading" ? "Henter Core-status …" : coreStatusFilter === "all" ? "Core-status er utilgjengelig. Viser alle saker innenfor gjeldende filtre uten statusklassifisering." : "Core-status er utilgjengelig. Kan ikke bekrefte saker eller antall for valgt hovedstatus."}
                       onChange={(value) => {
                         // Statusvalg skal ikke kombineres med gamle hurtigfiltre.
