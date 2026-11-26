@@ -2133,6 +2133,7 @@ export default function ProjectManagerDashboard({
   const [reportOverview, setReportOverview] = useState<Record<string, ReportData | null>>({});
   // Faglig godkjenning fra Perun Core er autoritativ, ikke gammel TLV-rapportstatus.
   const [approvalStates, setApprovalStates] = useState<Record<string, string>>({});
+  const [report2ApprovalStates, setReport2ApprovalStates] = useState<Record<string, string>>({});
   const [approvalRefresh, setApprovalRefresh] = useState(0);
   const [approvalLoadError, setApprovalLoadError] = useState("");
   const [offerOverview, setOfferOverview] = useState<Record<string, FollowUpOffer | null>>({});
@@ -2414,8 +2415,8 @@ export default function ProjectManagerDashboard({
     };
   }, [onBackToAdmin, previewEmployee?.id, view]);
   const approvalQueue = useMemo(
-    () => inquiries.filter((item) => approvalStates[String(normalizeInquiryId(item.id))] === "awaiting_pm"),
-    [inquiries, approvalStates]
+    () => inquiries.filter((item) => approvalStates[String(normalizeInquiryId(item.id))] === "awaiting_pm" || report2ApprovalStates[String(normalizeInquiryId(item.id))] === "awaiting_pm"),
+    [inquiries, approvalStates, report2ApprovalStates]
   );
 
   useEffect(() => {
@@ -2425,15 +2426,16 @@ export default function ProjectManagerDashboard({
     const session = adminPreview ? null : window.localStorage.getItem("taklekkasjevakten_project_manager_session");
     if ((!adminPreview && !session) || !assignedInquiryIds) {
       setApprovalStates({});
+      setReport2ApprovalStates({});
       setApprovalLoadError("");
       return;
     }
     let cancelled = false;
     const ids = assignedInquiryIds.split(",").map(Number);
     const load = async () => {
-      const rows = await Promise.all(ids.map(async (id) => {
+      const loadType = (reportType: "rapport1" | "rapport2") => Promise.all(ids.map(async (id) => {
         try {
-          const res = await fetch(apiUrl("/tlv_report_approval_workflow.php"), {
+          const res = await fetch(apiUrl(reportType === "rapport2" ? "/tlv_report2_approval_workflow.php" : "/tlv_report_approval_workflow.php"), {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -2449,9 +2451,11 @@ export default function ProjectManagerDashboard({
           return { id, state: "", ok: false };
         }
       }));
+      const [rows, report2Rows] = await Promise.all([loadType("rapport1"), loadType("rapport2")]);
       if (cancelled) return;
       setApprovalStates(Object.fromEntries(rows.filter((item) => item.ok).map((item) => [String(item.id), item.state])));
-      setApprovalLoadError(rows.some((item) => !item.ok) ? "Noen godkjenningsstatuser kunne ikke hentes. Prøv å oppdatere." : "");
+      setReport2ApprovalStates(Object.fromEntries(report2Rows.filter((item) => item.ok).map((item) => [String(item.id), item.state])));
+      setApprovalLoadError([...rows, ...report2Rows].some((item) => !item.ok) ? "Noen godkjenningsstatuser kunne ikke hentes. Prøv å oppdatere." : "");
     };
     void load();
     return () => { cancelled = true; };
@@ -2782,6 +2786,9 @@ export default function ProjectManagerDashboard({
     }
     const reportForInquiry = reportOverview[inquiryId.toString()] || null;
     const reportStatus = reportForInquiry?.status;
+    if (report2ApprovalStates[String(inquiryId)] === "awaiting_pm") {
+      return { key: "report_approval", label: "Krever godkjenning", subtitle: "Rapport 2 venter på faglig kontroll", accent: "amber" };
+    }
     if (approvalStates[String(inquiryId)] === "awaiting_pm") {
       return { key: "report_approval", label: "Krever godkjenning", subtitle: "Rapport 1 venter på faglig kontroll", accent: "amber" };
     }
@@ -2951,6 +2958,7 @@ export default function ProjectManagerDashboard({
   const progressNextAction = (inquiry: Inquiry, booking: Date | null): string => {
     const inquiryId = normalizeInquiryId(inquiry.id);
     const reportForInquiry = reportOverview[inquiryId.toString()] || null;
+    if (report2ApprovalStates[String(inquiryId)] === "awaiting_pm") return "Godkjenn eller returner Rapport 2";
     if (approvalStates[String(inquiryId)] === "awaiting_pm") {
       return "Godkjenn eller returner Rapport 1";
     }
@@ -3098,6 +3106,7 @@ export default function ProjectManagerDashboard({
     overviewStatusFilter,
     reportOverview,
     approvalStates,
+    report2ApprovalStates,
     offerOverview,
     fieldScheduleOverview,
   ]);
@@ -8825,6 +8834,9 @@ if (from < earliestDate) {
             {!isDigitalInspection &&
               fieldWorkspaceTab === "rapport" && (
               <>
+              {activeInquiryId && report2ApprovalStates[String(activeInquiryId)] === "awaiting_pm" && (
+                <ProjectManagerReportApproval key={`rapport2-review-${activeInquiryId}`} reportType="rapport2" inquiryId={activeInquiryId} previewMode={Boolean(onBackToAdmin)} onUpdated={() => { setApprovalRefresh(v => v + 1); void fetchInquiries(); }} />
+              )}
               {/* Rapport 1-godkjenning er uavhengig av den gamle rapportutkast-visningen.
                   Core er autoritativ, og admin kan bare forhåndsvise. */}
               {activeInquiryId && (
@@ -9893,6 +9905,7 @@ if (from < earliestDate) {
         {view === "rapporter" && (
           <div className="space-y-4">
             {activeInquiryId && <ProjectManagerReportApproval inquiryId={activeInquiryId} previewMode={Boolean(onBackToAdmin)} onUpdated={() => { setApprovalRefresh((v) => v + 1); void fetchInquiries(); }} />}
+             {activeInquiryId && report2ApprovalStates[String(activeInquiryId)] === "awaiting_pm" && <ProjectManagerReportApproval reportType="rapport2" inquiryId={activeInquiryId} previewMode={Boolean(onBackToAdmin)} onUpdated={() => { setApprovalRefresh(v => v + 1); void fetchInquiries(); }} />}
 
             <section className="rounded-2xl border border-slate-800 bg-[#211612] p-5">
               <div className="flex items-center justify-between gap-4 border-b border-slate-800 pb-4">
