@@ -14,9 +14,7 @@ import {
   Loader2,
   Mic,
   RefreshCw,
-  RotateCcw,
   Save,
-  Send,
   ShieldCheck,
   X,
 } from "lucide-react";
