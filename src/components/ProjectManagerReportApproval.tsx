@@ -26,10 +26,12 @@ export default function ProjectManagerReportApproval({
   inquiryId,
   onUpdated,
   previewMode = false,
+  reportType = "rapport1",
 }: {
   inquiryId: number;
   onUpdated?: () => void;
   previewMode?: boolean;
+  reportType?: "rapport1" | "rapport2";
 }) {
   const [report, setReport] = useState<WorkflowResponse | null>(null);
   const [error, setError] = useState("");
@@ -45,7 +47,7 @@ export default function ProjectManagerReportApproval({
   const canAct = !previewMode && Boolean(session);
 
   const callWorkflow = useCallback(async (action: string, extra: Record<string, unknown> = {}): Promise<WorkflowResponse> => {
-    const response = await fetch(apiUrl("/tlv_report_approval_workflow.php"), {
+    const response = await fetch(apiUrl(reportType === "rapport2" ? "/tlv_report2_approval_workflow.php" : "/tlv_report_approval_workflow.php"), {
       method: "POST",
       credentials: "include",
       cache: "no-store",
@@ -60,7 +62,7 @@ export default function ProjectManagerReportApproval({
     const result: WorkflowResponse = await response.json();
     if (!response.ok || !result.success) throw new Error(result.message || "Kunne ikkebehandle rapporten.");
     return result;
-  }, [inquiryId, canAct, session]);
+  }, [inquiryId, canAct, session, reportType]);
 
   useEffect(() => {
     let mounted = true;
@@ -78,7 +80,7 @@ export default function ProjectManagerReportApproval({
     return () => { mounted = false; };
   }, [inquiryId, previewMode, session, canAct, callWorkflow, refresh]);
 
-  useEffect(() => { setReaderOpen(false); setPreviewOpened(false); setConfirmedCheck(false); setComment(""); setMessage(""); }, [inquiryId]);
+  useEffect(() => { setReaderOpen(false); setPreviewOpened(false); setConfirmedCheck(false); setComment(""); setMessage(""); }, [inquiryId, reportType]);
 
   const refreshStatus = () => setRefresh((value) => value + 1);
   const contentValid = report?.content_unchanged !== false;
@@ -148,10 +150,10 @@ export default function ProjectManagerReportApproval({
   if (!report) return null;
 
   return (
-    <section className="space-y-5 rounded-3xl border border-orange-500/35 bg-gradient-to-br from-[#302016] via-[#251914] to-[#1b1513] p-5 text-slate-100 shadow-[0_12px_35px_rgba(0,0,0,0.15)] sm:p-6" aria-label="Faglig godkjenning Rapport 1">
+    <section className="space-y-5 rounded-3xl border border-orange-500/35 bg-gradient-to-br from-[#302016] via-[#251914] to-[#1b1513] p-5 text-slate-100 shadow-[0_12px_35px_rgba(0,0,0,0.15)] sm:p-6" aria-label={`Faglig godkjenning ${reportType === "rapport2" ? "Rapport 2" : "Rapport 1"}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-black uppercase tracking-wider text-orange-300">Rapport 1 · faglig kontroll</p>
+          <p className="text-xs font-black uppercase tracking-wider text-orange-300">{reportType === "rapport2" ? "Rapport 2" : "Rapport 1"} · faglig kontroll</p>
           <h3 className="mt-1 text-lg font-black text-white">{awaiting ? "Rapporten venter på faglig gjennomgang" : "Godkjenningsstatus"}</h3>
           <p className="mt-1 text-sm text-slate-300">{previewMode ? "Forhåndsvisning –bare prosjektansvarlig kan godkjenne." : "Åpne rapporten, kontroller innholdet og bekreft gjennomgang før du beslutter."}</p>
         </div>
@@ -196,7 +198,7 @@ export default function ProjectManagerReportApproval({
           </div>
           <label className="flex items-start gap-3 rounded-xl border border-slate-700/50 bg-[#281d19] p-3 text-sm leading-6 text-slate-100">
             <input type="checkbox" checked={confirmedCheck} disabled={!previewOpened} onChange={(event) => { setConfirmedCheck(event.target.checked); setMessage(""); }} className="mt-1 h-4 w-4 accent-orange-500" />
-            <span>Jeg bekrefter at jeg har gjennomgått Rapport 1.
+            <span>Jeg bekrefter at jeg har gjennomgått {reportType === "rapport2" ? "Rapport 2" : "Rapport 1"}.
               {!previewOpened && <span className="block text-xs text-amber-200">Åpne rapporten først for å aktivere avkrysningen.</span>}
             </span>
           </label>
@@ -214,9 +216,9 @@ export default function ProjectManagerReportApproval({
       {message && <p role="status" className="text-sm text-emerald-200">{message}</p>}
       {error && <p role="alert" className="text-sm text-red-200">{error}</p>}
       {readerOpen && pdfUrl && (
-        <div className="fixed inset-0 z-[150] flex flex-col bg-black/90 p-3 md:p-6" role="dialog" aria-modal="true" aria-label="Les Rapport 1">
+        <div className="fixed inset-0 z-[150] flex flex-col bg-black/90 p-3 md:p-6" role="dialog" aria-modal="true" aria-label={`Les ${reportType === "rapport2" ? "Rapport 2" : "Rapport 1"}`}>
           <div className="mb-3 flex items-center justify-between gap-3 text-white">
-            <div><h4 className="text-base font-black">Rapport 1 – gjennomgang</h4><p className="text-xs text-slate-300">Bla gjennom PDF-en. Lukk når du er ferdig.</p></div>
+            <div><h4 className="text-base font-black">{reportType === "rapport2" ? "Rapport 2" : "Rapport 1"} – gjennomgang</h4><p className="text-xs text-slate-300">Bla gjennom PDF-en. Lukk når du er ferdig.</p></div>
             <div className="flex flex-wrap items-center gap-2">
               <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-[#ff951a] px-4 py-2 text-sm font-black text-slate-950 hover:bg-orange-400">
                 <FileText className="h-4 w-4" /> Åpne hele PDF-en i ny fane
@@ -224,7 +226,7 @@ export default function ProjectManagerReportApproval({
               <button type="button" onClick={() => setReaderOpen(false)} className="flex items-center gap-2 rounded-xl border border-slate-600 px-4 py-2 text-sm font-bold"><X className="h-4 w-4" /> Lukk PDF</button>
             </div>
           </div>
-          <iframe src={pdfUrl} title={`Rapport 1 – oppdrag ${inquiryId}`} className="min-h-0 w-full flex-1 rounded-lg bg-white" />
+          <iframe src={pdfUrl} title={`${reportType === "rapport2" ? "Rapport 2" : "Rapport 1"} – oppdrag ${inquiryId}`} className="min-h-0 w-full flex-1 rounded-lg bg-white" />
           <p className="mt-2 text-xs text-slate-300">Vises bare første side her? Trykk «Åpne hele PDF-en i ny fane». Bekreft gjennomgangen først etter at du har gjennomgått rapporten.</p>
         </div>
       )}
