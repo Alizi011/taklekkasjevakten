@@ -2425,14 +2425,14 @@ export default function InquiryDetail({
   }, [inquiry.recommended_service, offer?.id, offer?.status]);
 
   useEffect(() => {
-    if (reportStatusBeforeRefresh !== null && report?.status === "publisert") {
+    if (reportStatusBeforeRefresh !== null && reportStatusBeforeRefresh !== "publisert" && report?.status === "publisert" && requestedReport !== "rapport2") {
       setReportStatusBeforeRefresh(null);
       setAdminCaseTab("overview");
       requestAnimationFrame(() => {
         document.getElementById("rapport1-oppfolging")?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
     }
-  }, [report?.status, reportStatusBeforeRefresh]);
+  }, [report?.status, reportStatusBeforeRefresh, requestedReport]);
 
   const activeChecklistItems = useMemo(
     () =>
@@ -4093,7 +4093,7 @@ export default function InquiryDetail({
           </div>
         </section>
 
-        {report?.status === "publisert" && ((!savedFollowupChoice && !activeFollowupOffer) || showFollowupSelection) && (
+        {requestedReport !== "rapport2" && report?.status === "publisert" && ((!savedFollowupChoice && !activeFollowupOffer) || showFollowupSelection) && (
           <section id="rapport1-oppfolging" className="scroll-mt-28 rounded-2xl border border-emerald-500/25 bg-[#21131c] p-5 space-y-4" aria-label="Videre oppfølging etter Rapport 1">
             <div>
               <p className="text-[10px] font-black uppercase tracking-wide text-emerald-300">Rapport 1 er publisert</p>
@@ -5975,7 +5975,7 @@ export default function InquiryDetail({
         {!isDigitalBefaring && (
           <div id="reports" className={`${adminCaseTab === "reports" ? "" : "hidden"} scroll-mt-6`}>
             <AdminReportReview inquiryId={inquiryId} requestedReport={requestedReport} onBack={requestedReport ? () => setAdminCaseTab("overview") : undefined} onChanged={() => {
-              setReportStatusBeforeRefresh(report?.status || null);
+              setReportStatusBeforeRefresh(requestedReport === "rapport2" || report?.status === "publisert" ? null : report?.status || null);
               void fetchFieldStatus();
             }} />
           </div>
