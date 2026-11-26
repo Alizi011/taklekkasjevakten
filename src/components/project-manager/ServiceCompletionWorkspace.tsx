@@ -80,6 +80,7 @@ interface Props {
   employeeName?: string | null;
   onFinished?: () => void;
   readOnly?: boolean;
+  offerScope?: { id:number; number:string; title:string; description:string; items:string[] } | null;
   historicalWork?: { work_type: "service" | "vedlikehold" | "varig_utbedring"; started_on: string; completed_on: string };
 }
 
@@ -162,11 +163,13 @@ export default function ServiceCompletionWorkspace({
   employeeName = null,
   onFinished,
   historicalWork,
+  offerScope = null,
   readOnly = false,
 }: Props) {
   const historical = Boolean(historicalWork);
   const actualWorkType = historicalWork?.work_type === "varig_utbedring" ? "varig_utbedring" : "service";
-  const reportItems = useMemo(() => extractRecommendedItems(reportText), [reportText]);
+  const direct = Boolean(offerScope);
+  const reportItems = useMemo(() => offerScope?.items || extractRecommendedItems(reportText), [reportText, offerScope]);
 
   const [completion, setCompletion] = useState<CompletionData | null>(null);
   const [items, setItems] = useState<WorkItem[]>([]);
@@ -308,7 +311,7 @@ export default function ServiceCompletionWorkspace({
               item_status: "ikke_vurdert",
               result_status: "ikke_vurdert",
               result_tg: "ikke_vurdert",
-              comment: title,
+              comment: direct ? "" : title,
             }))
           : [
               {
@@ -328,7 +331,7 @@ export default function ServiceCompletionWorkspace({
 
       const [docsRes, checklistRes] = await Promise.all([
         fetch(apiUrl(`/photos.php?inquiry_id=${inquiryId}`)),
-        fetch(apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)),
+        direct ? Promise.resolve(new Response(JSON.stringify({success:true,checklists:[]}))) : fetch(apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)),
       ]);
 
       const [docsData, checklistData] = await Promise.all([
@@ -351,6 +354,7 @@ export default function ServiceCompletionWorkspace({
       setDocumentation(nextDocumentation);
       setChecklistRows(nextChecklistRows);
 
+      if (direct) { setChecklistRows([]); return; }
       const deviationRows = sourceChecklistItems(nextChecklistRows);
 
       if (savedItems.length > 0) {
@@ -402,7 +406,7 @@ export default function ServiceCompletionWorkspace({
 
   useEffect(() => {
     load();
-  }, [inquiryId, reportItems.join("|")]);
+  }, [inquiryId, reportItems.join("|"), offerScope?.id]);
 
   const patchItem = (index: number, patch: Partial<WorkItem>) => {
     setItems((current) =>
@@ -520,11 +524,11 @@ export default function ServiceCompletionWorkspace({
         completion_id: completion?.id || null,
         inquiry_id: inquiryId,
         work_type: actualWorkType,
-        ...(historical ? { source_offer_id: completion?.source_offer_id ?? null } : {}),
+        ...(historical ? { source_offer_id: offerScope?.id ?? completion?.source_offer_id ?? null } : {}),
         completed_at: historical ? historicalWork?.completed_on + " 00:00:00" : null,
         completed_by_employee_id: employeeId,
         completed_by_name: employeeName,
-        work_summary: "Arbeid registrert mot anbefalte tiltak i publisert rapport.",
+        work_summary: (direct ? "Arbeid registrert mot akseptert tilbud." : "Arbeid registrert mot anbefalte tiltak i publisert rapport."),
         additional_work: generalComment || null,
         deviations: null,
         warranty_years: historical ? (completion?.warranty_years ?? 0) : 5,
@@ -684,14 +688,14 @@ export default function ServiceCompletionWorkspace({
           completion_id: completion?.id || null,
           inquiry_id: inquiryId,
           work_type: actualWorkType,
-        ...(historical ? { source_offer_id: completion?.source_offer_id ?? null } : {}),
+        ...(historical ? { source_offer_id: offerScope?.id ?? completion?.source_offer_id ?? null } : {}),
           completed_at: completedAt,
           completed_by_employee_id: employeeId,
           completed_by_name: employeeName,
           work_summary:
             completedTitles.length > 0
               ? completedTitles.join("\n")
-              : "Arbeid registrert mot anbefalte tiltak i publisert rapport.",
+              : (direct ? "Arbeid registrert mot akseptert tilbud." : "Arbeid registrert mot anbefalte tiltak i publisert rapport."),
           additional_work: generalComment || null,
           deviations:
             items.some(
@@ -809,8 +813,8 @@ export default function ServiceCompletionWorkspace({
   const incompleteItems = normalizedItems.filter(
     (item) =>
       item.item_status === "ikke_vurdert" ||
-      item.result_status === "ikke_vurdert" ||
-      item.result_tg === "ikke_vurdert"
+      (!direct && (item.result_status === "ikke_vurdert" ||
+      item.result_tg === "ikke_vurdert"))
   );
 
   const allItemsAssessed =
@@ -826,8 +830,8 @@ export default function ServiceCompletionWorkspace({
   const completedCount = normalizedItems.filter(
     (item) =>
       item.item_status !== "ikke_vurdert" &&
-      item.result_status !== "ikke_vurdert" &&
-      item.result_tg !== "ikke_vurdert"
+      (direct || (item.result_status !== "ikke_vurdert" &&
+      item.result_tg !== "ikke_vurdert"))
   ).length;
 
   const progressPercent = normalizedItems.length
@@ -838,8 +842,8 @@ export default function ServiceCompletionWorkspace({
     const normalized = normalizeItem(item);
     return (
       normalized.item_status !== "ikke_vurdert" &&
-      normalized.result_status !== "ikke_vurdert" &&
-      normalized.result_tg !== "ikke_vurdert"
+      (direct || (normalized.result_status !== "ikke_vurdert" &&
+      normalized.result_tg !== "ikke_vurdert"))
     );
   };
 
@@ -885,11 +889,12 @@ export default function ServiceCompletionWorkspace({
   if (readOnly) return <section className="space-y-4 rounded-2xl border border-slate-700 bg-[#0b0f17] p-5">
     <h2 className="text-lg font-black">Kontrolliste for Rapport 2</h2>
     <p className="text-xs text-slate-300">Skrivebeskyttet administratorvisning</p>
+    {offerScope && <p className="text-sm text-cyan-200">Grunnlag: {offerScope.number} – {offerScope.title}</p>}
     {loading ? <p>Henter kontrolliste …</p> : error ? <p role="alert" className="text-rose-300">{error}</p> : <>
       <p className="text-sm">{completedCount} av {items.length} tiltak vurdert · {completion?.status || "Ikke ferdigstilt"}</p>
       {items.map((item,index) => <article key={item.id || index} className="rounded-xl border border-slate-700 p-3 space-y-2">
         <h3 className="font-bold">{item.title}</h3>
-        <p className="text-xs text-slate-300">Utførelse: {item.item_status} · Resultat: {item.result_status || "ikke_vurdert"} · TG: {item.result_tg || "ikke_vurdert"}</p>
+        <p className="text-xs text-slate-300">Utførelse: {itemStatusLabel(item)}{!direct && ` · Resultat: ${item.result_status || "ikke_vurdert"} · TG: ${item.result_tg || "ikke_vurdert"}`}</p>
         {item.comment && <p className="whitespace-pre-wrap text-sm">{item.comment}</p>}
         {documentationForItem(item).map(doc => <div key={doc.id} className="text-xs">
           {doc.caption_text && <p>{doc.caption_text}</p>}
@@ -912,7 +917,7 @@ export default function ServiceCompletionWorkspace({
             </div>
             <div>
               <h3 className="text-base font-extrabold text-white">
-                Utførelse etter publisert rapport
+                {offerScope ? "Kontrolliste – akseptert tilbud "+offerScope.number : "Utførelse etter publisert rapport"}
               </h3>
               <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-400">
                 Gå gjennom ett tiltak om gangen. Ferdige tiltak kollapses automatisk
@@ -1126,7 +1131,7 @@ export default function ServiceCompletionWorkspace({
                             </div>
                           </div>
 
-                          <div>
+                          {!direct && <div>
                             <p className="text-[9px] font-black uppercase tracking-wider text-slate-500">
                               2. Ny tilstandsgrad
                             </p>
@@ -1158,10 +1163,10 @@ export default function ServiceCompletionWorkspace({
                                 );
                               })}
                             </div>
-                          </div>
+                          </div>}
                         </div>
 
-                        {item.item_status !== "ikke_vurdert" && (
+                        {!direct && item.item_status !== "ikke_vurdert" && (
                           <div className="mt-5">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <p className="text-[9px] font-black uppercase tracking-wider text-slate-500">
@@ -1201,7 +1206,7 @@ export default function ServiceCompletionWorkspace({
                         )}
 
                         {item.item_status !== "ikke_vurdert" &&
-                          normalized.result_tg !== "ikke_vurdert" && (
+                          (direct || normalized.result_tg !== "ikke_vurdert") && (
                             <div className="mt-5">
                               <label className="mb-2 block text-[9px] font-black uppercase tracking-wider text-slate-500">
                                 4. Kommentar <span className="font-medium normal-case text-slate-700">– valgfritt</span>
@@ -1219,7 +1224,7 @@ export default function ServiceCompletionWorkspace({
                           )}
 
                         {item.item_status !== "ikke_vurdert" &&
-                          normalized.result_tg !== "ikke_vurdert" && (
+                          (direct || normalized.result_tg !== "ikke_vurdert") && (
                             <div className="mt-5 border-t border-slate-800/80 pt-5">
                               <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div>
@@ -1227,7 +1232,7 @@ export default function ServiceCompletionWorkspace({
                                     5. Dokumentasjon
                                   </p>
                                   <p className="mt-1 text-[9px] text-slate-600">
-                                    Før-bilder hentes fra Rapport 1. Nye bilder legges som under arbeid eller resultat.
+                                    {direct ? "Legg til dokumentasjon fra før, under eller etter arbeidet." : "Før-bilder hentes fra Rapport 1. Nye bilder legges som under arbeid eller resultat."}
                                   </p>
                                 </div>
 
