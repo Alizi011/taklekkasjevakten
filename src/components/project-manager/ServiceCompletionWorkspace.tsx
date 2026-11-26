@@ -183,6 +183,8 @@ export default function ServiceCompletionWorkspace({
   const [documentation, setDocumentation] = useState<WorkDocumentation[]>([]);
   const [uploadingKey, setUploadingKey] = useState<string | null>(null);
   const [checklistRows, setChecklistRows] = useState<ChecklistRow[]>([]);
+  const [photoMenu, setPhotoMenu] = useState<number|null>(null);
+  const [projectPicker, setProjectPicker] = useState<number|null>(null);
   const [pendingImage, setPendingImage] = useState<{
     itemIndex: number;
     file: File;
@@ -611,6 +613,23 @@ export default function ServiceCompletionWorkspace({
     return savedId;
   };
 
+  const chooseProjectPhoto = async (doc: WorkDocumentation, index: number) => {
+    if (readOnly || uploadingKey || !doc.photo_url || Number(doc.inquiry_id) !== Number(inquiryId)) return;
+    setUploadingKey("project-photo"); setError("");
+    try {
+      const url = new URL(apiAssetUrl(doc.photo_url));
+      if (url.origin !== new URL(apiUrl("/photos.php")).origin && url.origin !== "https://api.taklekkasjevakten.no") throw new Error("Ugyldig bildekilde.");
+      const response = await fetch(url.href, {credentials:"omit"});
+      if (!response.ok) throw new Error("Kunne ikke hente prosjektbildet.");
+      const blob = await response.blob();
+      if (!blob.type.startsWith("image/")) throw new Error("Prosjektfilen er ikke et bilde.");
+      const extension = blob.type === "image/png" ? "png" : blob.type === "image/webp" ? "webp" : blob.type === "image/heic" ? "heic" : "jpg";
+      setPendingImage({itemIndex:index,file:new File([blob], "prosjektbilde-"+doc.id+"."+extension,{type:blob.type})});
+      setProjectPicker(null); setPhotoMenu(null);
+    } catch (e) { setError(e instanceof Error ? e.message : "Kunne ikke hente prosjektbildet."); }
+    finally { setUploadingKey(null); }
+  };
+
   const uploadForItem = async (
     item: WorkItem,
     itemIndex: number,
@@ -870,6 +889,8 @@ export default function ServiceCompletionWorkspace({
   const goToItem = (index: number) => {
     if (index < 0 || index >= items.length) return;
     setPendingImage(null);
+    setPhotoMenu(null);
+    setProjectPicker(null);
     setPendingAudio(null);
     setActiveItemIndex(index);
   };
@@ -1237,26 +1258,9 @@ export default function ServiceCompletionWorkspace({
                                 </div>
 
                                 <div className="flex flex-wrap gap-2">
-                                  <label
-                                    className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[10px] font-black text-blue-300 transition hover:bg-blue-500/15" 
-                                  >
-                                    <Camera className="h-3.5 w-3.5" />
-                                    + Bilde
-                                    <input
-                                      type="file"
-                                      accept="image/*"
-                                      capture="environment"
-                                      className="hidden"
-                                      disabled={Boolean(uploadingKey)}
-                                      onChange={(event) => {
-                                        const file = event.target.files?.[0];
-                                        if (file) {
-                                          setPendingImage({ itemIndex: index, file });
-                                        }
-                                        event.target.value = "";
-                                      }}
-                                    />
-                                  </label>
+                                  <button type="button" disabled={Boolean(uploadingKey)} onClick={()=>{setPhotoMenu(photoMenu===index?null:index);setProjectPicker(null);}} className="inline-flex items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[10px] font-black text-blue-300">
+                                    <Camera className="h-3.5 w-3.5"/> + Bilde
+                                  </button>
 
                                   <label
                                     className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[10px] font-black text-violet-300 transition hover:bg-violet-500/15" 
@@ -1280,6 +1284,23 @@ export default function ServiceCompletionWorkspace({
                                 </div>
                               </div>
 
+                              {photoMenu===index && <div className="mt-3 space-y-2 rounded-xl border border-blue-500/30 p-3">
+                                <p className="text-xs font-bold">Velg bildekilde</p>
+                                <div className="grid gap-2 sm:grid-cols-3">
+                                  {["Ta bilde","Velg fra bildebibliotek"].map((label,n)=><label key={label} className="cursor-pointer rounded-lg border border-slate-600 p-3 text-center text-xs font-bold">
+                                    {label}<input type="file" accept="image/*" capture={n===0?"environment":undefined} className="hidden" disabled={Boolean(uploadingKey)} onChange={e=>{const file=e.target.files?.[0];if(file){setPendingImage({itemIndex:index,file});setPhotoMenu(null);setProjectPicker(null);}e.target.value="";}}/>
+                                  </label>)}
+                                  <button type="button" onClick={()=>setProjectPicker(index)} className="rounded-lg border border-slate-600 p-3 text-xs font-bold">Velg fra prosjektbilder</button>
+                                </div>
+                                {projectPicker===index && <div className="space-y-2">
+                                  <p className="text-xs text-slate-300">Velg et bilde fra denne saken. Originalen beholdes.</p>
+                                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                    {documentation.filter(doc=>doc.photo_url && Number(doc.inquiry_id)===Number(inquiryId)).map(doc=><button type="button" key={doc.id} disabled={Boolean(uploadingKey)} onClick={()=>void chooseProjectPhoto(doc,index)} className="overflow-hidden rounded-lg border border-slate-700 text-left"><img src={apiAssetUrl(doc.photo_url)} alt={doc.caption_text||"Prosjektbilde "+doc.id} loading="lazy" className="aspect-square w-full object-cover"/><p className="truncate p-2 text-[10px]">{doc.caption_text||"Bilde #"+doc.id}</p></button>)}
+                                  </div>
+                                  {!documentation.some(doc=>doc.photo_url && Number(doc.inquiry_id)===Number(inquiryId)) && <p className="text-xs text-slate-400">Ingen prosjektbilder tilgjengelig.</p>}
+                                </div>}
+                                <button type="button" onClick={()=>{setPhotoMenu(null);setProjectPicker(null);}} className="text-xs text-slate-400">Avbryt</button>
+                              </div>}
                               {currentPendingImage && (() => {
                                 const pendingFile = currentPendingImage.file;
 
