@@ -2682,6 +2682,8 @@ export default function InquiryDetail({
     )
     .sort((a, b) => Number(b.id) - Number(a.id))[0] || null;
   const isReportPublished = report?.status === "publisert";
+  const workDocumented = completionReport?.status === "publisert";
+  const followupAlreadyExecuted = Boolean(actualWork || workDocumented || isCaseClosed);
   const isFollowupDecided = isReportPublished && savedFollowupChoice !== null;
   const followupStageTitle = savedFollowupChoice === "none" ? "Ingen videre utbedring"
     : savedFollowupChoice === "temporary" ? "Midlertidig tetting / service"
@@ -2728,6 +2730,8 @@ export default function InquiryDetail({
     ? "Saken avsluttet"
     : isAdminPaused
     ? "På vent – videre arbeid stanset"
+    : workDocumented
+    ? "Arbeid utført og dokumentert"
     : actualWork
     ? "Arbeid utført – dokumentasjon og Rapport 2"
     : actualLeakDate && !isReportPublished
@@ -2756,6 +2760,8 @@ export default function InquiryDetail({
     ? "Ingen videre handling"
     : isAdminPaused
     ? adminPauseReason
+    : workDocumented
+    ? "Rapport 2 er publisert. Se fakturering og økonomi for betalingsstatus."
     : actualWork
     ? `Ferdigstilt ${formatDate(actualWork.completed_on)}. Følg opp kontrollisten for Rapport 2.`
     : actualLeakDate && !isReportPublished
@@ -3863,7 +3869,7 @@ export default function InquiryDetail({
                 </button>
               )}
                 <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,42%)] items-start gap-2 border-b border-white/[0.06] pb-3"><div className="flex min-w-0 items-start gap-2"><FileCheck2 className={`mt-0.5 h-5 w-5 shrink-0 ${isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{isReportPublished ? "Rapport 1 publisert" : report ? `Rapport 1 – ${reportStatusLabel(report.status)}` : "Rapport 1 avventer"}</p><p className="mt-1 text-[11px] text-slate-400">{isReportPublished ? "Kvalitetssikret og publisert" : "Rapportstatus og behandling"}</p></div></div><div className="flex min-w-0 flex-col items-end gap-1.5 pt-0.5 text-right"><button type="button" onClick={() => openSpecificReport("rapport1")} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">{report?.status === "publisert" && report.pdf_url ? "Åpne PDF →" : report ? "Åpne rapport →" : "Åpne rapportarbeid →"}</button></div></div>
-                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,42%)] items-start gap-2 border-b border-white/[0.06] pb-3"><div className="flex min-w-0 items-start gap-2"><Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" /><div className="min-w-0"><p className="text-sm font-bold text-white">{isFollowupDecided ? followupStageTitle : "Videre oppfølging"}</p><p className="mt-1 text-[11px] text-slate-400">{isFollowupDecided ? followupStageDetail : isReportPublished ? "Avventer valg av tiltak" : "Etter rapportpublisering"}</p>{activeFollowupOffer?.offer_number && <p className="mt-1 text-[11px] text-slate-500">{activeFollowupOffer.offer_number} · {activeFollowupOffer.status}</p>}</div></div><div className="flex min-w-0 flex-col items-end gap-1.5 pt-0.5 text-right">{activeFollowupOffer?.status === "utkast" && isReportPublished ? <button type="button" onClick={() => {setFollowupOfferForGenerator(activeFollowupOffer);setShowFollowupOfferGenerator(true);}} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">Åpne tilbudsutkast →</button> : isReportPublished ? <button type="button" onClick={() => activeFollowupOffer ? setAdminCaseTab("offer") : openFollowupSelection()} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">Administrer tiltak →</button> : null}</div></div>
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,42%)] items-start gap-2 border-b border-white/[0.06] pb-3"><div className="flex min-w-0 items-start gap-2"><Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" /><div className="min-w-0"><p className="text-sm font-bold text-white">{followupAlreadyExecuted ? "Videre arbeid utført" : isFollowupDecided ? followupStageTitle : "Videre oppfølging"}</p><p className="mt-1 text-[11px] text-slate-400">{workDocumented ? "Utførelsesrapport publisert" : actualWork ? "Arbeidet er registrert utført" : isCaseClosed ? "Saken er avsluttet" : isFollowupDecided ? followupStageDetail : isReportPublished ? "Avventer valg av tiltak" : "Etter rapportpublisering"}</p>{activeFollowupOffer?.offer_number && <p className="mt-1 text-[11px] text-slate-500">{activeFollowupOffer.offer_number} · {activeFollowupOffer.status}</p>}</div></div><div className="flex min-w-0 flex-col items-end gap-1.5 pt-0.5 text-right">{followupAlreadyExecuted ? <button type="button" onClick={() => setRightPanelTab("finance")} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">Se fakturering →</button> : activeFollowupOffer?.status === "utkast" && isReportPublished ? <button type="button" onClick={() => {setFollowupOfferForGenerator(activeFollowupOffer);setShowFollowupOfferGenerator(true);}} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">Åpne tilbudsutkast →</button> : isReportPublished ? <button type="button" onClick={() => activeFollowupOffer ? setAdminCaseTab("offer") : openFollowupSelection()} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">Administrer tiltak →</button> : null}</div></div>
               </div>
                 
   </>
@@ -4105,14 +4111,14 @@ export default function InquiryDetail({
           </div>
         </section>
 
-        {requestedReport !== "rapport2" && report?.status === "publisert" && ((!savedFollowupChoice && !activeFollowupOffer) || showFollowupSelection) && (
+        {requestedReport !== "rapport2" && report?.status === "publisert" && (showFollowupSelection || (!followupAlreadyExecuted && !savedFollowupChoice && !activeFollowupOffer)) && (
           <section id="rapport1-oppfolging" className="scroll-mt-28 rounded-2xl border border-emerald-500/25 bg-[#21131c] p-5 space-y-4" aria-label="Videre oppfølging etter Rapport 1">
             <div>
               <p className="text-[10px] font-black uppercase tracking-wide text-emerald-300">Rapport 1 er publisert</p>
               <h2 className="mt-1 text-base font-black text-white">Velg videre oppfølging</h2>
               <p className="mt-1 text-xs text-slate-300">Publisert rapport beholdes uendret. Beslutninger lagres i Perun Core, og tilbud opprettes som egne utkast.</p>
             </div>
-            {savedFollowupChoice && showFollowupSelection && (
+            {showFollowupSelection && (
               <button type="button" onClick={() => { setShowFollowupSelection(false); setEditingFollowup(false); setFollowupChoice(null); }}
                 className="w-fit rounded-lg border border-slate-600 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800">Lukk valg av tiltak</button>
             )}
