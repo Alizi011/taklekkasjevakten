@@ -1,3 +1,4 @@
+import AdminCaseFinance from "../components/AdminCaseFinance";
 import AdminCaseOrganizations from "../components/AdminCaseOrganizations";
 import AdminPhotoVisibility from "../components/AdminPhotoVisibility";
 import AdminLeakSearchCompletion from "../components/AdminLeakSearchCompletion";
@@ -838,7 +839,7 @@ export default function InquiryDetail({
   const [showDocumentsInOverview, setShowDocumentsInOverview] = useState(false);
   // Separate read-only tabs inside the existing case overview; do not switch adminCaseTab.
   const [overviewInlineMedia, setOverviewInlineMedia] = useState<"overview" | "photos" | "report" | "offers" | "messages" | "organisations">("overview");
-  const [rightPanelTab, setRightPanelTab] = useState<"process" | "activity" | "override" | "offers">("process");
+  const [rightPanelTab, setRightPanelTab] = useState<"process" | "activity" | "override" | "offers" | "finance">("process");
   const [repairOfferTab, setRepairOfferTab] = useState<"akseptert" | "avvist" | "ovrige">("akseptert");
 
   const [brregOrgNumber, setBrregOrgNumber] = useState("");
@@ -3787,10 +3788,11 @@ export default function InquiryDetail({
                   ["activity", "Siste aktivitet"],
                   ["override", "Admin overstyring"],
                   ["offers", "Tilbud og avtaler"],
+                  ["finance", "Fakturering og økonomi"],
                 ] as const).map(([key, label]) => (
                   <button key={key} type="button" role="tab" aria-selected={rightPanelTab === key}
                     onClick={() => setRightPanelTab(key)}
-                    className={`min-w-0 min-h-12 rounded-xl border px-3 py-2.5 text-center text-xs font-bold leading-5 transition ${rightPanelTab === key
+                    className={`${key === "finance" ? "col-span-2 " : ""}min-w-0 min-h-12 rounded-xl border px-3 py-2.5 text-center text-xs font-bold leading-5 transition ${rightPanelTab === key
                       ? "border-cyan-400/50 bg-cyan-500/15 text-cyan-200"
                       : "border-slate-700 bg-slate-950/40 text-slate-300 hover:border-cyan-500/30 hover:text-white"}`}>
                     {label}
@@ -3905,6 +3907,7 @@ export default function InquiryDetail({
                   <CaseClosureControl key={`case-closure-${inquiryId}`} inquiryId={inquiryId} coreStatus={coreCaseStatus} offers={caseOffers} pendingAdminSignature={adminSignaturePending} />
 </div>
               )}
+              {rightPanelTab === "finance" && <AdminCaseFinance key={inquiryId} inquiryId={Number(inquiryId)} />}
               {rightPanelTab === "activity" && (
                 <div role="tabpanel">
               <section className="rounded-2xl border border-slate-700/60 bg-[#17111d] p-4 md:p-5">
