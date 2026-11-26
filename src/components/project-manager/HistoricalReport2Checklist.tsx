@@ -7,9 +7,23 @@ type OfferScope = { id: number; number: string; title: string; description: stri
 function buildOfferScope(offer: any): OfferScope {
   const title = String(offer.title || "").trim();
   const description = String(offer.description || "").trim();
-  // Use actual agreed work text, never prices, materials, or invented tasks.
-  const lines = description.split(/\r?\n/).map(line => line.replace(/^\s*(?:[-•*]|\d+[.)])\s*/, "").trim()).filter(line => line.length > 3 && !/^(arbeidsbeskrivelse|omfang|utførelse|arbeid|vedlikehold):?$/i.test(line));
-  const items = Array.from(new Set(lines.length ? lines : [title].filter(Boolean)));
+  // Extract known maintenance operations from the agreed text, not headings or prices.
+  const lines = description.split(/\r?\n/).map(line => line.replace(/^\s*(?:[-•*]|\d+[.)])\s*/, "").trim()).filter(line => line.length > 3 && line.toLowerCase() !== title.toLowerCase() && !/^(prosjekt|omfang|adresse|kunde|arbeidsbeskrivelse|pris|sum|mva|vilkår|forbehold|antall|utførelse|arbeid|vedlikehold)\s*:/i.test(line));
+  const rules: [RegExp,string][] = [
+    [/mose|vegetasjon/i,"Fjerning av mose og vegetasjon"],
+    [/papptekket\s+utkraging/i,"Rengjøring av papptekket utkraging"],
+    [/nedsenkede\s+takrenner/i,"Rengjøring av nedsenkede takrenner"],
+    [/taksluk/i,"Rengjøring av taksluk"],
+    [/takrenner.{0,45}inngangspart/i,"Kontroll og rengjøring av takrenner ved inngangspartier"],
+    [/nedløpsrør|nedløp/i,"Kontroll av nedløp"],
+    [/tilstopping/i,"Rensing ved påvist tilstopping (angi i merknad hvis ikke nødvendig)"],
+    [/vannavrenning/i,"Kontroll av fri vannavrenning"]
+  ];
+  const items = Array.from(new Set(lines.flatMap(line => {
+    const matches = rules.filter(([pattern]) => pattern.test(line)).map(([,label])=>label);
+    return matches.length ? matches : [line];
+  })));
+  if (!items.length && title) items.push(title);
   if (!items.length) throw new Error("Akseptert tilbud mangler arbeidsbeskrivelse.");
   return { id: Number(offer.id), number: String(offer.offer_number || "#"+offer.id), title, description, items };
 }
