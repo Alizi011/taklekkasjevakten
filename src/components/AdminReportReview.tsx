@@ -381,6 +381,12 @@ export default function AdminReportReview({
   const [completionReport, setCompletionReport] =
     useState<CompletionReportData | null>(null);
   const [completionDraft, setCompletionDraft] = useState("");
+  const [lastCompletionPreview, setLastCompletionPreview] = useState<{ inquiryId: number; reportId: number; url: string } | null>(null);
+  useEffect(() => {
+    if (completionReport?.pdf_url) {
+      setLastCompletionPreview({ inquiryId, reportId: completionReport.id, url: completionReport.pdf_url });
+    }
+  }, [inquiryId, completionReport?.id, completionReport?.pdf_url]);
   const [completionLoadError, setCompletionLoadError] = useState("");
   const [reportApprovals, setReportApprovals] = useState<ReportApprovals>({});
   const [completionApprovals, setCompletionApprovals] = useState<ReportApprovals>({});
@@ -984,7 +990,10 @@ export default function AdminReportReview({
   };
 
   const handleCompletionApprove = async () => {
-    if (!completionDraft.trim()) return;
+    if (!completionReport || !completionDraft.trim() || !report2WorkLeadApproved || !completionReport.pdf_url || completionDraft.trim() !== (completionReport.admin_final || completionReport.ai_draft || "").trim()) {
+      setError("Oppdatert PDF og faglig godkjenning kreves før sluttgodkjenning.");
+      return;
+    }
 
     setCompletionApproving(true);
     setError("");
@@ -1018,8 +1027,8 @@ export default function AdminReportReview({
   const handleCompletionPublish = async () => {
     if (!completionReport || !completionDraft.trim()) return;
 
-    if (!completionReport.pdf_url) {
-      setError("Generer Utførelsesrapport-PDF før publisering.");
+    if (!completionReport.pdf_url || !report2WorkLeadApproved || completionDraft.trim() !== (completionReport.admin_final || completionReport.ai_draft || "").trim()) {
+      setError("Oppdatert PDF og faglig godkjenning kreves før publisering.");
       return;
     }
 
@@ -1776,9 +1785,10 @@ export default function AdminReportReview({
   }
 
   if (requestedReport !== "rapport1" && completionReportIsAdminFlow && completionReport) {
-    const completionPdfSrc = completionReport.pdf_url
-      ? apiAssetUrl(completionReport.pdf_url)
-      : "";
+    const previousPreview = lastCompletionPreview?.inquiryId === inquiryId && lastCompletionPreview?.reportId === completionReport.id ? lastCompletionPreview.url : "";
+    const completionPreviewUrl = completionReport.pdf_url || previousPreview;
+    const completionPdfSrc = completionPreviewUrl ? apiAssetUrl(completionPreviewUrl) : "";
+    const completionPdfStale = Boolean(completionPreviewUrl && (!completionReport.pdf_url || completionDraft.trim() !== (completionReport.admin_final || completionReport.ai_draft || "").trim()));
     const completionEditable =
       completionReport.status === "sendt_til_admin" ||
       completionReport.status === "under_gjennomgang" ||
@@ -1926,7 +1936,7 @@ export default function AdminReportReview({
                     type="button"
                     onClick={handleCompletionPdf}
                     disabled={
-                      completionPdfBusy || !completionDraft.trim() || !report2WorkLeadApproved
+                      completionPdfBusy || !completionDraft.trim() || !completionEditable
                     }
                     className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3.5 py-2 text-xs font-extrabold disabled:opacity-50"
                   >
@@ -1935,14 +1945,15 @@ export default function AdminReportReview({
                     ) : (
                       <RefreshCw className="h-4 w-4" />
                     )}
-                    {completionReport.pdf_url ? "Oppdater PDF" : "Generer PDF"}
+                    {completionPreviewUrl ? "Oppdater PDF" : "Generer PDF"}
                   </button>
                 )}
               </div>
 
+              {completionPdfStale && <p role="status" className="border-b border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">Forhåndsvisningen er utdatert. Oppdater PDF før godkjenning og publisering.</p>}
               {completionPdfSrc ? (
                 <iframe
-                  key={completionReport.pdf_url || "completion-report-pdf"}
+                  key={completionPreviewUrl}
                   title="Utførelsesrapport PDF"
                   src={completionPdfSrc}
                   className="h-[calc(100vh-250px)] min-h-[720px] w-full bg-white"
@@ -2005,7 +2016,7 @@ export default function AdminReportReview({
           </section>
 
           {completionReport.status !== "publisert" ? (
-            <section className="sticky bottom-3 z-30 rounded-2xl border border-slate-700 bg-slate-950/95 p-4 shadow-2xl backdrop-blur">
+            <section className="rounded-2xl border border-slate-700 bg-slate-950 p-4">
               <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
                 <div>
                   <p className="text-xs font-bold text-slate-300">
@@ -2060,6 +2071,7 @@ export default function AdminReportReview({
                         completionPublishing ||
                         !completionDraft.trim() ||
                         !completionReport.pdf_url ||
+                        completionPdfStale ||
                         !report2WorkLeadApproved
                       }
                       className="flex items-center gap-2 rounded-xl bg-[#F5B800] px-5 py-2.5 text-xs font-black text-slate-950 disabled:opacity-50"
@@ -2077,7 +2089,10 @@ export default function AdminReportReview({
                       onClick={handleCompletionApprove}
                       disabled={
                         completionApproving ||
-                        !completionDraft.trim()
+                        !completionDraft.trim() ||
+                        !completionReport.pdf_url ||
+                        completionPdfStale ||
+                        !report2WorkLeadApproved
                       }
                       className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs font-extrabold text-emerald-300 disabled:opacity-50"
                     >
