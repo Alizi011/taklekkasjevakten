@@ -822,9 +822,17 @@ export default function InquiryDetail({
     setRequestedReport(undefined);
     setAdminCaseTabValue(tab);
   };
-  const openSpecificReport = (kind: "rapport1" | "rapport2") => {
+  const openReportEditor = (kind: "rapport1" | "rapport2") => {
     setRequestedReport(kind);
     setAdminCaseTabValue("reports");
+  };
+  const openSpecificReport = (kind: "rapport1" | "rapport2") => {
+    const selected = kind === "rapport1" ? report : completionReport;
+    if (selected?.status === "publisert" && selected.pdf_url) {
+      window.open(customerAttachmentUrl(selected.pdf_url), "_blank", "noopener,noreferrer");
+      return;
+    }
+    openReportEditor(kind);
   };
   const [showBrregInline, setShowBrregInline] = useState(false);
   const [showDocumentsInOverview, setShowDocumentsInOverview] = useState(false);
@@ -3707,10 +3715,11 @@ export default function InquiryDetail({
                               <h4 className="text-sm font-bold text-white">{item.label}</h4>
                               <span className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300">{item.data ? reportStatusLabel(item.data.status || undefined) : "Ikke registrert"}</span>
                             </div>
+                            {item.data?.status === "publisert" && item.key === "rapport-1" && <button type="button" onClick={() => openReportEditor("rapport1")} className="text-xs font-semibold text-slate-400 hover:text-white">Administrer revisjon av Rapport 1</button>}
                             {!item.data ? <p className="text-xs text-slate-400">Rapporten er ikke opprettet.</p> :
                               item.data.pdf_url ? (
                                 <div className="space-y-2">
-                                  <iframe src={customerAttachmentUrl(item.data.pdf_url)} title={`${item.label} for sak ${inquiry.id}`} loading="lazy" className="h-[520px] w-full rounded-lg border border-slate-700 bg-white" />
+                                  {item.data.status !== "publisert" && <iframe src={customerAttachmentUrl(item.data.pdf_url)} title={`${item.label} for sak ${inquiry.id}`} loading="lazy" className="h-[520px] w-full rounded-lg border border-slate-700 bg-white" />}
                                   <a href={customerAttachmentUrl(item.data.pdf_url)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-xs font-semibold text-cyan-300 hover:underline"><FileText className="h-4 w-4" /> Åpne PDF i egen fane</a>
                                 </div>
                               ) : <p className="text-xs text-slate-400">Rapportstatus er tilgjengelig, men PDF er ikke opprettet ennå.</p>}
@@ -3851,14 +3860,14 @@ export default function InquiryDetail({
                   {actualLeakDate ? "Lekkasjesøk utført – åpne sjekkliste" : "Registrer utført lekkasjesøk / etterspør sjekkliste"}
                 </button>
               )}
-                <div className="flex gap-3"><FileCheck2 className={`mt-0.5 h-5 w-5 shrink-0 ${isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{isReportPublished ? "Rapport 1 publisert" : report ? `Rapport 1 – ${reportStatusLabel(report.status)}` : "Rapport 1 avventer"}</p><p className="mt-1 text-[11px] text-slate-400">{isReportPublished ? "Kvalitetssikret og publisert" : "Rapportstatus og behandling"}</p><button type="button" onClick={() => openSpecificReport("rapport1")} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">{report ? "Åpne rapport →" : "Åpne rapportarbeid →"}</button></div></div>
+                <div className="flex gap-3"><FileCheck2 className={`mt-0.5 h-5 w-5 shrink-0 ${isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{isReportPublished ? "Rapport 1 publisert" : report ? `Rapport 1 – ${reportStatusLabel(report.status)}` : "Rapport 1 avventer"}</p><p className="mt-1 text-[11px] text-slate-400">{isReportPublished ? "Kvalitetssikret og publisert" : "Rapportstatus og behandling"}</p><button type="button" onClick={() => openSpecificReport("rapport1")} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">{report?.status === "publisert" && report.pdf_url ? "Åpne PDF →" : report ? "Åpne rapport →" : "Åpne rapportarbeid →"}</button></div></div>
                 <div className="flex gap-3"><Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" /><div className="min-w-0"><p className="text-sm font-bold text-white">{isFollowupDecided ? followupStageTitle : "Videre oppfølging"}</p><p className="mt-1 text-[11px] text-slate-400">{isFollowupDecided ? followupStageDetail : isReportPublished ? "Avventer valg av tiltak" : "Etter rapportpublisering"}</p>{activeFollowupOffer?.offer_number && <p className="mt-1 text-[11px] text-slate-500">{activeFollowupOffer.offer_number} · {activeFollowupOffer.status}</p>}{activeFollowupOffer?.status === "utkast" && isReportPublished ? <button type="button" onClick={() => {setFollowupOfferForGenerator(activeFollowupOffer);setShowFollowupOfferGenerator(true);}} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">Åpne tilbudsutkast →</button> : isReportPublished ? <button type="button" onClick={() => activeFollowupOffer ? setAdminCaseTab("offer") : openFollowupSelection()} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">Administrer videre oppfølging →</button> : null}</div></div>
               </div>
                 
   </>
 )}
                   <AdminWorkOverride key={`admin-work-override-${inquiryId}`} inquiryId={inquiryId} projectManagerName={currentProjectManager?.name} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>
-                  {actualWork && <div className="mt-4 rounded-xl border border-emerald-500/30 p-3"><p className="text-sm font-bold text-emerald-300">Arbeid utført · {formatDate(actualWork.completed_on)}</p><button type="button" onClick={()=>openSpecificReport("rapport2")} className="mt-2 text-xs font-bold text-cyan-300">Rapport 2 – Utførelsesrapport →</button></div>}
+                  {actualWork && <div className="mt-4 rounded-xl border border-emerald-500/30 p-3"><p className="text-sm font-bold text-emerald-300">Arbeid utført · {formatDate(actualWork.completed_on)}</p><button type="button" onClick={()=>openSpecificReport("rapport2")} className="mt-2 text-xs font-bold text-cyan-300">{completionReport?.status === "publisert" && completionReport.pdf_url ? "Rapport 2 – Åpne PDF →" : "Rapport 2 – Utførelsesrapport →"}</button></div>}
                   <div className="mt-6 space-y-4 border-t border-white/10 pt-5">
                   {(() => {
                     const current = acceptedRepairOffer;
@@ -3901,7 +3910,7 @@ export default function InquiryDetail({
               <section className="rounded-2xl border border-slate-700/60 bg-[#17111d] p-4 md:p-5">
                 <h2 className="text-sm font-black text-white">Siste aktivitet</h2>
                 <div className="mt-3 divide-y divide-white/10">
-                  {latestCaseReport && <button type="button" onClick={() => openSpecificReport(completionReport ? "rapport2" : "rapport1")} className="flex w-full items-start justify-between gap-3 py-3 text-left hover:text-cyan-300"><span className="flex items-start gap-3"><FileCheck2 className="mt-0.5 h-4 w-4 text-emerald-300" /><span><span className="block text-xs font-bold">{caseReportType} – {reportStatusLabel(latestCaseReport.status || undefined)}</span><span className="mt-1 block text-[11px] text-slate-400">Åpne rapport og godkjenning</span></span></span><span className="shrink-0 text-[10px] text-slate-500">{caseReportUpdatedLabel || ""}</span></button>}
+                  {latestCaseReport && <button type="button" onClick={() => openSpecificReport(completionReport ? "rapport2" : "rapport1")} className="flex w-full items-start justify-between gap-3 py-3 text-left hover:text-cyan-300"><span className="flex items-start gap-3"><FileCheck2 className="mt-0.5 h-4 w-4 text-emerald-300" /><span><span className="block text-xs font-bold">{caseReportType} – {reportStatusLabel(latestCaseReport.status || undefined)}</span><span className="mt-1 block text-[11px] text-slate-400">{latestCaseReport.status === "publisert" && latestCaseReport.pdf_url ? "Åpne publisert PDF" : "Åpne rapport og godkjenning"}</span></span></span><span className="shrink-0 text-[10px] text-slate-500">{caseReportUpdatedLabel || ""}</span></button>}
                   {caseOffers.slice().sort((a,b) => Number(b.id)-Number(a.id)).slice(0,3).map(item => <button key={item.id} type="button" onClick={() => { setAdminCaseTab("offer"); if (item.offer_context === "followup" && item.status === "utkast") { setFollowupOfferForGenerator(item); setShowFollowupOfferGenerator(true); } }} className="flex w-full items-start justify-between gap-3 py-3 text-left hover:text-cyan-300"><span className="flex items-start gap-3"><FileText className="mt-0.5 h-4 w-4 text-cyan-300" /><span><span className="block text-xs font-bold">{item.offer_context === "followup" ? "Oppfølgingstilbud" : "Opprinnelig tilbud"} · {item.status}</span><span className="mt-1 block text-[11px] text-slate-400">{item.offer_number || `Internt tilbud #${item.id}`}</span></span></span><span className="shrink-0 text-[10px] text-slate-500">{item.created_at ? formatDate(item.created_at.slice(0,10)) : ""}</span></button>)}
                   {(inquiry.created_at || inquiry.createdAt) && <div className="flex items-start justify-between gap-3 py-3"><span className="flex items-start gap-3"><ClipboardList className="mt-0.5 h-4 w-4 text-slate-400" /><span className="text-xs font-bold">Sak registrert</span></span><span className="text-[10px] text-slate-500">{formatDate(String(inquiry.created_at || inquiry.createdAt).slice(0,10))}</span></div>}
                 </div>
