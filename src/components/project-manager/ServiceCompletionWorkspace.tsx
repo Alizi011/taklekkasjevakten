@@ -514,6 +514,7 @@ export default function ServiceCompletionWorkspace({
     item: WorkItem,
     itemIndex: number
   ): Promise<number> => {
+    if (readOnly) throw new Error("Forhåndsvisning kan ikke lagre.");
     if (item.id) return item.id;
 
     const mainRes = await fetch(apiUrl("/work_completion.php"), {
@@ -614,7 +615,7 @@ export default function ServiceCompletionWorkspace({
   };
 
   const chooseProjectPhoto = async (doc: WorkDocumentation, index: number) => {
-    if (readOnly || uploadingKey || !doc.photo_url || Number(doc.inquiry_id) !== Number(inquiryId)) return;
+    if (uploadingKey || !doc.photo_url || Number(doc.inquiry_id) !== Number(inquiryId)) return;
     setUploadingKey("project-photo"); setError("");
     try {
       const url = new URL(apiAssetUrl(doc.photo_url));
@@ -637,6 +638,7 @@ export default function ServiceCompletionWorkspace({
     kind: "photo" | "audio",
     file: File
   ) => {
+    if (readOnly) { setMessage("Forhåndsvisning: bildet er ikke lagret."); return; }
     const key = `${item.id || `new-${itemIndex}`}-${phase}-${kind}`;
     setUploadingKey(key);
     setMessage("");
@@ -907,29 +909,9 @@ export default function ServiceCompletionWorkspace({
     }
   };
 
-  if (readOnly) return <section className="space-y-4 rounded-2xl border border-slate-700 bg-[#0b0f17] p-5">
-    <h2 className="text-lg font-black">Kontrolliste for Rapport 2</h2>
-    <p className="text-xs text-slate-300">Skrivebeskyttet administratorvisning</p>
-    {offerScope && <p className="text-sm text-cyan-200">Grunnlag: {offerScope.number} – {offerScope.title}</p>}
-    {loading ? <p>Henter kontrolliste …</p> : error ? <p role="alert" className="text-rose-300">{error}</p> : <>
-      <p className="text-sm">{completedCount} av {items.length} tiltak vurdert · {completion?.status || "Ikke ferdigstilt"}</p>
-      {items.map((item,index) => <article key={item.id || index} className="rounded-xl border border-slate-700 p-3 space-y-2">
-        <h3 className="font-bold">{item.title}</h3>
-        <p className="text-xs text-slate-300">Utførelse: {itemStatusLabel(item)}{!direct && ` · Resultat: ${item.result_status || "ikke_vurdert"} · TG: ${item.result_tg || "ikke_vurdert"}`}</p>
-        {item.comment && <p className="whitespace-pre-wrap text-sm">{item.comment}</p>}
-        {documentationForItem(item).map(doc => <div key={doc.id} className="text-xs">
-          {doc.caption_text && <p>{doc.caption_text}</p>}
-          {doc.photo_url && <a className="underline" href={apiAssetUrl(doc.photo_url)} target="_blank" rel="noreferrer">Bilde</a>}
-          {doc.audio_url && <audio controls preload="none" src={apiAssetUrl(doc.audio_url)} />}
-        </div>)}
-      </article>)}
-      <h3 className="font-bold">Sluttkontroll</h3>
-      {([["agreed_scope_completed","Avtalte tiltak kontrollert"],["visual_control_completed","Visuell sluttkontroll"],["documentation_completed","Dokumentasjon komplett"],["site_cleaned","Arbeidsområde ferdigstilt"]] as const).map(([key,label]) => <p key={key} className="text-sm">{label}: {boolValue(controls[key]) ? "Bekreftet" : "Ikke bekreftet"}</p>)}
-    </>}
-  </section>;
-
   return (
     <section className="overflow-hidden rounded-3xl border border-blue-500/25 bg-[#0b0f17]">
+      {readOnly && <div className="border-b border-amber-500/30 bg-amber-500/10 px-5 py-3 text-xs text-amber-200">Forhåndsvisning som prosjektleder. Du kan prøve skjemaet, men endringer, bilder og ferdigstilling lagres ikke.</div>}
       <div className="border-b border-slate-800/80 px-5 py-5 sm:px-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-start gap-3">
@@ -1226,8 +1208,7 @@ export default function ServiceCompletionWorkspace({
                           </div>
                         )}
 
-                        {item.item_status !== "ikke_vurdert" &&
-                          (direct || normalized.result_tg !== "ikke_vurdert") && (
+                        {(direct || (item.item_status !== "ikke_vurdert" && normalized.result_tg !== "ikke_vurdert")) && (
                             <div className="mt-5">
                               <label className="mb-2 block text-[9px] font-black uppercase tracking-wider text-slate-500">
                                 4. Kommentar <span className="font-medium normal-case text-slate-700">– valgfritt</span>
@@ -1244,8 +1225,7 @@ export default function ServiceCompletionWorkspace({
                             </div>
                           )}
 
-                        {item.item_status !== "ikke_vurdert" &&
-                          (direct || normalized.result_tg !== "ikke_vurdert") && (
+                        {(direct || (item.item_status !== "ikke_vurdert" && normalized.result_tg !== "ikke_vurdert")) && (
                             <div className="mt-5 border-t border-slate-800/80 pt-5">
                               <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div>
@@ -1628,7 +1608,7 @@ export default function ServiceCompletionWorkspace({
               <button
                 type="button"
                 onClick={() => save(false)}
-                disabled={saving}
+                disabled={readOnly || saving}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-xs font-black text-slate-300 transition hover:border-slate-600 disabled:opacity-50 sm:flex-none"
               >
                 {saving ? (
@@ -1642,7 +1622,7 @@ export default function ServiceCompletionWorkspace({
               <button
                 type="button"
                 onClick={() => save(true)}
-                disabled={saving || !allItemsAssessed || !controlsComplete}
+                disabled={readOnly || saving || !allItemsAssessed || !controlsComplete}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-black text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-35 sm:flex-none"
               >
                 <CheckCircle2 className="h-4 w-4" />
