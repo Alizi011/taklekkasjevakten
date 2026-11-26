@@ -3,10 +3,22 @@ import { apiUrl } from "../../lib/api";
 import ServiceCompletionWorkspace from "./ServiceCompletionWorkspace";
 import type { WorkOverride } from "../AdminWorkOverride";
 
+type OfferScope = { id: number; number: string; title: string; description: string; items: string[] };
+function buildOfferScope(offer: any): OfferScope {
+  const title = String(offer.title || "").trim();
+  const description = String(offer.description || "").trim();
+  // Use actual agreed work text, never prices, materials, or invented tasks.
+  const lines = description.split(/\r?\n/).map(line => line.replace(/^\s*(?:[-•*]|\d+[.)])\s*/, "").trim()).filter(line => line.length > 3 && !/^(arbeidsbeskrivelse|omfang|utførelse|arbeid|vedlikehold):?$/i.test(line));
+  const items = Array.from(new Set(lines.length ? lines : [title].filter(Boolean)));
+  if (!items.length) throw new Error("Akseptert tilbud mangler arbeidsbeskrivelse.");
+  return { id: Number(offer.id), number: String(offer.offer_number || "#"+offer.id), title, description, items };
+}
+
 type Props = { inquiryId: number; address: string; adminPreview: boolean; onBack: () => void; onFinished: () => void };
 export default function HistoricalReport2Checklist({ inquiryId, address, adminPreview, onBack, onFinished }: Props) {
   const [work,setWork] = useState<WorkOverride|null>(null);
   const [reportText,setReportText] = useState("");
+  const [offerScope,setOfferScope] = useState<OfferScope|null>(null);
   const [ready,setReady] = useState(false);
   const [draft,setDraft] = useState("");
   const [sending,setSending] = useState(false);
@@ -16,7 +28,7 @@ export default function HistoricalReport2Checklist({ inquiryId, address, adminPr
   useEffect(() => {
     const controller = new AbortController();
     const signal = controller.signal;
-    setLoading(true); setError(""); setWork(null);
+    setLoading(true); setError(""); setWork(null); setOfferScope(null); setReady(false); setDraft("");
     void (async () => {
       try {
         const res = adminPreview
@@ -27,6 +39,16 @@ export default function HistoricalReport2Checklist({ inquiryId, address, adminPr
         const reportRes = await fetch(apiUrl("/reports.php?inquiry_id="+inquiryId),{credentials:"include",cache:"no-store",signal});
         const reportData = await reportRes.json();
         if (!reportRes.ok || !reportData.success) throw new Error(reportData.message || "Kunne ikke hente rapportgrunnlaget.");
+        if (!reportData.report) {
+          const token = adminPreview ? null : window.localStorage.getItem("taklekkasjevakten_project_manager_session");
+          const offerRes = await fetch(apiUrl("/offers.php?inquiry_id="+inquiryId+"&all=1"), { credentials:"include",cache:"no-store",signal,headers:token?{"X-TLV-PM-Session":token}:{} });
+          const offerData = await offerRes.json();
+          if (!offerRes.ok || !offerData.success) throw new Error(offerData.message || "Kunne ikke hente akseptert tilbud.");
+          const offers = Array.isArray(offerData.offers) ? offerData.offers : offerData.offer ? [offerData.offer] : [];
+          const accepted = offers.filter((o:any)=>o.status==="akseptert" && (o.offer_context || "initial")==="initial" && !o.source_report_id && String(o.service || "").toLowerCase()==="service");
+          if (accepted.length !== 1) throw new Error("Kontrollisten krever ett entydig akseptert hovedtilbud.");
+          if (!signal.aborted) setOfferScope(buildOfferScope(accepted[0]));
+        }
         if (!signal.aborted) {
           setWork(data.work);
           setReportText(reportData.report?.admin_final || reportData.report?.ai_draft || "");
@@ -67,7 +89,7 @@ export default function HistoricalReport2Checklist({ inquiryId, address, adminPr
       {work && <p className="text-sm text-emerald-300">Utført arbeid: {work.work_type} · {work.started_on} – {work.completed_on}</p>}
       {loading && <p role="status">Henter kontrollgrunnlaget …</p>}
       {error && <p role="alert" className="text-rose-300">{error}</p>}
-      {work && !loading && !error && <ServiceCompletionWorkspace inquiryId={inquiryId} reportText={reportText} historicalWork={work} readOnly={adminPreview} onFinished={adminPreview ? undefined : () => setReady(true)}/>}
+      {work && !loading && !error && <ServiceCompletionWorkspace inquiryId={inquiryId} reportText={reportText} historicalWork={work} offerScope={offerScope} readOnly={adminPreview} onFinished={adminPreview ? undefined : () => setReady(true)}/>}
       {!adminPreview && ready && !loading && !error && <section className="space-y-3 rounded-xl border border-emerald-500/30 p-4">
         <h2 className="font-bold">Rapport 2 – utførelsesrapport</h2>
         <p className="text-xs text-slate-300">Kontrollisten er ferdigstilt. Beskriv kun dokumentert arbeid og eventuelle begrensninger. Eksisterende rapportutkast beholdes.</p>
