@@ -18,10 +18,10 @@ export default function AgreementSigningPage() {
   return <RealAgreementSigningPage />;
 }
 
-function RealAgreementSigningPage() {
+export function RealAgreementSigningPage({ verifiedToken, onComplete }: { verifiedToken?: string; onComplete?: () => void } = {}) {
   const [token] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get("token") || "";
+    return verifiedToken || params.get("token") || "";
   });
 
   const [step, setStep] = useState<Step>("request");
@@ -35,14 +35,14 @@ function RealAgreementSigningPage() {
   const [result, setResult] = useState("");
 
   useEffect(() => {
-    if (token) {
+    if (token && !verifiedToken) {
       window.history.replaceState(
         {},
         document.title,
         window.location.pathname
       );
     }
-  }, [token]);
+  }, [token, verifiedToken]);
 
   useEffect(() => {
     return () => {
@@ -89,7 +89,7 @@ function RealAgreementSigningPage() {
     setBusy(true);
     setError("");
     try {
-      await call("verify_code", { code: code.trim() });
+      if (!verifiedToken) await call("verify_code", { code: code.trim() });
 
       const info = await call("document_info");
 
@@ -125,6 +125,10 @@ function RealAgreementSigningPage() {
     }
   }
 
+  useEffect(() => {
+    if (verifiedToken) void verifyCode();
+  }, [verifiedToken]);
+
   async function sign() {
     if (!accepted || !documentHash || !pdfUrl) return;
     setBusy(true);
@@ -146,6 +150,7 @@ function RealAgreementSigningPage() {
           : "Din signatur er registrert. Avtalen venter på øvrige signatarer."
       );
       setStep("completed");
+      onComplete?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Signering mislyktes.");
     } finally {
@@ -174,7 +179,7 @@ function RealAgreementSigningPage() {
           </p>
         )}
 
-        {/^[a-f0-9]{64}$/.test(token) && step === "request" && (
+        {/^[a-f0-9]{64}$/.test(token) && step === "request" && !verifiedToken && (
           <section className="rounded-2xl border border-slate-800 bg-slate-950 p-6">
             <h2 className="font-bold">1. Bekreft mobilnummer</h2>
             <p className="my-3 text-sm text-slate-400">
@@ -275,6 +280,10 @@ function RealAgreementSigningPage() {
           </section>
         )}
 
+        {verifiedToken && step === "request" && !busy && error && (
+          <button type="button" onClick={() => void verifyCode()} className="rounded-xl bg-amber-500 px-5 py-3 font-bold text-slate-950">Prøv å åpne dokumentet igjen</button>
+        )}
+        {busy && verifiedToken && step === "request" && <p>Henter arbeidsavtalen …</p>}
         {error && (
           <p role="alert" className="rounded-xl border border-red-900 p-4 text-sm text-red-300">
             {error}
