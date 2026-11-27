@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiUrl } from "../lib/api";
+import { RealAgreementSigningPage } from "../pages/AgreementSigningPage";
 
 type Agreement = {
   id: number;
@@ -49,6 +50,12 @@ export default function CustomerAgreementSigners({
   const [existing, setExisting] = useState<string[]>([]);
   const [liveSigners, setLiveSigners] = useState<PreviewSigner[] | null>(null);
   const [liveSignerError, setLiveSignerError] = useState("");
+  const [inlineAvailable, setInlineAvailable] = useState(false);
+  const [inlineReason, setInlineReason] = useState("");
+  const [inlineBusy, setInlineBusy] = useState(false);
+  const [inlineStage, setInlineStage] = useState<"start" | "verify" | "document">("start");
+  const [inlineCode, setInlineCode] = useState("");
+  const [inlineToken, setInlineToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -356,6 +363,40 @@ export default function CustomerAgreementSigners({
   const signingComplete = customerSignerRegistered && customerSigners.every(signer => signer.status === "signed");
   const signingReady = Boolean(agreement && ["ready_for_signature", "sent_for_signature", "partially_signed"].includes(agreement.status));
 
+  useEffect(() => {
+    let cancelled = false;
+    setInlineAvailable(false);
+    setInlineReason("");
+    setInlineStage("start");
+    setInlineToken("");
+    setInlineCode("");
+    if (previewMode || !sessionToken || !selectedAgreement || !signingReady || !authorityChecked || signingComplete) return;
+    request("/customer_agreement_signing_inline.php", { action: "status", agreement_id: selectedAgreement })
+      .then(result => { if (!cancelled) { setInlineAvailable(result.available === true); setInlineReason(result.reason || ""); } })
+      .catch(e => { if (!cancelled) setInlineReason(e instanceof Error ? e.message : "Direkte signering er ikke tilgjengelig."); });
+    return () => { cancelled = true; };
+  }, [previewMode, sessionToken, inquiryId, selectedAgreement, signingReady, authorityChecked, signingComplete]);
+
+  async function inlineAction(action: "start" | "verify" | "resend") {
+    if (inlineBusy || previewMode || !inlineAvailable || !selectedAgreement) return;
+    setInlineBusy(true);
+    setInlineReason("");
+    try {
+      const result = await request("/customer_agreement_signing_inline.php", {
+        action, agreement_id: selectedAgreement,
+        ...(action === "verify" ? {code: inlineCode} : {}),
+      });
+      if (result.signing_stage === "document" && /^[a-f0-9]{64}$/.test(result.signing_token || "")) {
+        setInlineToken(result.signing_token);
+        setInlineStage("document");
+      } else if (action === "start" && result.signing_stage === "verify") {
+        setInlineStage("verify");
+      } else if (action === "resend") setInlineReason("Ny kode er sendt.");
+    } catch (e) {
+      setInlineReason(e instanceof Error ? e.message : "Signering kunne ikke fortsette.");
+    } finally { setInlineBusy(false); }
+  }
+
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5 text-slate-100">
       <div className="mb-4 flex items-center justify-between">
@@ -437,6 +478,24 @@ export default function CustomerAgreementSigners({
               Opplysninger om fullmakt og invitasjon oppdateres av prosjektansvarlig.
             </p>}
           </div>
+
+          {!previewMode && signingReady && authorityChecked && !signingComplete && (
+            <div className="mb-4 space-y-3 rounded-xl border border-amber-500/40 p-4">
+              {inlineAvailable && inlineStage === "start" && <button type="button" disabled={inlineBusy} onClick={() => void inlineAction("start")} className="w-full rounded-xl bg-amber-400 px-4 py-3 font-black text-slate-950 disabled:opacity-50">
+                {inlineBusy ? "Starter …" : "Signer arbeidsavtalen"}
+              </button>}
+              {inlineAvailable && inlineStage === "verify" && <>
+                <label className="block text-sm">SMS-kode
+                  <input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={inlineCode} onChange={e => setInlineCode(e.target.value.replace(/[^0-9]/g, ""))} className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 p-3"/>
+                </label>
+                <button type="button" disabled={inlineBusy || !/^\d{6}$/.test(inlineCode)} onClick={() => void inlineAction("verify")} className="rounded-lg bg-amber-400 px-4 py-2 font-bold text-slate-950 disabled:opacity-50">Bekreft kode</button>
+                <button type="button" disabled={inlineBusy} onClick={() => void inlineAction("resend")} className="ml-3 text-sm underline">Send ny kode</button>
+              </>}
+              {inlineStage === "document" && inlineToken && <RealAgreementSigningPage key={inlineToken} verifiedToken={inlineToken} onComplete={() => {setInlineToken(""); setInlineStage("start"); void load(true);}} />}
+              {inlineReason && <p role="status" className="text-xs text-amber-200">{inlineReason}</p>}
+              {!inlineAvailable && <p className="text-xs text-slate-400">Hvis direkte signering ikke er tilgjengelig, kan du bruke signeringslenken fra oss.</p>}
+            </div>
+          )}
 
           {data.agreements.length > 1 ? <label className="mb-4 block text-sm">
             Arbeidsavtale
