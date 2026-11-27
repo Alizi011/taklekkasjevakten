@@ -6617,7 +6617,8 @@ if (from < earliestDate) {
                                   const tone = actionTone(inquiry);
                                   const ActionIcon = tone.icon;
                                   const booking = parseInquiryBooking(inquiry);
-                                  const nextAction = task.title || actionLabel(inquiry);
+                                  const report2AwaitingApproval = task.title === "Fullfør kontrolliste for Rapport 2" && report2ApprovalStates[String(normalizeInquiryId(inquiry.id))] === "awaiting_pm";
+                                  const nextAction = report2AwaitingApproval ? "Godkjenn eller returner Rapport 2" : task.title || actionLabel(inquiry);
 
                                   return (
                                     <article
@@ -6689,7 +6690,11 @@ if (from < earliestDate) {
                                               type="button"
                                               onClick={() => {
                                                  if (task.on_hold === true) return;
-                                                 if (task.title === "Fullfør kontrolliste for Rapport 2") {
+                                                 if (report2AwaitingApproval) {
+                                                    openApproval(inquiry);
+                                                    return;
+                                                  }
+                                                  if (task.title === "Fullfør kontrolliste for Rapport 2") {
                                                    setStandaloneWorkInquiry(inquiry);
                                                    return;
                                                  }
