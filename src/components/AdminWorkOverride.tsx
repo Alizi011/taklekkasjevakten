@@ -84,13 +84,13 @@ export default function AdminWorkOverride({ directWork = false, inquiryId, proje
   const taskStatus = task?.status;
   const taskLabel = taskStatus === "open" ? "Etterspurt – avventer prosjektansvarlig" : taskStatus === "in_progress" ? "Kontrolliste under arbeid" : taskStatus === "completed" || taskStatus === "done" ? "Kontrollisteoppgaven er fullført" : taskStatus ? "Oppgavestatus: " + taskStatus : "";
   return <>
-    <div className="mt-3 rounded-xl border border-cyan-500/25 bg-cyan-500/5 p-3" role="status">
+    {(task || (!available && !busy && error)) && <div className="mt-3 rounded-xl border border-cyan-500/25 bg-cyan-500/5 p-3" role="status">
       <p className="text-xs font-bold text-cyan-200">Forespørsel om Rapport 2</p>
       <p className="mt-1 text-xs text-slate-200">{busy ? "Henter forespørselsstatus …" : !available ? "Forespørselsstatus utilgjengelig" : task ? taskLabel : "Ingen registrert kontrollisteforespørsel funnet"}</p>
       {available && task && <p className="mt-1 text-[11px] text-slate-400">Oppgave #{task.id}{projectManagerName ? " · Prosjektansvarlig: " + projectManagerName : ""}</p>}
       {available && task && (taskStatus === "completed" || taskStatus === "done") && <p className="mt-1 text-[11px] text-slate-400">Fullført oppgave er ikke det samme som godkjent eller publisert rapport.</p>}
       {!available && !busy && error && <p className="mt-1 text-xs text-rose-300">{error}</p>}
-    </div>
+    </div>}
     <details id={`work-registration-${inquiryId}`} className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/5 p-3" data-testid="admin-work-override">
     <summary className="cursor-pointer text-xs font-black text-amber-200">{directWork ? "Registrer utført arbeid / etterspør Rapport 2" : "Administrativ overstyring"}</summary>
     <div className="mt-3 space-y-3">
