@@ -185,9 +185,10 @@ export default function ServiceCompletionWorkspace({
   const [checklistRows, setChecklistRows] = useState<ChecklistRow[]>([]);
   const [photoMenu, setPhotoMenu] = useState<number|null>(null);
   const [projectPicker, setProjectPicker] = useState<number|null>(null);
+  const [imageUploadProgress, setImageUploadProgress] = useState("");
   const [pendingImage, setPendingImage] = useState<{
     itemIndex: number;
-    file: File;
+    files: File[];
   } | null>(null);
   const [pendingAudio, setPendingAudio] = useState<{
     itemIndex: number;
@@ -625,7 +626,7 @@ export default function ServiceCompletionWorkspace({
       const blob = await response.blob();
       if (!blob.type.startsWith("image/")) throw new Error("Prosjektfilen er ikke et bilde.");
       const extension = blob.type === "image/png" ? "png" : blob.type === "image/webp" ? "webp" : blob.type === "image/heic" ? "heic" : "jpg";
-      setPendingImage({itemIndex:index,file:new File([blob], "prosjektbilde-"+doc.id+"."+extension,{type:blob.type})});
+      setPendingImage({itemIndex:index,files:[new File([blob], "prosjektbilde-"+doc.id+"."+extension,{type:blob.type})]});
       setProjectPicker(null); setPhotoMenu(null);
     } catch (e) { setError(e instanceof Error ? e.message : "Kunne ikke hente prosjektbildet."); }
     finally { setUploadingKey(null); }
@@ -681,8 +682,55 @@ export default function ServiceCompletionWorkspace({
     }
   };
 
+  const uploadImagesForItem = async (item: WorkItem, itemIndex: number, phase: 2 | 3, files: File[]) => {
+    if (readOnly || uploadingKey || !files.length) return;
+    setUploadingKey(`${item.id || `new-${itemIndex}`}-${phase}-photos`);
+    setMessage("");
+    setError("");
+    const failed: File[] = [];
+    let uploaded = 0;
+    try {
+      const itemId = await ensureItemId(item, itemIndex);
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setImageUploadProgress(`Laster opp bilde ${i + 1} av ${files.length}...`);
+        try {
+          const formData = new FormData();
+          formData.append("inquiry_id", String(inquiryId));
+          formData.append("work_completion_item_id", String(itemId));
+          formData.append("documentation_phase", String(phase));
+          formData.append("photo", file);
+          const res = await fetch(apiUrl("/photos.php"), { method: "POST", body: formData });
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.message || "Opplasting feilet.");
+          uploaded++;
+        } catch {
+          failed.push(file);
+        }
+      }
+      if (uploaded) {
+        try {
+          const res = await fetch(apiUrl(`/photos.php?inquiry_id=${inquiryId}`));
+          const data = await res.json();
+          if (!res.ok || !data.success || !Array.isArray(data.photos)) throw new Error("Kunne ikke oppdatere bildelisten.");
+          setDocumentation(data.photos);
+        } catch {
+          setError("Bildene er lagret, men bildelisten kunne ikke oppdateres. Last siden på nytt etter lagring.");
+        }
+        setMessage(`${uploaded} av ${files.length} bilder lastet opp.`);
+      }
+      setPendingImage(failed.length ? { itemIndex, files: failed } : null);
+      if (failed.length) setError(`${failed.length} bilder kunne ikke lastes opp. De er fortsatt valgt. Kontroller bildelisten før nytt forsøk.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Kunne ikke klargjøre opplastingen.");
+    } finally {
+      setUploadingKey(null);
+      setImageUploadProgress("");
+    }
+  };
+
   const save = async (finish: boolean) => {
-    if (readOnly || saving) return;
+    if (readOnly || saving || uploadingKey) return;
     setSaving(true);
     setMessage("");
     setError("");
@@ -889,7 +937,7 @@ export default function ServiceCompletionWorkspace({
   };
 
   const goToItem = (index: number) => {
-    if (index < 0 || index >= items.length) return;
+    if (uploadingKey || index < 0 || index >= items.length) return;
     setPendingImage(null);
     setPhotoMenu(null);
     setProjectPicker(null);
@@ -1268,7 +1316,7 @@ export default function ServiceCompletionWorkspace({
                                 <p className="text-xs font-bold">Velg bildekilde</p>
                                 <div className="grid gap-2 sm:grid-cols-3">
                                   {["Ta bilde","Velg fra bildebibliotek"].map((label,n)=><label key={label} className="cursor-pointer rounded-lg border border-slate-600 p-3 text-center text-xs font-bold">
-                                    {label}<input type="file" accept="image/*" capture={n===0?"environment":undefined} className="hidden" disabled={Boolean(uploadingKey)} onChange={e=>{const file=e.target.files?.[0];if(file){setPendingImage({itemIndex:index,file});setPhotoMenu(null);setProjectPicker(null);}e.target.value="";}}/>
+                                    {label}<input type="file" accept="image/*" capture={n===0?"environment":undefined} multiple={n===1} className="hidden" disabled={Boolean(uploadingKey)} onChange={e=>{const files=Array.from(e.target.files||[]);if(files.length){setPendingImage({itemIndex:index,files});setPhotoMenu(null);setProjectPicker(null);}e.target.value="";}}/>
                                   </label>)}
                                   <button type="button" onClick={()=>setProjectPicker(index)} className="rounded-lg border border-slate-600 p-3 text-xs font-bold">Velg fra prosjektbilder</button>
                                 </div>
@@ -1282,14 +1330,14 @@ export default function ServiceCompletionWorkspace({
                                 <button type="button" onClick={()=>{setPhotoMenu(null);setProjectPicker(null);}} className="text-xs text-slate-400">Avbryt</button>
                               </div>}
                               {currentPendingImage && (() => {
-                                const pendingFile = currentPendingImage.file;
+                                const pendingFiles = currentPendingImage.files;
 
                                 return (
                                   <div className="mt-3 flex flex-col gap-3 rounded-xl border border-blue-500/20 bg-blue-500/[0.05] p-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div className="min-w-0">
-                                      <p className="text-[10px] font-black text-white">Kategoriser bildet</p>
+                                      <p className="text-[10px] font-black text-white">Kategoriser {pendingFiles.length===1?"bildet":"alle "+pendingFiles.length+" bildene"}</p>
                                       <p className="mt-0.5 truncate text-[9px] text-slate-500">
-                                        {pendingFile.name}
+                                        {imageUploadProgress||(pendingFiles.length===1?pendingFiles[0].name:pendingFiles.length+' bilder valgt')}
                                       </p>
                                     </div>
                                     <div className="flex flex-wrap gap-2">
@@ -1297,8 +1345,7 @@ export default function ServiceCompletionWorkspace({
                                         type="button"
                                         disabled={Boolean(uploadingKey)}
                                         onClick={async () => {
-                                          setPendingImage(null);
-                                          await uploadForItem(item, index, 2, "photo", pendingFile);
+                                          await uploadImagesForItem(item,index,2,pendingFiles);
                                         }}
                                         className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[9px] font-black text-amber-300 disabled:opacity-50"
                                       >
@@ -1308,8 +1355,7 @@ export default function ServiceCompletionWorkspace({
                                         type="button"
                                         disabled={Boolean(uploadingKey)}
                                         onClick={async () => {
-                                          setPendingImage(null);
-                                          await uploadForItem(item, index, 3, "photo", pendingFile);
+                                          await uploadImagesForItem(item,index,3,pendingFiles);
                                         }}
                                         className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[9px] font-black text-emerald-300 disabled:opacity-50"
                                       >
@@ -1608,7 +1654,7 @@ export default function ServiceCompletionWorkspace({
               <button
                 type="button"
                 onClick={() => save(false)}
-                disabled={readOnly || saving}
+                disabled={readOnly || saving || Boolean(uploadingKey)}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-xs font-black text-slate-300 transition hover:border-slate-600 disabled:opacity-50 sm:flex-none"
               >
                 {saving ? (
@@ -1622,7 +1668,7 @@ export default function ServiceCompletionWorkspace({
               <button
                 type="button"
                 onClick={() => save(true)}
-                disabled={readOnly || saving || !allItemsAssessed || !controlsComplete}
+                disabled={readOnly || saving || Boolean(uploadingKey) || !allItemsAssessed || !controlsComplete}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-black text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-35 sm:flex-none"
               >
                 <CheckCircle2 className="h-4 w-4" />
