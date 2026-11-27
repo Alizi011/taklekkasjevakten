@@ -557,6 +557,9 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
   const pending = proposal?.status === "pending_customer";
   const approved = proposal?.status === "approved";
   const isSigned = agreement?.status === "signed";
+  const customerSigners = signers.filter(s => s.party === "customer");
+  const customerSigningComplete = customerSigners.length > 0 && customerSigners.every(s => s.status === "signed");
+  const missingAuthority = signers.filter(s => !s.authority_verified_at || !s.authority_basis?.trim());
   const signingNextStep = isSigned
     ? "Arbeidsavtalen er ferdig signert av begge parter. Ingen signeringshandling gjenstår."
     : !agreement && pending
@@ -565,10 +568,12 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
       ? "Datoen er godkjent, men arbeidsavtalen mangler. Undersøk avtaleopprettelsen før ny invitasjon."
     : !agreement
       ? "Kontroller oppstartsdato og tilbudsstatus."
+    : agreement.status === "cancelled"
+      ? "Arbeidsavtalen er kansellert."
     : signers.length === 0
       ? "Arbeidsavtalen finnes, men ingen signatarer er registrert. Kontroller signatarregistreringen."
-    : agreement.status === "draft" && signers.some(s => !s.authority_verified_at)
-      ? "Kontroller og dokumenter signaturfullmakten for signatarene som mangler verifisering."
+    : agreement.status === "draft" && missingAuthority.length > 0
+      ? `Mangler kontrollert signaturfullmakt: ${missingAuthority.map(s => s.full_name).join(", ")}.`
     : agreement.status === "draft"
       ? "Signaturfullmaktene er kontrollert. Klargjør arbeidsavtalen for signering."
     : signers.some(s => s.status === "pending" && s.invitation_status)
@@ -647,7 +652,11 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                   })()}
                   <p className="mt-2 text-xs text-slate-300">
                     Kontaktpersonen kan følge opp forespørsler og tilbud gjennom eksisterende kundetilgang.
-                    Signaturrett vurderes først når en arbeidsavtale skal signeres.
+                    {agreement ? (() => {
+                      const matches = customerSigners.filter(s => normalizePersonName(s.full_name || "") === normalizePersonName(member.full_name || "") && Boolean(s.email?.trim()) && s.email.trim().toLowerCase() === (member.email || "").trim().toLowerCase());
+                      const signer = matches.length === 1 ? matches[0] : null;
+                      return signingError ? " Avtalens signaturstatus er utilgjengelig." : signer ? ` Avtalens signaturfullmakt: ${signer.authority_verified_at ? "kontrollert" : "avventer kontroll"}. Signering: ${signer.status === "signed" ? "signert" : "ikke signert"}.` : " Se signaturfullmakt under den aktuelle arbeidsavtalen.";
+                    })() : " Signaturrett vurderes når arbeidsavtalen opprettes."}
                   </p>
                   <button type="button" onClick={() => void openRepresentativeReview(member)}
                     className="mt-2 rounded-lg border border-cyan-500/40 px-3 py-2 font-bold text-cyan-200 hover:bg-cyan-500/10">
@@ -864,7 +873,11 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                         </div>
                       ) : null}
 
+                      {signer.party === "contractor" && !customerSigningComplete && signer.status === "pending" && (
+                        <p className="text-xs text-amber-200">Avventer kundens signatur.</p>
+                      )}
                       {signer.authority_verified_at &&
+                        (signer.party === "customer" || customerSigningComplete) &&
                         ["ready_for_signature", "sent_for_signature", "partially_signed"].includes(agreement.status) &&
                         signer.status === "pending" && (
                         <div className="space-y-2">
@@ -909,7 +922,7 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                   {agreement.status === "draft" &&
                     signers.some(s => s.party === "customer") &&
                     signers.some(s => s.party === "contractor") &&
-                    signers.every(s => Boolean(s.authority_verified_at)) && (
+                    signers.every(s => Boolean(s.authority_verified_at && s.authority_basis?.trim())) && (
                     <button
                       type="button"
                       disabled={signingBusy}
