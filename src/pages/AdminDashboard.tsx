@@ -51,7 +51,7 @@ import CustomerDashboard from "./CustomerDashboard";
 import BusinessCustomerDashboard from "./BusinessCustomerDashboard";
 import ProjectManagerDashboard from "./ProjectManagerDashboard";
 import TechnicianDashboard from "./TechnicianDashboard";
-import AdminReportReview from "./AdminReportReview";
+import AdminReportReview from "../components/AdminReportReview";
 import DataImportPage from "./DataImportPage";
 import AdminProfilePage from "./AdminProfilePage";
 import TechnicalDocumentation from "./TechnicalDocumentation";
@@ -452,6 +452,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [reportArchiveLoading, setReportArchiveLoading] = useState(false);
   const [reportArchiveError, setReportArchiveError] = useState("");
   const [reviewInquiry, setReviewInquiry] = useState<Inquiry | null>(null);
+  const [reviewReportType,setReviewReportType]=useState<"rapport1"|"rapport2"|undefined>();
   const [calendarCursor, setCalendarCursor] = useState(new Date());
   const [calendarView, setCalendarView] = useState<"day" | "week" | "month">("month");
   const [checklistView, setChecklistView] = useState<"templates" | "completed">("templates");
@@ -747,7 +748,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     setReportArchiveError("");
 
     try {
-      const res = await fetch(apiUrl("/admin/report_archive.php"));
+      const res = await fetch(apiUrl("/admin/report_archive.php"), {credentials:"include",cache:"no-store"});
       const data = await res.json();
 
       if (!res.ok || !data.success) {
@@ -818,6 +819,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     );
 
     if (inquiry) {
+      setReviewReportType(report.report_type);
       setReviewInquiry(inquiry);
       return;
     }
@@ -2279,15 +2281,17 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     return (
       <AdminReportReview
         inquiryId={Number(reviewInquiry.id)}
+        requestedReport={reviewReportType}
         customerName={reviewName}
         address={reviewAddress}
         onBack={() => {
           setReviewInquiry(null);
-          setActiveSubTab("rapporter");
-          setFilterType("rapporter_til_gjennomgang");
+          setReviewReportType(undefined);
+          setActiveTab("rapporter");
           fetchInquiries();
+          fetchReportArchive();
         }}
-        onChanged={fetchInquiries}
+        onChanged={() => { void fetchInquiries(); void fetchReportArchive(); }}
       />
     );
   }
@@ -2761,7 +2765,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               </div>
 
               <div className="grid gap-3 md:grid-cols-2">
-                <button type="button" onClick={() => openDashboardView("rapporter", "rapporter_til_gjennomgang")} className="flex items-center justify-between gap-3 rounded-xl border border-[#71303f] bg-[#250c16]/80 p-4 text-left transition hover:border-rose-400/60 hover:bg-[#37131f]">
+                <button type="button" onClick={() => { setReportView("review"); setActiveTab("rapporter"); }} className="flex items-center justify-between gap-3 rounded-xl border border-[#71303f] bg-[#250c16]/80 p-4 text-left transition hover:border-rose-400/60 hover:bg-[#37131f]">
                   <div className="flex items-center gap-3">
                     <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-sky-400/10 text-sky-300"><FileText className="h-5 w-5" /></div>
                     <div>
@@ -2967,7 +2971,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                               {openActionMenuId === id && (
                                 <div className="absolute right-0 top-10 z-30 w-48 space-y-1 rounded-xl border border-[#794052] bg-[#210c15] p-1.5 text-left shadow-2xl">
                                   <button type="button" onClick={() => {setOpenActionMenuId(null); setSelectedInquiry(inq);}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-white hover:bg-[#542439]">Åpne oppdrag</button>
-                                  {needsReport && <button type="button" onClick={() => {setOpenActionMenuId(null); setReviewInquiry(inq);}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-sky-200 hover:bg-[#542439]">Behandle rapport</button>}
+                                  {needsReport && <button type="button" onClick={() => {setOpenActionMenuId(null); setReviewReportType(reportStatuses[String(inq.id)]?.report_type); setReviewInquiry(inq);}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-sky-200 hover:bg-[#542439]">Behandle rapport</button>}
                                   <button type="button" onClick={() => {setOpenActionMenuId(null); void createAdminReminder(inq, "project_manager");}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-white hover:bg-[#542439]">Purr prosjektansvarlig</button>
                                   <button type="button" onClick={() => {setOpenActionMenuId(null); void createAdminReminder(inq, "customer");}} className="w-full rounded-lg px-3 py-2 text-left text-xs text-white hover:bg-[#542439]">Påminn kunde</button>
                                 </div>
