@@ -3854,9 +3854,13 @@ export default function InquiryDetail({
 ) : (
   <>
 
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-cyan-300">Saksprosess · Neste steg</p>
-              <h2 className="mt-3 text-lg font-extrabold leading-snug text-white">{nextStepLabel}</h2>
-              <p className="mt-2 text-xs leading-5 text-slate-400">{nextStepSubtitle}</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-cyan-300">Saksprosess</p>
+              {acceptedRepairOffer && !followupAlreadyExecuted && !isAdminPaused ? (
+                <div className="mt-3"><AdminAgreementProgress key={`primary-agreement-${inquiryId}`} inquiryId={inquiryId} primary /></div>
+              ) : <>
+                <h2 className="mt-3 text-lg font-extrabold leading-snug text-white">{nextStepLabel}</h2>
+                <p className="mt-2 text-xs leading-5 text-slate-400">{nextStepSubtitle}</p>
+              </>}
               <button
                 type="button"
                 onClick={() => setShowDirectOfferGenerator(true)}
@@ -3894,8 +3898,11 @@ export default function InquiryDetail({
                           </div>
                           <span className="shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-300">Akseptert</span>
                         </div>
-                        <p className="text-xs leading-5 text-slate-300">{current.title}</p>
-                        <AdminAgreementProgress inquiryId={inquiryId} />
+                        <details className="rounded-xl border border-slate-700/70 p-3 text-xs text-slate-300">
+                          <summary className="cursor-pointer font-semibold">Tilbudsbeskrivelse</summary>
+                          <p className="mt-2 leading-5">{current.title}</p>
+                        </details>
+                        {(followupAlreadyExecuted || isAdminPaused) && <details className="rounded-xl border border-slate-700/70 p-3"><summary className="cursor-pointer text-xs font-semibold text-cyan-200">Arbeidsavtale og signeringshistorikk</summary><AdminAgreementProgress inquiryId={inquiryId} /></details>}
                         <button type="button" onClick={() => setAdminCaseTab("offer")}
                           className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-3 py-2.5 text-xs font-bold text-cyan-200 hover:bg-cyan-500/20">
                           <FileText className="h-4 w-4" />Vis tilbud, PDF og avtale
