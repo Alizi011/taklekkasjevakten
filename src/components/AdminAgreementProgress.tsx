@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiUrl } from "../lib/api";
+import { RealAgreementSigningPage } from "../pages/AgreementSigningPage";
 import { CheckCircle2, Circle, Clock3, FileCheck2, RefreshCw } from "lucide-react";
 
 type Proposal = {
@@ -45,6 +46,10 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
   const [signingError, setSigningError] = useState("");
   const [signingMessage, setSigningMessage] = useState("");
   const [signingBusy, setSigningBusy] = useState(false);
+  const [canContractorSign, setCanContractorSign] = useState(false);
+  const [contractorStage, setContractorStage] = useState<"start" | "verify" | "document">("start");
+  const [contractorCode, setContractorCode] = useState("");
+  const [contractorToken, setContractorToken] = useState("");
   const [authorityBasis, setAuthorityBasis] = useState<Record<number, string>>({});
   const [reviewedSigner, setReviewedSigner] = useState<number | null>(null);
   const [signingPhones, setSigningPhones] = useState<Record<number, string>>({});
@@ -347,6 +352,7 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
     setLoading(true);
     setError("");
     setAgreementAvailable(false);
+    setCanContractorSign(false);
     try {
       const response = await fetch(apiUrl("/admin_agreement_schedule_read.php"), {
         method: "POST", credentials: "include", cache: "no-store",
@@ -399,6 +405,7 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
               }
               if (!signal?.aborted) {
                 setSigners(Array.isArray(signerData.signers) ? signerData.signers : []);
+                setCanContractorSign(signerData.can_contractor_sign === true);
                 setSigningError("");
               }
             } catch (signerError) {
@@ -559,6 +566,25 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
   const isSigned = agreement?.status === "signed";
   const customerSigners = signers.filter(s => s.party === "customer");
   const customerSigningComplete = customerSigners.length > 0 && customerSigners.every(s => s.status === "signed");
+  useEffect(() => { setContractorStage("start"); setContractorCode(""); setContractorToken(""); }, [inquiryId, agreement?.id]);
+
+  async function contractorAction(action: "contractor_start" | "contractor_verify" | "contractor_resend") {
+    if (!agreement || !canContractorSign || !customerSigningComplete || signingBusy) return;
+    setSigningBusy(true); setSigningError(""); setSigningMessage("");
+    try {
+      const response = await fetch(apiUrl("/admin_agreement_signing_control.php"), {
+        method: "POST", credentials: "include", cache: "no-store", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({action, inquiry_id: inquiryId, agreement_id: agreement.id, ...(action === "contractor_verify" ? {code: contractorCode} : {})})
+      });
+      const result = await response.json();
+      if (!response.ok || result.success !== true) throw new Error(result.message || "Signering kunne ikke fortsette.");
+      if (result.signing_stage === "document" && /^[a-f0-9]{64}$/.test(result.signing_token || "")) {
+        setContractorToken(result.signing_token); setContractorStage("document");
+      } else if (result.signing_stage === "verify") setContractorStage("verify");
+      else if (action === "contractor_resend") setSigningMessage("Ny kode er sendt.");
+    } catch(e) { setSigningError(e instanceof Error ? e.message : "Signering kunne ikke fortsette."); }
+    finally { setSigningBusy(false); }
+  }
   const missingAuthority = signers.filter(s => !s.authority_verified_at || !s.authority_basis?.trim());
   const signingNextStep = isSigned
     ? "Arbeidsavtalen er ferdig signert av begge parter. Ingen signeringshandling gjenstår."
@@ -876,8 +902,19 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                       {signer.party === "contractor" && !customerSigningComplete && signer.status === "pending" && (
                         <p className="text-xs text-amber-200">Avventer kundens signatur.</p>
                       )}
+                      {signer.party === "contractor" && canContractorSign && customerSigningComplete && agreement.status === "partially_signed" && signer.status === "pending" && signer.authority_verified_at && (
+                        <div className="space-y-3 rounded-lg border border-emerald-500/40 p-3">
+                          {contractorStage === "start" && <button type="button" disabled={signingBusy} onClick={() => void contractorAction("contractor_start")} className="w-full rounded-lg bg-emerald-600 px-3 py-3 font-bold text-white disabled:opacity-50">Signer på vegne av Perun AS</button>}
+                          {contractorStage === "verify" && <>
+                            <label className="block text-sm">Kode sendt til registrert mobilnummer<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={contractorCode} onChange={e=>setContractorCode(e.target.value.replace(/[^0-9]/g,""))} className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 p-2"/></label>
+                            <button type="button" disabled={signingBusy || !/^\d{6}$/.test(contractorCode)} onClick={()=>void contractorAction("contractor_verify")} className="rounded-lg bg-emerald-600 px-3 py-2 font-bold text-white disabled:opacity-50">Bekreft kode</button>
+                            <button type="button" disabled={signingBusy} onClick={()=>void contractorAction("contractor_resend")} className="ml-3 text-xs underline">Send ny kode</button>
+                          </>}
+                          {contractorStage === "document" && contractorToken && <RealAgreementSigningPage key={contractorToken} verifiedToken={contractorToken} onComplete={()=>{setContractorToken("");setContractorStage("start");void load();}}/>}
+                        </div>
+                      )}
                       {signer.authority_verified_at &&
-                        (signer.party === "customer" || customerSigningComplete) &&
+                        (signer.party === "customer" || (customerSigningComplete && !canContractorSign)) &&
                         ["ready_for_signature", "sent_for_signature", "partially_signed"].includes(agreement.status) &&
                         signer.status === "pending" && (
                         <div className="space-y-2">
