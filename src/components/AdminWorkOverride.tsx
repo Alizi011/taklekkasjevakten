@@ -7,8 +7,8 @@ export type WorkOverride = { work_type: WorkType; started_on: string; completed_
 export type PhoneAcceptance = { accepted_on: string | null; received_by: string; scope: string; note?: string | null; recorded_at: string };
 export const phoneScopeLabels: Record<string,string> = { lekkasjesok:"Lekkasjesøk", service:"Service", vedlikehold:"Vedlikehold", varig_utbedring:"Varig utbedring", lekkasjesok_og_service:"Lekkasjesøk og service" };
 type Result = { acceptance?: PhoneAcceptance | null; success?: boolean; message?: string; work?: WorkOverride | null; task?: { id: number; status: string } | null };
-type Props = { inquiryId: number; projectManagerName?: string | null; onSaved?: (work: WorkOverride | null) => void; onAcceptance?: (value: PhoneAcceptance | null) => void };
-export default function AdminWorkOverride({ inquiryId, projectManagerName, onSaved, onAcceptance }: Props) {
+type Props = { directWork?: boolean; inquiryId: number; projectManagerName?: string | null; onSaved?: (work: WorkOverride | null) => void; onAcceptance?: (value: PhoneAcceptance | null) => void };
+export default function AdminWorkOverride({ directWork = false, inquiryId, projectManagerName, onSaved, onAcceptance }: Props) {
   const [acceptance,setAcceptance]=useState<PhoneAcceptance|null>(null);
   const [scope,setScope]=useState("");
   const [receiverOverride,setReceiverOverride]=useState<string | null>(null);
@@ -29,7 +29,7 @@ export default function AdminWorkOverride({ inquiryId, projectManagerName, onSav
   const endpoint = apiUrl("/admin_work_override.php");
   const apply = (data: Result) => {
     setWork(data.work || null); setTask(data.task || null);
-    setType(data.work?.work_type || "");
+    setType(data.work?.work_type || (directWork ? "vedlikehold" : ""));
     setStart(data.work?.started_on || ""); setEnd(data.work?.completed_on || "");
     setNote(data.work?.note || ""); setDirty(false);
     onSaved?.(data.work || null);
@@ -81,10 +81,10 @@ export default function AdminWorkOverride({ inquiryId, projectManagerName, onSav
     } catch(e) {setError(e instanceof Error?e.message:"Lagring feilet.");}
     finally {setBusy(false);}
   };
-  return <details className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/5 p-3" data-testid="admin-work-override">
-    <summary className="cursor-pointer text-xs font-black text-amber-200">Administrativ overstyring</summary>
+  return <details id={`work-registration-${inquiryId}`} className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/5 p-3" data-testid="admin-work-override">
+    <summary className="cursor-pointer text-xs font-black text-amber-200">{directWork ? "Registrer utført arbeid / etterspør Rapport 2" : "Administrativ overstyring"}</summary>
     <div className="mt-3 space-y-3">
-      <div className="space-y-2 border-b border-slate-700 pb-3">
+      {!directWork && <div className="space-y-2 border-b border-slate-700 pb-3">
         <h4 className="text-xs font-bold text-white">Muntlig kundeaksept</h4>
         <p className="text-xs text-slate-300">Registrer tidligere telefonaksept. Oppretter ikke tilbud eller signatur.</p>
         {acceptance && <p className="text-xs text-emerald-300">Registrert: {phoneScopeLabels[acceptance.scope]} · mottatt av {acceptance.received_by}</p>}
@@ -93,7 +93,7 @@ export default function AdminWorkOverride({ inquiryId, projectManagerName, onSav
         <label className="block text-xs">Dato for aksept (hvis kjent)<input type="date" value={acceptDate} max={today} onChange={e=>setAcceptDate(e.target.value)} disabled={!available||busy} className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 p-2"/></label>
         <label className="block text-xs">Merknad<textarea value={acceptNote} maxLength={1000} onChange={e=>setAcceptNote(e.target.value)} disabled={!available||busy} className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 p-2"/></label>
         <button type="button" onClick={()=>void saveAcceptance()} disabled={!available||busy||!scope||!receiver.trim()} className="w-full rounded-lg border border-emerald-500/40 p-2 text-xs font-bold text-emerald-200 disabled:opacity-40">Registrer muntlig kundeaksept</button>
-      </div>
+      </div>}
       <p className="text-xs text-slate-300">Registrer faktiske arbeidsdatoer. Dette er ikke en teknisk sluttkontroll eller en kundegodkjenning.</p>
       {work && <p className="text-xs font-bold text-emerald-300">{workTypes[work.work_type]} utført: {work.started_on} – {work.completed_on}</p>}
       <label className="block text-xs text-slate-200">Faktisk utført arbeid

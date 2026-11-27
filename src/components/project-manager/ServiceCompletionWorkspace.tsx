@@ -80,6 +80,7 @@ interface Props {
   employeeName?: string | null;
   onFinished?: () => void;
   readOnly?: boolean;
+  offerScope?: { id:number; number:string; title:string; description:string; items:string[] } | null;
   historicalWork?: { work_type: "service" | "vedlikehold" | "varig_utbedring"; started_on: string; completed_on: string };
 }
 
@@ -162,11 +163,13 @@ export default function ServiceCompletionWorkspace({
   employeeName = null,
   onFinished,
   historicalWork,
+  offerScope = null,
   readOnly = false,
 }: Props) {
   const historical = Boolean(historicalWork);
   const actualWorkType = historicalWork?.work_type === "varig_utbedring" ? "varig_utbedring" : "service";
-  const reportItems = useMemo(() => extractRecommendedItems(reportText), [reportText]);
+  const direct = Boolean(offerScope);
+  const reportItems = useMemo(() => offerScope?.items || extractRecommendedItems(reportText), [reportText, offerScope]);
 
   const [completion, setCompletion] = useState<CompletionData | null>(null);
   const [items, setItems] = useState<WorkItem[]>([]);
@@ -180,11 +183,13 @@ export default function ServiceCompletionWorkspace({
   const [documentation, setDocumentation] = useState<WorkDocumentation[]>([]);
   const [uploadingKey, setUploadingKey] = useState<string | null>(null);
   const [checklistRows, setChecklistRows] = useState<ChecklistRow[]>([]);
+  const [photoMenu, setPhotoMenu] = useState<number|null>(null);
+  const [projectPicker, setProjectPicker] = useState<number|null>(null);
+  const [imageUploadProgress, setImageUploadProgress] = useState("");
   const [pendingImage, setPendingImage] = useState<{
     itemIndex: number;
     files: File[];
   } | null>(null);
-  const [imageUploadProgress, setImageUploadProgress] = useState("");
   const [pendingAudio, setPendingAudio] = useState<{
     itemIndex: number;
     file: File;
@@ -309,7 +314,7 @@ export default function ServiceCompletionWorkspace({
               item_status: "ikke_vurdert",
               result_status: "ikke_vurdert",
               result_tg: "ikke_vurdert",
-              comment: title,
+              comment: direct ? "" : title,
             }))
           : [
               {
@@ -329,7 +334,7 @@ export default function ServiceCompletionWorkspace({
 
       const [docsRes, checklistRes] = await Promise.all([
         fetch(apiUrl(`/photos.php?inquiry_id=${inquiryId}`)),
-        fetch(apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)),
+        direct ? Promise.resolve(new Response(JSON.stringify({success:true,checklists:[]}))) : fetch(apiUrl(`/checklists.php?inquiry_id=${inquiryId}`)),
       ]);
 
       const [docsData, checklistData] = await Promise.all([
@@ -352,6 +357,7 @@ export default function ServiceCompletionWorkspace({
       setDocumentation(nextDocumentation);
       setChecklistRows(nextChecklistRows);
 
+      if (direct) { setChecklistRows([]); return; }
       const deviationRows = sourceChecklistItems(nextChecklistRows);
 
       if (savedItems.length > 0) {
@@ -403,7 +409,7 @@ export default function ServiceCompletionWorkspace({
 
   useEffect(() => {
     load();
-  }, [inquiryId, reportItems.join("|")]);
+  }, [inquiryId, reportItems.join("|"), offerScope?.id]);
 
   const patchItem = (index: number, patch: Partial<WorkItem>) => {
     setItems((current) =>
@@ -509,6 +515,7 @@ export default function ServiceCompletionWorkspace({
     item: WorkItem,
     itemIndex: number
   ): Promise<number> => {
+    if (readOnly) throw new Error("Forhåndsvisning kan ikke lagre.");
     if (item.id) return item.id;
 
     const mainRes = await fetch(apiUrl("/work_completion.php"), {
@@ -521,11 +528,11 @@ export default function ServiceCompletionWorkspace({
         completion_id: completion?.id || null,
         inquiry_id: inquiryId,
         work_type: actualWorkType,
-        ...(historical ? { source_offer_id: completion?.source_offer_id ?? null } : {}),
+        ...(historical ? { source_offer_id: offerScope?.id ?? completion?.source_offer_id ?? null } : {}),
         completed_at: historical ? historicalWork?.completed_on + " 00:00:00" : null,
         completed_by_employee_id: employeeId,
         completed_by_name: employeeName,
-        work_summary: "Arbeid registrert mot anbefalte tiltak i publisert rapport.",
+        work_summary: (direct ? "Arbeid registrert mot akseptert tilbud." : "Arbeid registrert mot anbefalte tiltak i publisert rapport."),
         additional_work: generalComment || null,
         deviations: null,
         warranty_years: historical ? (completion?.warranty_years ?? 0) : 5,
@@ -608,6 +615,23 @@ export default function ServiceCompletionWorkspace({
     return savedId;
   };
 
+  const chooseProjectPhoto = async (doc: WorkDocumentation, index: number) => {
+    if (uploadingKey || !doc.photo_url || Number(doc.inquiry_id) !== Number(inquiryId)) return;
+    setUploadingKey("project-photo"); setError("");
+    try {
+      const url = new URL(apiAssetUrl(doc.photo_url));
+      if (url.origin !== new URL(apiUrl("/photos.php")).origin && url.origin !== "https://api.taklekkasjevakten.no") throw new Error("Ugyldig bildekilde.");
+      const response = await fetch(url.href, {credentials:"omit"});
+      if (!response.ok) throw new Error("Kunne ikke hente prosjektbildet.");
+      const blob = await response.blob();
+      if (!blob.type.startsWith("image/")) throw new Error("Prosjektfilen er ikke et bilde.");
+      const extension = blob.type === "image/png" ? "png" : blob.type === "image/webp" ? "webp" : blob.type === "image/heic" ? "heic" : "jpg";
+      setPendingImage({itemIndex:index,files:[new File([blob], "prosjektbilde-"+doc.id+"."+extension,{type:blob.type})]});
+      setProjectPicker(null); setPhotoMenu(null);
+    } catch (e) { setError(e instanceof Error ? e.message : "Kunne ikke hente prosjektbildet."); }
+    finally { setUploadingKey(null); }
+  };
+
   const uploadForItem = async (
     item: WorkItem,
     itemIndex: number,
@@ -615,6 +639,7 @@ export default function ServiceCompletionWorkspace({
     kind: "photo" | "audio",
     file: File
   ) => {
+    if (readOnly) { setMessage("Forhåndsvisning: bildet er ikke lagret."); return; }
     const key = `${item.id || `new-${itemIndex}`}-${phase}-${kind}`;
     setUploadingKey(key);
     setMessage("");
@@ -732,14 +757,14 @@ export default function ServiceCompletionWorkspace({
           completion_id: completion?.id || null,
           inquiry_id: inquiryId,
           work_type: actualWorkType,
-        ...(historical ? { source_offer_id: completion?.source_offer_id ?? null } : {}),
+        ...(historical ? { source_offer_id: offerScope?.id ?? completion?.source_offer_id ?? null } : {}),
           completed_at: completedAt,
           completed_by_employee_id: employeeId,
           completed_by_name: employeeName,
           work_summary:
             completedTitles.length > 0
               ? completedTitles.join("\n")
-              : "Arbeid registrert mot anbefalte tiltak i publisert rapport.",
+              : (direct ? "Arbeid registrert mot akseptert tilbud." : "Arbeid registrert mot anbefalte tiltak i publisert rapport."),
           additional_work: generalComment || null,
           deviations:
             items.some(
@@ -857,8 +882,8 @@ export default function ServiceCompletionWorkspace({
   const incompleteItems = normalizedItems.filter(
     (item) =>
       item.item_status === "ikke_vurdert" ||
-      item.result_status === "ikke_vurdert" ||
-      item.result_tg === "ikke_vurdert"
+      (!direct && (item.result_status === "ikke_vurdert" ||
+      item.result_tg === "ikke_vurdert"))
   );
 
   const allItemsAssessed =
@@ -874,8 +899,8 @@ export default function ServiceCompletionWorkspace({
   const completedCount = normalizedItems.filter(
     (item) =>
       item.item_status !== "ikke_vurdert" &&
-      item.result_status !== "ikke_vurdert" &&
-      item.result_tg !== "ikke_vurdert"
+      (direct || (item.result_status !== "ikke_vurdert" &&
+      item.result_tg !== "ikke_vurdert"))
   ).length;
 
   const progressPercent = normalizedItems.length
@@ -886,8 +911,8 @@ export default function ServiceCompletionWorkspace({
     const normalized = normalizeItem(item);
     return (
       normalized.item_status !== "ikke_vurdert" &&
-      normalized.result_status !== "ikke_vurdert" &&
-      normalized.result_tg !== "ikke_vurdert"
+      (direct || (normalized.result_status !== "ikke_vurdert" &&
+      normalized.result_tg !== "ikke_vurdert"))
     );
   };
 
@@ -914,6 +939,8 @@ export default function ServiceCompletionWorkspace({
   const goToItem = (index: number) => {
     if (uploadingKey || index < 0 || index >= items.length) return;
     setPendingImage(null);
+    setPhotoMenu(null);
+    setProjectPicker(null);
     setPendingAudio(null);
     setActiveItemIndex(index);
   };
@@ -930,9 +957,9 @@ export default function ServiceCompletionWorkspace({
     }
   };
 
-
   return (
     <section className="overflow-hidden rounded-3xl border border-blue-500/25 bg-[#0b0f17]">
+      {readOnly && <div className="border-b border-amber-500/30 bg-amber-500/10 px-5 py-3 text-xs text-amber-200">Forhåndsvisning som prosjektleder. Du kan prøve skjemaet, men endringer, bilder og ferdigstilling lagres ikke.</div>}
       <div className="border-b border-slate-800/80 px-5 py-5 sm:px-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-start gap-3">
@@ -941,7 +968,7 @@ export default function ServiceCompletionWorkspace({
             </div>
             <div>
               <h3 className="text-base font-extrabold text-white">
-                Utførelse etter publisert rapport
+                {offerScope ? "Kontrolliste – akseptert tilbud "+offerScope.number : "Utførelse etter publisert rapport"}
               </h3>
               <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-400">
                 Gå gjennom ett tiltak om gangen. Ferdige tiltak kollapses automatisk
@@ -982,7 +1009,6 @@ export default function ServiceCompletionWorkspace({
         )}
       </div>
 
-      {readOnly && <p className="border-b border-slate-800 px-5 py-3 text-xs font-bold text-cyan-200">Administratorforhåndsvisning – skrivebeskyttet</p>}
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-12 text-xs text-slate-500">
           <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
@@ -1102,7 +1128,6 @@ export default function ServiceCompletionWorkspace({
                             </p>
                             <select
                               value=""
-                              disabled={readOnly}
                               onChange={(event) => {
                                 if (!event.target.value) return;
                                 patchItem(index, {
@@ -1137,7 +1162,6 @@ export default function ServiceCompletionWorkspace({
                                   <button
                                     key={value}
                                     type="button"
-                                    disabled={readOnly}
                                     onClick={() =>
                                       setExecutionStatus(index, value as ItemStatus)
                                     }
@@ -1158,7 +1182,7 @@ export default function ServiceCompletionWorkspace({
                             </div>
                           </div>
 
-                          <div>
+                          {!direct && <div>
                             <p className="text-[9px] font-black uppercase tracking-wider text-slate-500">
                               2. Ny tilstandsgrad
                             </p>
@@ -1169,7 +1193,7 @@ export default function ServiceCompletionWorkspace({
                                   <button
                                     key={value}
                                     type="button"
-                                    disabled={readOnly || item.item_status === "ikke_vurdert"}
+                                    disabled={item.item_status === "ikke_vurdert"}
                                     onClick={() =>
                                       patchItem(index, { result_tg: value as ResultTg })
                                     }
@@ -1190,10 +1214,10 @@ export default function ServiceCompletionWorkspace({
                                 );
                               })}
                             </div>
-                          </div>
+                          </div>}
                         </div>
 
-                        {(readOnly || item.item_status !== "ikke_vurdert") && (
+                        {!direct && item.item_status !== "ikke_vurdert" && (
                           <div className="mt-5">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <p className="text-[9px] font-black uppercase tracking-wider text-slate-500">
@@ -1215,7 +1239,6 @@ export default function ServiceCompletionWorkspace({
                                   <button
                                     key={value}
                                     type="button"
-                                    disabled={readOnly}
                                     onClick={() =>
                                       setResultStatus(index, value as ResultStatus)
                                     }
@@ -1233,15 +1256,13 @@ export default function ServiceCompletionWorkspace({
                           </div>
                         )}
 
-                        {(readOnly || (item.item_status !== "ikke_vurdert" &&
-                          normalized.result_tg !== "ikke_vurdert")) && (
+                        {(direct || (item.item_status !== "ikke_vurdert" && normalized.result_tg !== "ikke_vurdert")) && (
                             <div className="mt-5">
                               <label className="mb-2 block text-[9px] font-black uppercase tracking-wider text-slate-500">
                                 4. Kommentar <span className="font-medium normal-case text-slate-700">– valgfritt</span>
                               </label>
                               <textarea
                                 value={item.comment || ""}
-                                readOnly={readOnly}
                                 onChange={(event) =>
                                   patchItem(index, { comment: event.target.value })
                                 }
@@ -1252,8 +1273,7 @@ export default function ServiceCompletionWorkspace({
                             </div>
                           )}
 
-                        {item.item_status !== "ikke_vurdert" &&
-                          normalized.result_tg !== "ikke_vurdert" && (
+                        {(direct || (item.item_status !== "ikke_vurdert" && normalized.result_tg !== "ikke_vurdert")) && (
                             <div className="mt-5 border-t border-slate-800/80 pt-5">
                               <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div>
@@ -1261,52 +1281,14 @@ export default function ServiceCompletionWorkspace({
                                     5. Dokumentasjon
                                   </p>
                                   <p className="mt-1 text-[9px] text-slate-600">
-                                    Før-bilder hentes fra Rapport 1. Nye bilder legges som under arbeid eller resultat.
+                                    {direct ? "Legg til dokumentasjon fra før, under eller etter arbeidet." : "Før-bilder hentes fra Rapport 1. Nye bilder legges som under arbeid eller resultat."}
                                   </p>
                                 </div>
 
                                 <div className="flex flex-wrap gap-2">
-                                  <label
-                                    className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[10px] font-black text-blue-300 transition hover:bg-blue-500/15" 
-                                  >
-                                    <Camera className="h-3.5 w-3.5" />
-                                    Ta bilde
-                                    <input
-                                      type="file"
-                                      accept="image/*"
-                                      capture="environment"
-                                      className="hidden"
-                                      disabled={readOnly || Boolean(uploadingKey)}
-                                      onChange={(event) => {
-                                        const file = event.target.files?.[0];
-                                        if (file) {
-                                          setPendingImage({ itemIndex: index, files: [file] });
-                                        }
-                                        event.target.value = "";
-                                      }}
-                                    />
-                                  </label>
-
-                                  <label
-                                    className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[10px] font-black text-blue-300 transition hover:bg-blue-500/15" 
-                                  >
-                                    <Camera className="h-3.5 w-3.5" />
-                                    Velg fra bildebibliotek
-                                    <input
-                                      type="file"
-                                      accept="image/*"
-                                      multiple
-                                      className="hidden"
-                                      disabled={readOnly || Boolean(uploadingKey)}
-                                      onChange={(event) => {
-                                        const files = Array.from(event.target.files || []);
-                                        if (files.length) {
-                                          setPendingImage({ itemIndex: index, files });
-                                        }
-                                        event.target.value = "";
-                                      }}
-                                    />
-                                  </label>
+                                  <button type="button" disabled={Boolean(uploadingKey)} onClick={()=>{setPhotoMenu(photoMenu===index?null:index);setProjectPicker(null);}} className="inline-flex items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[10px] font-black text-blue-300">
+                                    <Camera className="h-3.5 w-3.5"/> + Bilde
+                                  </button>
 
                                   <label
                                     className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[10px] font-black text-violet-300 transition hover:bg-violet-500/15" 
@@ -1317,7 +1299,7 @@ export default function ServiceCompletionWorkspace({
                                       type="file"
                                       accept="audio/*"
                                       className="hidden"
-                                      disabled={readOnly || Boolean(uploadingKey)}
+                                      disabled={Boolean(uploadingKey)}
                                       onChange={(event) => {
                                         const file = event.target.files?.[0];
                                         if (file) {
@@ -1330,23 +1312,40 @@ export default function ServiceCompletionWorkspace({
                                 </div>
                               </div>
 
+                              {photoMenu===index && <div className="mt-3 space-y-2 rounded-xl border border-blue-500/30 p-3">
+                                <p className="text-xs font-bold">Velg bildekilde</p>
+                                <div className="grid gap-2 sm:grid-cols-3">
+                                  {["Ta bilde","Velg fra bildebibliotek"].map((label,n)=><label key={label} className="cursor-pointer rounded-lg border border-slate-600 p-3 text-center text-xs font-bold">
+                                    {label}<input type="file" accept="image/*" capture={n===0?"environment":undefined} multiple={n===1} className="hidden" disabled={Boolean(uploadingKey)} onChange={e=>{const files=Array.from(e.target.files||[]);if(files.length){setPendingImage({itemIndex:index,files});setPhotoMenu(null);setProjectPicker(null);}e.target.value="";}}/>
+                                  </label>)}
+                                  <button type="button" onClick={()=>setProjectPicker(index)} className="rounded-lg border border-slate-600 p-3 text-xs font-bold">Velg fra prosjektbilder</button>
+                                </div>
+                                {projectPicker===index && <div className="space-y-2">
+                                  <p className="text-xs text-slate-300">Velg et bilde fra denne saken. Originalen beholdes.</p>
+                                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                    {documentation.filter(doc=>doc.photo_url && Number(doc.inquiry_id)===Number(inquiryId)).map(doc=><button type="button" key={doc.id} disabled={Boolean(uploadingKey)} onClick={()=>void chooseProjectPhoto(doc,index)} className="overflow-hidden rounded-lg border border-slate-700 text-left"><img src={apiAssetUrl(doc.photo_url)} alt={doc.caption_text||"Prosjektbilde "+doc.id} loading="lazy" className="aspect-square w-full object-cover"/><p className="truncate p-2 text-[10px]">{doc.caption_text||"Bilde #"+doc.id}</p></button>)}
+                                  </div>
+                                  {!documentation.some(doc=>doc.photo_url && Number(doc.inquiry_id)===Number(inquiryId)) && <p className="text-xs text-slate-400">Ingen prosjektbilder tilgjengelig.</p>}
+                                </div>}
+                                <button type="button" onClick={()=>{setPhotoMenu(null);setProjectPicker(null);}} className="text-xs text-slate-400">Avbryt</button>
+                              </div>}
                               {currentPendingImage && (() => {
                                 const pendingFiles = currentPendingImage.files;
 
                                 return (
                                   <div className="mt-3 flex flex-col gap-3 rounded-xl border border-blue-500/20 bg-blue-500/[0.05] p-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div className="min-w-0">
-                                      <p className="text-[10px] font-black text-white">Kategoriser {pendingFiles.length === 1 ? "bildet" : `alle ${pendingFiles.length} bildene`}</p>
+                                      <p className="text-[10px] font-black text-white">Kategoriser {pendingFiles.length===1?"bildet":"alle "+pendingFiles.length+" bildene"}</p>
                                       <p className="mt-0.5 truncate text-[9px] text-slate-500">
-                                        {imageUploadProgress || (pendingFiles.length === 1 ? pendingFiles[0].name : `${pendingFiles.length} bilder valgt`)}
+                                        {imageUploadProgress||(pendingFiles.length===1?pendingFiles[0].name:pendingFiles.length+' bilder valgt')}
                                       </p>
                                     </div>
                                     <div className="flex flex-wrap gap-2">
                                       <button
                                         type="button"
-                                        disabled={readOnly || Boolean(uploadingKey)}
+                                        disabled={Boolean(uploadingKey)}
                                         onClick={async () => {
-                                          await uploadImagesForItem(item, index, 2, pendingFiles);
+                                          await uploadImagesForItem(item,index,2,pendingFiles);
                                         }}
                                         className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[9px] font-black text-amber-300 disabled:opacity-50"
                                       >
@@ -1354,9 +1353,9 @@ export default function ServiceCompletionWorkspace({
                                       </button>
                                       <button
                                         type="button"
-                                        disabled={readOnly || Boolean(uploadingKey)}
+                                        disabled={Boolean(uploadingKey)}
                                         onClick={async () => {
-                                          await uploadImagesForItem(item, index, 3, pendingFiles);
+                                          await uploadImagesForItem(item,index,3,pendingFiles);
                                         }}
                                         className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[9px] font-black text-emerald-300 disabled:opacity-50"
                                       >
@@ -1364,7 +1363,7 @@ export default function ServiceCompletionWorkspace({
                                       </button>
                                       <button
                                         type="button"
-                                        disabled={readOnly || Boolean(uploadingKey)}
+                                        disabled={Boolean(uploadingKey)}
                                         onClick={() => setPendingImage(null)}
                                         className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-[9px] font-black text-slate-400 disabled:opacity-50"
                                       >
@@ -1389,7 +1388,7 @@ export default function ServiceCompletionWorkspace({
                                     <div className="flex flex-wrap gap-2">
                                       <button
                                         type="button"
-                                        disabled={readOnly || Boolean(uploadingKey)}
+                                        disabled={Boolean(uploadingKey)}
                                         onClick={async () => {
                                           setPendingAudio(null);
                                           await uploadForItem(item, index, 2, "audio", pendingFile);
@@ -1400,7 +1399,7 @@ export default function ServiceCompletionWorkspace({
                                       </button>
                                       <button
                                         type="button"
-                                        disabled={readOnly || Boolean(uploadingKey)}
+                                        disabled={Boolean(uploadingKey)}
                                         onClick={async () => {
                                           setPendingAudio(null);
                                           await uploadForItem(item, index, 3, "audio", pendingFile);
@@ -1411,7 +1410,7 @@ export default function ServiceCompletionWorkspace({
                                       </button>
                                       <button
                                         type="button"
-                                        disabled={readOnly || Boolean(uploadingKey)}
+                                        disabled={Boolean(uploadingKey)}
                                         onClick={() => setPendingAudio(null)}
                                         className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-[9px] font-black text-slate-400 disabled:opacity-50"
                                       >
@@ -1542,7 +1541,7 @@ export default function ServiceCompletionWorkspace({
             </div>
           </div>
 
-          {(readOnly || allItemsAssessed) && (
+          {allItemsAssessed && (
             <div className="space-y-4 rounded-2xl border border-blue-500/20 bg-blue-500/[0.025] p-4 sm:p-5">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-wider text-blue-300">
@@ -1559,7 +1558,6 @@ export default function ServiceCompletionWorkspace({
                 </label>
                 <textarea
                   value={generalComment}
-                                readOnly={readOnly}
                   onChange={(e) => setGeneralComment(e.target.value)}
                   rows={2}
                   placeholder="Bare dersom det er noe prosjektansvarlig ønsker å kommentere..."
@@ -1585,7 +1583,6 @@ export default function ServiceCompletionWorkspace({
                       <button
                         key={key}
                         type="button"
-                        disabled={readOnly}
                         onClick={() => toggleControl(typedKey)}
                         className={`flex items-center gap-3 rounded-xl border p-3 text-left transition ${
                           checked
@@ -1615,7 +1612,6 @@ export default function ServiceCompletionWorkspace({
                     </p>
                     <input
                       value={warrantyNotes}
-                      readOnly={readOnly}
                       onChange={(e) => setWarrantyNotes(e.target.value)}
                       placeholder="Eventuelle garantimerknader / forbehold..."
                       className="mt-3 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2.5 text-[11px] text-white outline-none focus:border-emerald-500/50"

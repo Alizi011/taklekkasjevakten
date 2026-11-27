@@ -6,6 +6,7 @@ import type {
 type Props = {
   value: CoreCaseStatusFilterValue;
   counts: CoreCaseStatusCounts | null;
+  pendingOfferCount?: number;
   onChange: (value: CoreCaseStatusFilterValue) => void;
   unavailableMessage?: string;
 };
@@ -13,13 +14,14 @@ type Props = {
 const options: readonly { value: CoreCaseStatusFilterValue; label: string }[] = [
   { value: "all", label: "Alle oppdrag" },
   { value: "active", label: "Aktive oppdrag" },
+  { value: "pending_offer", label: "Tilbud – avventer aksept" },
   { value: "on_hold", label: "På vent" },
   { value: "completed", label: "Fullførte oppdrag" },
   { value: "closed", label: "Lukkede oppdrag" },
   { value: "stopped", label: "Stansede oppdrag" },
 ];
 
-export default function CoreCaseStatusFilter({ value, counts, onChange, unavailableMessage = "Core-status er utilgjengelig. Statusfiltrering kan ikke bekreftes." }: Props) {
+export default function CoreCaseStatusFilter({ value, counts, pendingOfferCount = 0, onChange, unavailableMessage = "Core-status er utilgjengelig. Statusfiltrering kan ikke bekreftes." }: Props) {
   const available = counts !== null;
 
   return (
@@ -43,7 +45,7 @@ export default function CoreCaseStatusFilter({ value, counts, onChange, unavaila
             {option.value === "all"
               ? option.label
               : counts
-                ? `${option.label} (${counts[option.value]})`
+                ? `${option.label} (${option.value === "pending_offer" ? pendingOfferCount : counts[option.value]})`
                 : `${option.label} – utilgjengelig`}
           </option>
         ))}

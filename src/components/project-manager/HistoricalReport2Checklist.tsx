@@ -3,10 +3,36 @@ import { apiUrl } from "../../lib/api";
 import ServiceCompletionWorkspace from "./ServiceCompletionWorkspace";
 import type { WorkOverride } from "../AdminWorkOverride";
 
+type OfferScope = { id: number; number: string; title: string; description: string; items: string[] };
+function buildOfferScope(offer: any): OfferScope {
+  const title = String(offer.title || "").trim();
+  const description = String(offer.description || "").trim();
+  // Extract known maintenance operations from the agreed text, not headings or prices.
+  const lines = description.split(/\r?\n/).map(line => line.replace(/^\s*(?:[-•*]|\d+[.)])\s*/, "").trim()).filter(line => line.length > 3 && line.toLowerCase() !== title.toLowerCase() && !/^(prosjekt|omfang|adresse|kunde|arbeidsbeskrivelse|pris|sum|mva|vilkår|forbehold|antall|utførelse|arbeid|vedlikehold)\s*:/i.test(line));
+  const rules: [RegExp,string][] = [
+    [/mose|vegetasjon/i,"Fjerning av mose og vegetasjon"],
+    [/papptekket\s+utkraging/i,"Rengjøring av papptekket utkraging"],
+    [/nedsenkede\s+takrenner/i,"Rengjøring av nedsenkede takrenner"],
+    [/taksluk/i,"Rengjøring av taksluk"],
+    [/takrenner.{0,45}inngangspart/i,"Kontroll og rengjøring av takrenner ved inngangspartier"],
+    [/nedløpsrør|nedløp/i,"Kontroll av nedløp"],
+    [/tilstopping/i,"Rensing ved påvist tilstopping (angi i merknad hvis ikke nødvendig)"],
+    [/vannavrenning/i,"Kontroll av fri vannavrenning"]
+  ];
+  const items = Array.from(new Set(lines.flatMap(line => {
+    const matches = rules.filter(([pattern]) => pattern.test(line)).map(([,label])=>label);
+    return matches.length ? matches : [line];
+  })));
+  if (!items.length && title) items.push(title);
+  if (!items.length) throw new Error("Akseptert tilbud mangler arbeidsbeskrivelse.");
+  return { id: Number(offer.id), number: String(offer.offer_number || "#"+offer.id), title, description, items };
+}
+
 type Props = { inquiryId: number; address: string; adminPreview: boolean; onBack: () => void; onFinished: () => void };
 export default function HistoricalReport2Checklist({ inquiryId, address, adminPreview, onBack, onFinished }: Props) {
   const [work,setWork] = useState<WorkOverride|null>(null);
   const [reportText,setReportText] = useState("");
+  const [offerScope,setOfferScope] = useState<OfferScope|null>(null);
   const [ready,setReady] = useState(false);
   const [draft,setDraft] = useState("");
   const [sending,setSending] = useState(false);
@@ -16,7 +42,7 @@ export default function HistoricalReport2Checklist({ inquiryId, address, adminPr
   useEffect(() => {
     const controller = new AbortController();
     const signal = controller.signal;
-    setLoading(true); setError(""); setWork(null);
+    setLoading(true); setError(""); setWork(null); setOfferScope(null); setReady(false); setDraft("");
     void (async () => {
       try {
         const res = adminPreview
@@ -27,11 +53,21 @@ export default function HistoricalReport2Checklist({ inquiryId, address, adminPr
         const reportRes = await fetch(apiUrl("/reports.php?inquiry_id="+inquiryId),{credentials:"include",cache:"no-store",signal});
         const reportData = await reportRes.json();
         if (!reportRes.ok || !reportData.success) throw new Error(reportData.message || "Kunne ikke hente rapportgrunnlaget.");
+        if (!reportData.report) {
+          const token = adminPreview ? null : window.localStorage.getItem("taklekkasjevakten_project_manager_session");
+          const offerRes = await fetch(apiUrl("/offers.php?inquiry_id="+inquiryId+"&all=1"), { credentials:"include",cache:"no-store",signal,headers:token?{"X-TLV-PM-Session":token}:{} });
+          const offerData = await offerRes.json();
+          if (!offerRes.ok || !offerData.success) throw new Error(offerData.message || "Kunne ikke hente akseptert tilbud.");
+          const offers = Array.isArray(offerData.offers) ? offerData.offers : offerData.offer ? [offerData.offer] : [];
+          const accepted = offers.filter((o:any)=>o.status==="akseptert" && (o.offer_context || "initial")==="initial" && !o.source_report_id && String(o.service || "").toLowerCase()==="service");
+          if (accepted.length !== 1) throw new Error("Kontrollisten krever ett entydig akseptert hovedtilbud.");
+          if (!signal.aborted) setOfferScope(buildOfferScope(accepted[0]));
+        }
         if (!signal.aborted) {
           setWork(data.work);
           setReportText(reportData.report?.admin_final || reportData.report?.ai_draft || "");
           const [completionRes,report2Res]=await Promise.all([
-            fetch(apiUrl("/work_completion.php?inquiry_id="+inquiryId),{credentials:"omit",cache:"no-store",signal}),
+            fetch(apiUrl("/work_completion.php?inquiry_id="+inquiryId),{credentials:"include",cache:"no-store",signal}),
             fetch(apiUrl("/completion_reports.php?inquiry_id="+inquiryId),{credentials:"include",cache:"no-store",signal})
           ]);
           const completion=await completionRes.json();
@@ -67,7 +103,7 @@ export default function HistoricalReport2Checklist({ inquiryId, address, adminPr
       {work && <p className="text-sm text-emerald-300">Utført arbeid: {work.work_type} · {work.started_on} – {work.completed_on}</p>}
       {loading && <p role="status">Henter kontrollgrunnlaget …</p>}
       {error && <p role="alert" className="text-rose-300">{error}</p>}
-      {work && !loading && !error && <ServiceCompletionWorkspace inquiryId={inquiryId} reportText={reportText} historicalWork={work} readOnly={adminPreview} onFinished={adminPreview ? undefined : () => setReady(true)}/>}
+      {work && !loading && !error && <ServiceCompletionWorkspace inquiryId={inquiryId} reportText={reportText} historicalWork={work} offerScope={offerScope} readOnly={adminPreview} onFinished={adminPreview ? undefined : () => setReady(true)}/>}
       {!adminPreview && ready && !loading && !error && <section className="space-y-3 rounded-xl border border-emerald-500/30 p-4">
         <h2 className="font-bold">Rapport 2 – utførelsesrapport</h2>
         <p className="text-xs text-slate-300">Kontrollisten er ferdigstilt. Beskriv kun dokumentert arbeid og eventuelle begrensninger. Eksisterende rapportutkast beholdes.</p>

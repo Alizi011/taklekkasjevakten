@@ -21,6 +21,9 @@ type Props = {
   onOpenPlanning?: () => void;
   onOpenReport2?: () => void;
   actualWorkOverride?: WorkOverride | null;
+  reportStatus?: string | null;
+  closed?: boolean;
+  onRegisterWork?: () => void;
 };
 
 export default function DirectOfferCaseProcess({
@@ -29,6 +32,9 @@ export default function DirectOfferCaseProcess({
   onOpenPlanning,
   onOpenReport2,
   actualWorkOverride = null,
+  reportStatus = null,
+  closed = false,
+  onRegisterWork,
 }: Props) {
   const actualWork = actualWorkOverride;
   const status = offer.status;
@@ -37,7 +43,8 @@ export default function DirectOfferCaseProcess({
   const published = status === "publisert";
   const draft = status === "utkast";
 
-  const headline = draft
+  const documented = reportStatus === "publisert";
+  const headline = closed ? "Saken er avsluttet" : documented ? "Arbeid utført og dokumentert" : actualWork ? "Arbeid utført – Rapport 2" : draft
     ? "Tilbud klart til publisering"
     : published
       ? "Tilbud sendt – venter på kunde"
@@ -71,12 +78,12 @@ export default function DirectOfferCaseProcess({
       detail: actualWork ? `Utført ${actualWork.started_on} – ${actualWork.completed_on}` : accepted
         ? "Avtal tidspunkt og klargjør utførelse"
         : "Aktiveres etter kundens aksept",
-      state: actualWork ? "done" : accepted ? "active" : "waiting",
+      state: actualWork || documented ? "done" : accepted ? "active" : "waiting",
     },
     {
       title: "Rapport 2 – Utførelsesrapport",
-      detail: "Dokumenterer utført arbeid, bilder og sluttkontroll",
-      state: actualWork ? "active" : "waiting",
+      detail: documented ? "Publisert" : reportStatus ? `Status: ${reportStatus}` : "Dokumenterer utført arbeid, bilder og sluttkontroll",
+      state: documented ? "done" : actualWork ? "active" : "waiting",
     },
     {
       title: "Årlig vedlikeholdsoppfølging",
@@ -128,14 +135,15 @@ export default function DirectOfferCaseProcess({
         </button>
       )}
 
-      {accepted && onOpenReport2 && (
+      {accepted && !closed && !actualWork && !documented && onRegisterWork && <button type="button" onClick={onRegisterWork} className="w-full rounded-xl bg-emerald-500/15 border border-emerald-400/40 px-4 py-3 text-sm font-bold text-emerald-200">Registrer utført arbeid</button>}
+      {accepted && (actualWork || reportStatus) && onOpenReport2 && (
         <button
           type="button"
           onClick={onOpenReport2}
           className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-600 px-4 py-3 text-sm font-bold text-white"
         >
           <FileCheck2 className="h-4 w-4" />
-          Åpne Rapport 2
+          {documented ? "Åpne Rapport 2 – PDF" : "Åpne Rapport 2"}
         </button>
       )}
 

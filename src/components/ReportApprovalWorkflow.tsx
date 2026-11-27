@@ -11,7 +11,8 @@ const labels: Record<State, string> = {
 };
 
 /** Rapport 1: ingen redigering av PDF-mal, eller direkte statusoppdatering via reports.php. */
-export default function ReportApprovalWorkflow({ inquiryId, reportId, dirty, pdfUrl, onUpdated, onState }: {
+export default function ReportApprovalWorkflow({ inquiryId, reportId, dirty, pdfUrl, onUpdated, onState, reportType = "rapport1" }: {
+  reportType?: "rapport1" | "rapport2";
   inquiryId: number; reportId: number; dirty: boolean; pdfUrl?: string | null; onUpdated?: () => void; onState?: (state: State) => void;
 }) {
   const [data, setData] = useState<Status | null>(null);
@@ -20,7 +21,7 @@ export default function ReportApprovalWorkflow({ inquiryId, reportId, dirty, pdf
   const [notice, setNotice] = useState("");
   const load = useCallback(async () => {
     try {
-      const response = await fetch(apiUrl("/tlv_report_approval_workflow.php"), {
+      const response = await fetch(apiUrl(reportType === "rapport2" ? "/tlv_report2_approval_workflow.php" : "/tlv_report_approval_workflow.php"), {
         method: "POST", credentials: "include", cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "status", inquiry_id: inquiryId }),
@@ -31,14 +32,14 @@ export default function ReportApprovalWorkflow({ inquiryId, reportId, dirty, pdf
       if (json.report_id === reportId) onState?.(json.state);
       if (json.report_id !== reportId) throw new Error("Rapportversjonen ble endret. Last siden på nytt.");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Kunne ikke hente godkjenningsstatus."); }
-  }, [inquiryId, reportId]);
+  }, [inquiryId, reportId, reportType, pdfUrl]);
   useEffect(() => { void load(); }, [load]);
   const act = async (action: "submit" | "admin_approve" | "publish") => {
     if (dirty || busy || !data || data.report_id !== reportId) return;
     if (action === "publish" && !window.confirm("Publiser denne sluttgodkjente rapporten til kunden?")) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      const res = await fetch(apiUrl("/tlv_report_approval_workflow.php"), {
+      const res = await fetch(apiUrl(reportType === "rapport2" ? "/tlv_report2_approval_workflow.php" : "/tlv_report_approval_workflow.php"), {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, inquiry_id: inquiryId }),
@@ -53,7 +54,7 @@ export default function ReportApprovalWorkflow({ inquiryId, reportId, dirty, pdf
   const state = data?.state;
   return <section className="rounded-2xl border border-amber-500/25 bg-[#0b0f17] p-5 space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><p className="text-[10px] font-black uppercase tracking-wide text-amber-300">Rapport 1 · Godkjenningsflyt</p>
+      <div><p className="text-[10px] font-black uppercase tracking-wide text-amber-300">{reportType === "rapport2" ? "Rapport 2" : "Rapport 1"} · Godkjenningsflyt</p>
         <h3 className="mt-1 text-sm font-extrabold text-white">{state ? labels[state] : "Henter godkjenningsstatus"}</h3></div>
       <button type="button" onClick={() => void load()} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300">Oppdater status</button>
     </div>
@@ -62,7 +63,7 @@ export default function ReportApprovalWorkflow({ inquiryId, reportId, dirty, pdf
     {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
     {notice && <p className="text-xs text-emerald-300">{notice}</p>}
     <div className="flex flex-wrap gap-2">
-      {(state === "editing" || state === "returned") && <button type="button" onClick={() => void act("submit")} disabled={busy || dirty}
+      {(state === "editing" || state === "returned") && <button type="button" onClick={() => void act("submit")} disabled={busy || dirty || (reportType === "rapport2" && !pdfUrl)}
         className="flex items-center gap-2 rounded-xl bg-[#F5B800] px-4 py-2.5 text-xs font-black text-slate-950 disabled:opacity-40"><Send size={15}/> Send til prosjektansvarlig</button>}
       {state === "awaiting_admin" && <button type="button" onClick={() => void act("admin_approve")} disabled={busy || dirty || !data?.content_unchanged}
         className="flex items-center gap-2 rounded-xl border border-emerald-500/40 px-4 py-2.5 text-xs font-bold text-emerald-300 disabled:opacity-40"><ShieldCheck size={15}/> Sluttgodkjenn</button>}

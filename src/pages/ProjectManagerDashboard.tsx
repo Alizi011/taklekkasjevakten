@@ -2076,6 +2076,7 @@ export default function ProjectManagerDashboard({
   const [unansweredCustomerMessages, setUnansweredCustomerMessages] = useState<Array<{ inquiryId: number; threadId: number; oldestAt: string; count: number }>>([]);
 
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
+  const [closedCoreInquiryIds, setClosedCoreInquiryIds] = useState<Set<number>>(new Set());
   const [teamOverview, setTeamOverview] = useState<Record<string, InquiryTeam>>({});
   const [staffEmployees, setStaffEmployees] = useState<StaffEmployee[]>([]);
   const [teamTechnicianDrafts, setTeamTechnicianDrafts] = useState<Record<string, string>>({});
@@ -2133,6 +2134,7 @@ export default function ProjectManagerDashboard({
   const [reportOverview, setReportOverview] = useState<Record<string, ReportData | null>>({});
   // Faglig godkjenning fra Perun Core er autoritativ, ikke gammel TLV-rapportstatus.
   const [approvalStates, setApprovalStates] = useState<Record<string, string>>({});
+  const [report2ApprovalStates, setReport2ApprovalStates] = useState<Record<string, string>>({});
   const [approvalRefresh, setApprovalRefresh] = useState(0);
   const [approvalLoadError, setApprovalLoadError] = useState("");
   const [offerOverview, setOfferOverview] = useState<Record<string, FollowUpOffer | null>>({});
@@ -2414,8 +2416,8 @@ export default function ProjectManagerDashboard({
     };
   }, [onBackToAdmin, previewEmployee?.id, view]);
   const approvalQueue = useMemo(
-    () => inquiries.filter((item) => approvalStates[String(normalizeInquiryId(item.id))] === "awaiting_pm"),
-    [inquiries, approvalStates]
+    () => inquiries.filter((item) => approvalStates[String(normalizeInquiryId(item.id))] === "awaiting_pm" || report2ApprovalStates[String(normalizeInquiryId(item.id))] === "awaiting_pm"),
+    [inquiries, approvalStates, report2ApprovalStates]
   );
 
   useEffect(() => {
@@ -2425,15 +2427,16 @@ export default function ProjectManagerDashboard({
     const session = adminPreview ? null : window.localStorage.getItem("taklekkasjevakten_project_manager_session");
     if ((!adminPreview && !session) || !assignedInquiryIds) {
       setApprovalStates({});
+      setReport2ApprovalStates({});
       setApprovalLoadError("");
       return;
     }
     let cancelled = false;
     const ids = assignedInquiryIds.split(",").map(Number);
     const load = async () => {
-      const rows = await Promise.all(ids.map(async (id) => {
+      const loadType = (reportType: "rapport1" | "rapport2") => Promise.all(ids.map(async (id) => {
         try {
-          const res = await fetch(apiUrl("/tlv_report_approval_workflow.php"), {
+          const res = await fetch(apiUrl(reportType === "rapport2" ? "/tlv_report2_approval_workflow.php" : "/tlv_report_approval_workflow.php"), {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -2449,9 +2452,11 @@ export default function ProjectManagerDashboard({
           return { id, state: "", ok: false };
         }
       }));
+      const [rows, report2Rows] = await Promise.all([loadType("rapport1"), loadType("rapport2")]);
       if (cancelled) return;
       setApprovalStates(Object.fromEntries(rows.filter((item) => item.ok).map((item) => [String(item.id), item.state])));
-      setApprovalLoadError(rows.some((item) => !item.ok) ? "Noen godkjenningsstatuser kunne ikke hentes. Prøv å oppdatere." : "");
+      setReport2ApprovalStates(Object.fromEntries(report2Rows.filter((item) => item.ok).map((item) => [String(item.id), item.state])));
+      setApprovalLoadError([...rows, ...report2Rows].some((item) => !item.ok) ? "Noen godkjenningsstatuser kunne ikke hentes. Prøv å oppdatere." : "");
     };
     void load();
     return () => { cancelled = true; };
@@ -2782,6 +2787,9 @@ export default function ProjectManagerDashboard({
     }
     const reportForInquiry = reportOverview[inquiryId.toString()] || null;
     const reportStatus = reportForInquiry?.status;
+    if (report2ApprovalStates[String(inquiryId)] === "awaiting_pm") {
+      return { key: "report_approval", label: "Krever godkjenning", subtitle: "Rapport 2 venter på faglig kontroll", accent: "amber" };
+    }
     if (approvalStates[String(inquiryId)] === "awaiting_pm") {
       return { key: "report_approval", label: "Krever godkjenning", subtitle: "Rapport 1 venter på faglig kontroll", accent: "amber" };
     }
@@ -2951,6 +2959,7 @@ export default function ProjectManagerDashboard({
   const progressNextAction = (inquiry: Inquiry, booking: Date | null): string => {
     const inquiryId = normalizeInquiryId(inquiry.id);
     const reportForInquiry = reportOverview[inquiryId.toString()] || null;
+    if (report2ApprovalStates[String(inquiryId)] === "awaiting_pm") return "Godkjenn eller returner Rapport 2";
     if (approvalStates[String(inquiryId)] === "awaiting_pm") {
       return "Godkjenn eller returner Rapport 1";
     }
@@ -3098,6 +3107,7 @@ export default function ProjectManagerDashboard({
     overviewStatusFilter,
     reportOverview,
     approvalStates,
+    report2ApprovalStates,
     offerOverview,
     fieldScheduleOverview,
   ]);
@@ -3830,7 +3840,7 @@ export default function ProjectManagerDashboard({
         ? Number(previewEmployee.id)
         : null;
 
-      const assignedInquiries = employeeId
+      const candidateInquiries = employeeId
         ? allInquiries.filter((inquiry) => {
             const manager =
               teams[inquiry.id.toString()]?.project_manager;
@@ -3860,6 +3870,40 @@ export default function ProjectManagerDashboard({
           })
         : allInquiries;
 
+      // Core is authoritative for completed/closed/stopped cases.
+      const ids = candidateInquiries.map(item => normalizeInquiryId(item.id)).filter(id => id > 0);
+      const statusRows: Array<{ inquiry_id: number; status: string }> = [];
+      if (ids.length) {
+        const adminPreview = Boolean(onBackToAdmin);
+        const token = adminPreview ? null : window.localStorage.getItem("taklekkasjevakten_project_manager_session");
+        if (!adminPreview && !token) throw new Error("Prosjektlederinnlogging kreves for å hente saksstatus.");
+        if (adminPreview) {
+          const response = await fetch(apiUrl("/admin_core_case_status.php"), {credentials:"include",cache:"no-store"});
+          const result = await response.json();
+          if (!response.ok || result.success !== true || !Array.isArray(result.cases)) throw new Error("Kunne ikke bekrefte saksstatus fra Core.");
+          statusRows.push(...result.cases);
+        } else {
+          for (let offset=0; offset<ids.length; offset+=100) {
+            const response = await fetch(apiUrl("/project_manager_core_case_status.php"), {
+              method:"POST", credentials:"include", cache:"no-store", headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({session_token:token,inquiry_ids:ids.slice(offset,offset+100)})
+            });
+            const result = await response.json();
+            if (!response.ok || result.success !== true || !Array.isArray(result.cases)) throw new Error("Kunne ikke bekrefte saksstatus fra Core.");
+            statusRows.push(...result.cases);
+          }
+        }
+      }
+      const statusById = new Map(statusRows.map(row=>[Number(row.inquiry_id),String(row.status)]));
+      const closedIds = new Set<number>();
+      const assignedInquiries = candidateInquiries.filter(item => {
+        const id = normalizeInquiryId(item.id);
+        const status = statusById.get(id);
+        const closed = status ? ["completed","closed","stopped"].includes(status) : String(item.status || "").toLowerCase()==="avsluttet";
+        if (closed) closedIds.add(id);
+        return !closed;
+      });
+      setClosedCoreInquiryIds(closedIds);
       setInquiries(assignedInquiries);
       await Promise.all([
         fetchReportOverview(assignedInquiries),
@@ -3904,6 +3948,9 @@ export default function ProjectManagerDashboard({
   useEffect(() => {
     fetchInquiries();
     fetchStaffEmployees();
+    const refreshOnFocus = () => { void fetchInquiries(); };
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
   }, [previewEmployee?.id]);
 
   const yesNoLabel = (value: unknown) => {
@@ -6165,7 +6212,8 @@ if (from < earliestDate) {
                 {(() => {
                   const now = new Date();
 
-                  const actionableTasks = coreTasks
+                  const activeCoreTasks = coreTasks.filter(task => !closedCoreInquiryIds.has(Number(task.inquiry_id)));
+                  const actionableTasks = activeCoreTasks
                     .map((task) => ({
                       task,
                       inquiry: inquiries.find(
@@ -6182,7 +6230,7 @@ if (from < earliestDate) {
 
                   // PM_CORE_TASKS_V2
                   const unmatchedCoreTasks =
-                    coreTasks.length - actionableTasks.length;
+                    activeCoreTasks.length - actionableTasks.length;
 
                   const todayItems = scheduledInquiries.filter((item) =>
                     sameDay(item.booking, now)
@@ -6407,7 +6455,7 @@ if (from < earliestDate) {
                               <div key={String(inquiry.id)} className="flex flex-col gap-3 rounded-xl border border-amber-500/20 bg-slate-950/40 p-4 sm:flex-row sm:items-center sm:justify-between">
                                 <div>
                                   <p className="text-xs font-black text-white">Oppdrag #{inquiry.id} – {customerName(inquiry)}</p>
-                                  <p className="mt-1 text-[13px] text-amber-200">{onBackToAdmin ? "Rapport 1 venter på prosjektansvarliges faglige kontroll." : "Rapport 1 er sendt fra administrator. Faglig godkjenning kreves."}</p>
+                                  <p className="mt-1 text-[13px] text-amber-200">{(() => { const id = String(normalizeInquiryId(inquiry.id)); const pending = [approvalStates[id] === "awaiting_pm" ? "Rapport 1" : "", report2ApprovalStates[id] === "awaiting_pm" ? "Rapport 2" : ""].filter(Boolean).join(" og "); return onBackToAdmin ? `${pending} venter på prosjektansvarliges faglige kontroll.` : `${pending} er sendt fra administrator. Faglig godkjenning kreves.`; })()}</p>
                                 </div>
                                 <button type="button" onClick={() => openApproval(inquiry)} className="shrink-0 rounded-xl bg-[#ff951a] px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-orange-400">
                                   {onBackToAdmin ? "Se rapport (kun visning)" : "Åpne til godkjenning"} <ArrowUpRight className="ml-1 inline h-4 w-4" />
@@ -8825,6 +8873,9 @@ if (from < earliestDate) {
             {!isDigitalInspection &&
               fieldWorkspaceTab === "rapport" && (
               <>
+              {activeInquiryId && report2ApprovalStates[String(activeInquiryId)] === "awaiting_pm" && (
+                <ProjectManagerReportApproval key={`rapport2-review-${activeInquiryId}`} reportType="rapport2" inquiryId={activeInquiryId} previewMode={Boolean(onBackToAdmin)} onUpdated={() => { setApprovalRefresh(v => v + 1); void fetchInquiries(); }} />
+              )}
               {/* Rapport 1-godkjenning er uavhengig av den gamle rapportutkast-visningen.
                   Core er autoritativ, og admin kan bare forhåndsvise. */}
               {activeInquiryId && (
@@ -9893,6 +9944,7 @@ if (from < earliestDate) {
         {view === "rapporter" && (
           <div className="space-y-4">
             {activeInquiryId && <ProjectManagerReportApproval inquiryId={activeInquiryId} previewMode={Boolean(onBackToAdmin)} onUpdated={() => { setApprovalRefresh((v) => v + 1); void fetchInquiries(); }} />}
+             {activeInquiryId && report2ApprovalStates[String(activeInquiryId)] === "awaiting_pm" && <ProjectManagerReportApproval reportType="rapport2" inquiryId={activeInquiryId} previewMode={Boolean(onBackToAdmin)} onUpdated={() => { setApprovalRefresh(v => v + 1); void fetchInquiries(); }} />}
 
             <section className="rounded-2xl border border-slate-800 bg-[#211612] p-5">
               <div className="flex items-center justify-between gap-4 border-b border-slate-800 pb-4">

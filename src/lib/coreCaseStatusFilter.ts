@@ -1,6 +1,6 @@
 import type { CoreCaseStatus, CoreCaseStatusView } from "../components/CoreCaseStatusBadge";
 
-export type CoreCaseStatusFilterValue = "all" | CoreCaseStatus;
+export type CoreCaseStatusFilterValue = "all" | "pending_offer" | CoreCaseStatus;
 export type CoreCaseStatusCounts = Record<CoreCaseStatus, number>;
 
 // These are presentation helpers, not a backend contract. Only a verified Core reader

@@ -1,3 +1,4 @@
+import AdminCaseFinance from "../components/AdminCaseFinance";
 import AdminCaseOrganizations from "../components/AdminCaseOrganizations";
 import AdminPhotoVisibility from "../components/AdminPhotoVisibility";
 import AdminLeakSearchCompletion from "../components/AdminLeakSearchCompletion";
@@ -721,17 +722,20 @@ export default function InquiryDetail({
 
   // Les organisasjonsnummer fra eksisterende kundeprofil, uten å lagre eller endre kunden.
   const [overviewOrganizationNumber, setOverviewOrganizationNumber] = useState<string | null>(null);
+  const [overviewCustomerType, setOverviewCustomerType] = useState<string>("");
   useEffect(() => {
     const controller = new AbortController();
     setOverviewOrganizationNumber(null);
+    setOverviewCustomerType("");
     if (!inquiryId) return () => controller.abort();
     void fetch(apiUrl(`/customer_profile.php?inquiry_id=${inquiryId}`), {
       credentials: "include", signal: controller.signal,
     }).then(async response => {
       if (!response.ok) return;
-      const data: { success?: boolean; customer?: { organization_number?: string | null } } = await response.json();
+      const data: { success?: boolean; customer?: { organization_number?: string | null; customer_type?: string | null } } = await response.json();
       if (!controller.signal.aborted && data.success) {
         setOverviewOrganizationNumber(String(data.customer?.organization_number || "").trim());
+        setOverviewCustomerType(String(data.customer?.customer_type || "").trim());
       }
     }).catch(() => { /* Vis utilgjengelig, ikke et oppdiktet organisasjonsnummer. */ });
     return () => controller.abort();
@@ -822,15 +826,23 @@ export default function InquiryDetail({
     setRequestedReport(undefined);
     setAdminCaseTabValue(tab);
   };
-  const openSpecificReport = (kind: "rapport1" | "rapport2") => {
+  const openReportEditor = (kind: "rapport1" | "rapport2") => {
     setRequestedReport(kind);
     setAdminCaseTabValue("reports");
+  };
+  const openSpecificReport = (kind: "rapport1" | "rapport2") => {
+    const selected = kind === "rapport1" ? report : completionReport;
+    if (selected?.status === "publisert" && selected.pdf_url) {
+      window.open(customerAttachmentUrl(selected.pdf_url), "_blank", "noopener,noreferrer");
+      return;
+    }
+    openReportEditor(kind);
   };
   const [showBrregInline, setShowBrregInline] = useState(false);
   const [showDocumentsInOverview, setShowDocumentsInOverview] = useState(false);
   // Separate read-only tabs inside the existing case overview; do not switch adminCaseTab.
   const [overviewInlineMedia, setOverviewInlineMedia] = useState<"overview" | "photos" | "report" | "offers" | "messages" | "organisations">("overview");
-  const [rightPanelTab, setRightPanelTab] = useState<"process" | "activity" | "override" | "offers">("process");
+  const [rightPanelTab, setRightPanelTab] = useState<"process" | "activity" | "override" | "offers" | "finance">("process");
   const [repairOfferTab, setRepairOfferTab] = useState<"akseptert" | "avvist" | "ovrige">("akseptert");
 
   const [brregOrgNumber, setBrregOrgNumber] = useState("");
@@ -2425,14 +2437,14 @@ export default function InquiryDetail({
   }, [inquiry.recommended_service, offer?.id, offer?.status]);
 
   useEffect(() => {
-    if (reportStatusBeforeRefresh !== null && report?.status === "publisert") {
+    if (reportStatusBeforeRefresh !== null && reportStatusBeforeRefresh !== "publisert" && report?.status === "publisert" && requestedReport !== "rapport2") {
       setReportStatusBeforeRefresh(null);
       setAdminCaseTab("overview");
       requestAnimationFrame(() => {
         document.getElementById("rapport1-oppfolging")?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
     }
-  }, [report?.status, reportStatusBeforeRefresh]);
+  }, [report?.status, reportStatusBeforeRefresh, requestedReport]);
 
   const activeChecklistItems = useMemo(
     () =>
@@ -2673,6 +2685,8 @@ export default function InquiryDetail({
     )
     .sort((a, b) => Number(b.id) - Number(a.id))[0] || null;
   const isReportPublished = report?.status === "publisert";
+  const workDocumented = completionReport?.status === "publisert";
+  const followupAlreadyExecuted = Boolean(actualWork || workDocumented || isCaseClosed);
   const isFollowupDecided = isReportPublished && savedFollowupChoice !== null;
   const followupStageTitle = savedFollowupChoice === "none" ? "Ingen videre utbedring"
     : savedFollowupChoice === "temporary" ? "Midlertidig tetting / service"
@@ -2719,6 +2733,8 @@ export default function InquiryDetail({
     ? "Saken avsluttet"
     : isAdminPaused
     ? "På vent – videre arbeid stanset"
+    : workDocumented
+    ? "Arbeid utført og dokumentert"
     : actualWork
     ? "Arbeid utført – dokumentasjon og Rapport 2"
     : actualLeakDate && !isReportPublished
@@ -2747,6 +2763,8 @@ export default function InquiryDetail({
     ? "Ingen videre handling"
     : isAdminPaused
     ? adminPauseReason
+    : workDocumented
+    ? "Rapport 2 er publisert. Se fakturering og økonomi for betalingsstatus."
     : actualWork
     ? `Ferdigstilt ${formatDate(actualWork.completed_on)}. Følg opp kontrollisten for Rapport 2.`
     : actualLeakDate && !isReportPublished
@@ -2767,10 +2785,8 @@ export default function InquiryDetail({
       : "Tidspunkt må avtales"
     : `Bestilt: ${orderedService}`;
 
-  const brregCaseTypes = [
-    String(inquiry.customer_type || "").trim().toLowerCase(),
-    String(customerProfileForm.customer_type || "").trim().toLowerCase(),
-  ].filter(Boolean);
+  const resolvedCustomerType = String(customerProfileForm.customer_type || overviewCustomerType || inquiry.customer_type || "").trim().toLowerCase();
+  const brregCaseTypes = [resolvedCustomerType].filter(Boolean);
 
   const isExplicitPrivateCustomer = brregCaseTypes.some(type =>
     /^(privatperson|privat|private|person)$/.test(type)
@@ -3198,7 +3214,7 @@ export default function InquiryDetail({
                       </select>
                     </div>
 
-                    <div>
+                    {!isExplicitPrivateCustomer && <div>
                       <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
                         Organisasjonsnummer
                       </label>
@@ -3213,7 +3229,7 @@ export default function InquiryDetail({
                         placeholder="9 siffer"
                         className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-3 text-xs text-white outline-none focus:border-cyan-500"
                       />
-                    </div>
+                    </div>}
 
                     <div>
                       <label className="mb-1.5 block text-[9px] font-black uppercase tracking-wider text-slate-500">
@@ -3522,7 +3538,7 @@ export default function InquiryDetail({
                       <button type="button" onClick={() => setShowHeritageModal(true)} className="inline-flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-200"><ShieldCheck className="h-4 w-4" />{heritageButtonLabel}<Info className="h-3.5 w-3.5" /></button>
                     </div>
                     <div className="mt-4 grid gap-x-4 gap-y-4 border-t border-white/10 pt-4 text-sm sm:grid-cols-2">
-                      <div className="min-w-0"><p className="text-xs text-slate-400">Org.nr</p><p className="mt-1 font-bold text-white">{(() => { const raw = String(customerProfile?.organization_number?.trim() || overviewOrganizationNumber || "").replace(/\s/g, ""); return /^\d{9}$/.test(raw) ? raw.replace(/(\d{3})(\d{3})(\d{3})/, "$1 $2 $3") : raw || (overviewOrganizationNumber === null ? "Hentes …" : "Ikke registrert"); })()}</p></div>
+                      {(!isExplicitPrivateCustomer && (showBrregTab || Boolean(brregCaseOrgNumber))) && <div className="min-w-0"><p className="text-xs text-slate-400">Org.nr</p><p className="mt-1 font-bold text-white">{(() => { const raw = String(customerProfile?.organization_number?.trim() || overviewOrganizationNumber || "").replace(/\s/g, ""); return /^\d{9}$/.test(raw) ? raw.replace(/(\d{3})(\d{3})(\d{3})/, "$1 $2 $3") : raw || (overviewOrganizationNumber === null ? "Hentes …" : "Ikke registrert"); })()}</p></div>}
                       <div className="min-w-0"><p className="text-xs text-slate-400">Adresse</p><p className="mt-1 font-bold text-white">{inquiry.address || "Ikke oppgitt"}</p></div>
                       <div className="min-w-0"><p className="text-xs text-slate-400">Kontaktperson</p><p className="mt-1 break-words font-bold text-white">{caseContactName || (inquiry as Inquiry & { contact_name?: string; contact_person?: string }).contact_name || (inquiry as Inquiry & { contact_person?: string }).contact_person || "Ikke oppgitt"}</p></div>
                       <div className="min-w-0"><p className="text-xs text-slate-400">Postnr / poststed</p><p className="mt-1 font-bold text-white">{[inquiry.postal_code, inquiry.city].filter(Boolean).join(" ") || "Ikke oppgitt"}</p></div>
@@ -3701,16 +3717,17 @@ export default function InquiryDetail({
                     </div>
                     {loadingFieldStatus ? <p className="text-xs text-slate-400">Henter rapporter …</p> : (
                       <div className="space-y-4">
-                        {([ { key: "rapport-1", label: "Rapport 1 – Teknisk rapport", data: report }, { key: "rapport-2", label: "Rapport 2 – Utførelsesrapport", data: completionReport } ] as const).map(item => (
+                        {([ { key: "rapport-1", label: "Rapport 1 – Teknisk rapport", data: report }, { key: "rapport-2", label: "Rapport 2 – Utførelsesrapport", data: completionReport } ] as const).filter(item => !directProcessOffer || item.key === "rapport-2").map(item => (
                           <article key={item.key} className="space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/40 p-4">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <h4 className="text-sm font-bold text-white">{item.label}</h4>
                               <span className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300">{item.data ? reportStatusLabel(item.data.status || undefined) : "Ikke registrert"}</span>
                             </div>
-                            {!item.data ? <p className="text-xs text-slate-400">Rapporten er ikke opprettet.</p> :
+                            {item.data?.status === "publisert" && item.key === "rapport-1" && <button type="button" onClick={() => openReportEditor("rapport1")} className="text-xs font-semibold text-slate-400 hover:text-white">Administrer revisjon av Rapport 1</button>}
+                            {!item.data ? <><p className="text-xs text-slate-400">Rapporten er ikke opprettet.</p>{item.key === "rapport-2" && directProcessOffer?.status === "akseptert" && <button type="button" onClick={() => { if (actualWork) { openSpecificReport("rapport2"); } else { setRightPanelTab("process"); requestAnimationFrame(() => { const el = document.getElementById(`work-registration-${inquiryId}`) as HTMLDetailsElement | null; if (el) { el.open = true; el.scrollIntoView({behavior:"smooth",block:"start"}); } }); } }} className="text-xs font-bold text-cyan-300">{actualWork ? "Åpne rapportarbeid →" : "Registrer utført arbeid →"}</button>}</> :
                               item.data.pdf_url ? (
                                 <div className="space-y-2">
-                                  <iframe src={customerAttachmentUrl(item.data.pdf_url)} title={`${item.label} for sak ${inquiry.id}`} loading="lazy" className="h-[520px] w-full rounded-lg border border-slate-700 bg-white" />
+                                  {item.data.status !== "publisert" && <iframe src={customerAttachmentUrl(item.data.pdf_url)} title={`${item.label} for sak ${inquiry.id}`} loading="lazy" className="h-[520px] w-full rounded-lg border border-slate-700 bg-white" />}
                                   <a href={customerAttachmentUrl(item.data.pdf_url)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-xs font-semibold text-cyan-300 hover:underline"><FileText className="h-4 w-4" /> Åpne PDF i egen fane</a>
                                 </div>
                               ) : <p className="text-xs text-slate-400">Rapportstatus er tilgjengelig, men PDF er ikke opprettet ennå.</p>}
@@ -3759,7 +3776,7 @@ export default function InquiryDetail({
                   </section>
                 )}
                 <div className={showBrregInline || showDocumentsInOverview || overviewInlineMedia !== "overview" ? "hidden" : "grid gap-3 p-4 md:grid-cols-2"}>
-                  <div className="rounded-xl border border-slate-700/70 bg-slate-950/40 p-4"><div className="flex items-center justify-between"><h3 className="text-sm font-bold">Siste dokumenter</h3><button type="button" onClick={() => { setShowDocumentsInOverview(true); setShowBrregInline(false); }} className="text-xs font-semibold text-cyan-300">Vis alle →</button></div><div className="mt-4 space-y-2">{report && <button type="button" onClick={() => setAdminCaseTab("reports")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" />Rapport 1 · {reportStatusLabel(report.status)}</button>}{caseOffers.slice().sort((a,b)=>b.id-a.id).slice(0,2).map(o=><button type="button" key={o.id} onClick={() => setAdminCaseTab("offer")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" /><span className="min-w-0 truncate">{o.offer_number || `Tilbud #${o.id}`} · {o.status}</span></button>)}{!report && caseOffers.length===0 && <p className="text-xs text-slate-400">Ingen dokumenter registrert</p>}</div></div>
+                  <div className="rounded-xl border border-slate-700/70 bg-slate-950/40 p-4"><div className="flex items-center justify-between"><h3 className="text-sm font-bold">Siste dokumenter</h3><button type="button" onClick={() => { setShowDocumentsInOverview(true); setShowBrregInline(false); }} className="text-xs font-semibold text-cyan-300">Vis alle →</button></div><div className="mt-4 space-y-2">{report && <button type="button" onClick={() => openSpecificReport("rapport1")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" />Rapport 1 · {reportStatusLabel(report.status)}</button>}{caseOffers.slice().sort((a,b)=>b.id-a.id).slice(0,2).map(o=><button type="button" key={o.id} onClick={() => setAdminCaseTab("offer")} className="flex w-full items-center gap-2 border-b border-white/10 py-2 text-left text-xs text-slate-200"><FileText className="h-4 w-4 text-cyan-300" /><span className="min-w-0 truncate">{o.offer_number || `Tilbud #${o.id}`} · {o.status}</span></button>)}{!report && caseOffers.length===0 && <p className="text-xs text-slate-400">Ingen dokumenter registrert</p>}</div></div>
                   <div className="min-w-0">
                     <CasePhotoGallery key={inquiryId} images={[
                       ...photos.filter(photo => Boolean(photo.photo_url)).map(photo => ({ id: photo.id, src: apiAssetUrl(photo.photo_url), caption: photo.caption_text })),
@@ -3778,10 +3795,11 @@ export default function InquiryDetail({
                   ["activity", "Siste aktivitet"],
                   ["override", "Admin overstyring"],
                   ["offers", "Tilbud og avtaler"],
+                  ["finance", "Fakturering og økonomi"],
                 ] as const).map(([key, label]) => (
                   <button key={key} type="button" role="tab" aria-selected={rightPanelTab === key}
                     onClick={() => setRightPanelTab(key)}
-                    className={`min-w-0 min-h-12 rounded-xl border px-3 py-2.5 text-center text-xs font-bold leading-5 transition ${rightPanelTab === key
+                    className={`${key === "finance" ? "col-span-2 " : ""}min-w-0 min-h-12 rounded-xl border px-3 py-2.5 text-center text-xs font-bold leading-5 transition ${rightPanelTab === key
                       ? "border-cyan-400/50 bg-cyan-500/15 text-cyan-200"
                       : "border-slate-700 bg-slate-950/40 text-slate-300 hover:border-cyan-500/30 hover:text-white"}`}>
                     {label}
@@ -3827,6 +3845,10 @@ export default function InquiryDetail({
     key={`direct-process-${inquiryId}`}
     offer={directProcessOffer}
     actualWorkOverride={actualWork}
+    reportStatus={completionReport?.status}
+    closed={isCaseClosed}
+    onRegisterWork={() => { const el = document.getElementById(`work-registration-${inquiryId}`) as HTMLDetailsElement | null; if (el) { el.open = true; el.scrollIntoView({behavior:"smooth",block:"start"}); } }}
+    onOpenReport2={() => openSpecificReport("rapport2")}
     onOpenOffer={() => setAdminCaseTab("offer")}
   />
 ) : (
@@ -3843,23 +3865,23 @@ export default function InquiryDetail({
                 <FileText className="h-4 w-4" />
                 Opprett nytt tilbud
               </button>
-              <div className="mt-5 space-y-6 border-t border-white/10 pt-5">
-                <div className="flex gap-3"><CheckCircle2 className={`mt-0.5 h-5 w-5 shrink-0 ${actualLeakDate || isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{orderedService} {actualLeakDate ? "utført" : isReportPublished ? "gjennomført" : "bestilt"}</p><p className="mt-1 text-[11px] text-slate-400">{actualLeakDate ? `Utført ${formatDate(actualLeakDate)}` : leakStatusError ? "Utførelsesstatus kunne ikke hentes" : hasRecordedSchedule ? displayedSchedule : "Tidspunkt ikke registrert"}</p><button type="button" onClick={() => setAdminCaseTab("checklists")} className="mt-2 block text-left text-xs font-semibold text-cyan-300 hover:underline">Åpne sjekkliste →</button><button type="button" onClick={() => setAdminCaseTab("field")} className="mt-1 block text-left text-xs font-semibold text-cyan-300 hover:underline">Feltdokumentasjon →</button></div></div>
+              <div className="mt-5 space-y-4 border-t border-white/10 pt-4">
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,42%)] items-start gap-2 border-b border-white/[0.06] pb-3"><div className="flex min-w-0 items-start gap-2"><CheckCircle2 className={`mt-0.5 h-5 w-5 shrink-0 ${actualLeakDate || isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{orderedService} {actualLeakDate ? "utført" : isReportPublished ? "gjennomført" : "bestilt"}</p><p className="mt-1 text-[11px] text-slate-400">{actualLeakDate ? `Utført ${formatDate(actualLeakDate)}` : leakStatusError ? "Utførelsesstatus kunne ikke hentes" : hasRecordedSchedule ? displayedSchedule : "Tidspunkt ikke registrert"}</p></div></div><div className="flex min-w-0 flex-col items-end gap-1.5 pt-0.5 text-right"><button type="button" onClick={() => setAdminCaseTab("checklists")} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">Åpne sjekkliste →</button><button type="button" onClick={() => setAdminCaseTab("field")} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">Feltdokumentasjon →</button></div></div>
               {[inquiry.inquiry_type, inquiry.recommended_service].some(value => String(value || "").toLowerCase() === "lekkasjesok") && !isReportPublished && (
                 <button type="button" onClick={() => setAdminCaseTab("checklists")}
                   className="mt-3 w-full rounded-xl border border-emerald-500/35 bg-emerald-500/[0.06] px-4 py-3 text-left text-xs font-bold text-emerald-200 hover:bg-emerald-500/15">
                   {actualLeakDate ? "Lekkasjesøk utført – åpne sjekkliste" : "Registrer utført lekkasjesøk / etterspør sjekkliste"}
                 </button>
               )}
-                <div className="flex gap-3"><FileCheck2 className={`mt-0.5 h-5 w-5 shrink-0 ${isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{isReportPublished ? "Rapport 1 publisert" : report ? `Rapport 1 – ${reportStatusLabel(report.status)}` : "Rapport 1 avventer"}</p><p className="mt-1 text-[11px] text-slate-400">{isReportPublished ? "Kvalitetssikret og publisert" : "Rapportstatus og behandling"}</p><button type="button" onClick={() => setAdminCaseTab("reports")} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">{report ? "Åpne rapport →" : "Åpne rapportarbeid →"}</button></div></div>
-                <div className="flex gap-3"><Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" /><div className="min-w-0"><p className="text-sm font-bold text-white">{isFollowupDecided ? followupStageTitle : "Videre oppfølging"}</p><p className="mt-1 text-[11px] text-slate-400">{isFollowupDecided ? followupStageDetail : isReportPublished ? "Avventer valg av tiltak" : "Etter rapportpublisering"}</p>{activeFollowupOffer?.offer_number && <p className="mt-1 text-[11px] text-slate-500">{activeFollowupOffer.offer_number} · {activeFollowupOffer.status}</p>}{activeFollowupOffer?.status === "utkast" && isReportPublished ? <button type="button" onClick={() => {setFollowupOfferForGenerator(activeFollowupOffer);setShowFollowupOfferGenerator(true);}} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">Åpne tilbudsutkast →</button> : isReportPublished ? <button type="button" onClick={() => activeFollowupOffer ? setAdminCaseTab("offer") : openFollowupSelection()} className="mt-2 text-left text-xs font-semibold text-cyan-300 hover:underline">Administrer videre oppfølging →</button> : null}</div></div>
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,42%)] items-start gap-2 border-b border-white/[0.06] pb-3"><div className="flex min-w-0 items-start gap-2"><FileCheck2 className={`mt-0.5 h-5 w-5 shrink-0 ${isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{isReportPublished ? "Rapport 1 publisert" : report ? `Rapport 1 – ${reportStatusLabel(report.status)}` : "Rapport 1 avventer"}</p><p className="mt-1 text-[11px] text-slate-400">{isReportPublished ? "Kvalitetssikret og publisert" : "Rapportstatus og behandling"}</p></div></div><div className="flex min-w-0 flex-col items-end gap-1.5 pt-0.5 text-right"><button type="button" onClick={() => openSpecificReport("rapport1")} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">{report?.status === "publisert" && report.pdf_url ? "Åpne PDF →" : report ? "Åpne rapport →" : "Åpne rapportarbeid →"}</button></div></div>
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,42%)] items-start gap-2 border-b border-white/[0.06] pb-3"><div className="flex min-w-0 items-start gap-2"><Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" /><div className="min-w-0"><p className="text-sm font-bold text-white">{followupAlreadyExecuted ? "Videre arbeid utført" : isFollowupDecided ? followupStageTitle : "Videre oppfølging"}</p><p className="mt-1 text-[11px] text-slate-400">{workDocumented ? "Utførelsesrapport publisert" : actualWork ? "Arbeidet er registrert utført" : isCaseClosed ? "Saken er avsluttet" : isFollowupDecided ? followupStageDetail : isReportPublished ? "Avventer valg av tiltak" : "Etter rapportpublisering"}</p>{activeFollowupOffer?.offer_number && <p className="mt-1 text-[11px] text-slate-500">{activeFollowupOffer.offer_number} · {activeFollowupOffer.status}</p>}</div></div><div className="flex min-w-0 flex-col items-end gap-1.5 pt-0.5 text-right">{followupAlreadyExecuted ? <button type="button" onClick={() => setRightPanelTab("finance")} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">Se fakturering →</button> : activeFollowupOffer?.status === "utkast" && isReportPublished ? <button type="button" onClick={() => {setFollowupOfferForGenerator(activeFollowupOffer);setShowFollowupOfferGenerator(true);}} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">Åpne tilbudsutkast →</button> : isReportPublished ? <button type="button" onClick={() => activeFollowupOffer ? setAdminCaseTab("offer") : openFollowupSelection()} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">Administrer tiltak →</button> : null}</div></div>
               </div>
                 
   </>
 )}
-                  <AdminWorkOverride key={`admin-work-override-${inquiryId}`} inquiryId={inquiryId} projectManagerName={currentProjectManager?.name} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>
-                  {actualWork && <div className="mt-4 rounded-xl border border-emerald-500/30 p-3"><p className="text-sm font-bold text-emerald-300">Arbeid utført · {formatDate(actualWork.completed_on)}</p><button type="button" onClick={()=>openSpecificReport("rapport2")} className="mt-2 text-xs font-bold text-cyan-300">Rapport 2 – Utførelsesrapport →</button></div>}
-                  <div className="mt-6 space-y-4 border-t border-white/10 pt-5">
+                  <AdminWorkOverride key={`admin-work-override-${inquiryId}`} directWork={Boolean(directProcessOffer?.status === "akseptert")} inquiryId={inquiryId} projectManagerName={currentProjectManager?.name} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>
+                  {actualWork && !directProcessOffer && <div className="mt-4 grid grid-cols-[minmax(0,1fr)_minmax(0,42%)] items-start gap-2 rounded-xl border border-emerald-500/30 p-3"><div className="min-w-0"><p className="text-sm font-bold text-emerald-300">Arbeid utført</p><p className="mt-1 text-[11px] text-slate-400">{formatDate(actualWork.completed_on)}</p></div><button type="button" onClick={()=>openSpecificReport("rapport2")} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">{completionReport?.status === "publisert" && completionReport.pdf_url ? "Rapport 2 – PDF →" : "Rapport 2 – Utførelsesrapport →"}</button></div>}
+                  {!directProcessOffer && <div className="mt-6 space-y-4 border-t border-white/10 pt-5">
                   {(() => {
                     const current = acceptedRepairOffer;
                     const otherOffers = caseOffers.filter(item => item.id !== current?.id).length;
@@ -3892,16 +3914,17 @@ export default function InquiryDetail({
                       </div>
                     );
                   })()}
-                  </div>
+                  </div>}
                   <CaseClosureControl key={`case-closure-${inquiryId}`} inquiryId={inquiryId} coreStatus={coreCaseStatus} offers={caseOffers} pendingAdminSignature={adminSignaturePending} />
 </div>
               )}
+              {rightPanelTab === "finance" && <AdminCaseFinance key={inquiryId} inquiryId={Number(inquiryId)} />}
               {rightPanelTab === "activity" && (
                 <div role="tabpanel">
               <section className="rounded-2xl border border-slate-700/60 bg-[#17111d] p-4 md:p-5">
                 <h2 className="text-sm font-black text-white">Siste aktivitet</h2>
                 <div className="mt-3 divide-y divide-white/10">
-                  {latestCaseReport && <button type="button" onClick={() => setAdminCaseTab("reports")} className="flex w-full items-start justify-between gap-3 py-3 text-left hover:text-cyan-300"><span className="flex items-start gap-3"><FileCheck2 className="mt-0.5 h-4 w-4 text-emerald-300" /><span><span className="block text-xs font-bold">{caseReportType} – {reportStatusLabel(latestCaseReport.status || undefined)}</span><span className="mt-1 block text-[11px] text-slate-400">Åpne rapport og godkjenning</span></span></span><span className="shrink-0 text-[10px] text-slate-500">{caseReportUpdatedLabel || ""}</span></button>}
+                  {latestCaseReport && <button type="button" onClick={() => openSpecificReport(completionReport ? "rapport2" : "rapport1")} className="flex w-full items-start justify-between gap-3 py-3 text-left hover:text-cyan-300"><span className="flex items-start gap-3"><FileCheck2 className="mt-0.5 h-4 w-4 text-emerald-300" /><span><span className="block text-xs font-bold">{caseReportType} – {reportStatusLabel(latestCaseReport.status || undefined)}</span><span className="mt-1 block text-[11px] text-slate-400">{latestCaseReport.status === "publisert" && latestCaseReport.pdf_url ? "Åpne publisert PDF" : "Åpne rapport og godkjenning"}</span></span></span><span className="shrink-0 text-[10px] text-slate-500">{caseReportUpdatedLabel || ""}</span></button>}
                   {caseOffers.slice().sort((a,b) => Number(b.id)-Number(a.id)).slice(0,3).map(item => <button key={item.id} type="button" onClick={() => { setAdminCaseTab("offer"); if (item.offer_context === "followup" && item.status === "utkast") { setFollowupOfferForGenerator(item); setShowFollowupOfferGenerator(true); } }} className="flex w-full items-start justify-between gap-3 py-3 text-left hover:text-cyan-300"><span className="flex items-start gap-3"><FileText className="mt-0.5 h-4 w-4 text-cyan-300" /><span><span className="block text-xs font-bold">{item.offer_context === "followup" ? "Oppfølgingstilbud" : "Opprinnelig tilbud"} · {item.status}</span><span className="mt-1 block text-[11px] text-slate-400">{item.offer_number || `Internt tilbud #${item.id}`}</span></span></span><span className="shrink-0 text-[10px] text-slate-500">{item.created_at ? formatDate(item.created_at.slice(0,10)) : ""}</span></button>)}
                   {(inquiry.created_at || inquiry.createdAt) && <div className="flex items-start justify-between gap-3 py-3"><span className="flex items-start gap-3"><ClipboardList className="mt-0.5 h-4 w-4 text-slate-400" /><span className="text-xs font-bold">Sak registrert</span></span><span className="text-[10px] text-slate-500">{formatDate(String(inquiry.created_at || inquiry.createdAt).slice(0,10))}</span></div>}
                 </div>
@@ -4093,14 +4116,14 @@ export default function InquiryDetail({
           </div>
         </section>
 
-        {report?.status === "publisert" && ((!savedFollowupChoice && !activeFollowupOffer) || showFollowupSelection) && (
+        {requestedReport !== "rapport2" && report?.status === "publisert" && (showFollowupSelection || (!followupAlreadyExecuted && !savedFollowupChoice && !activeFollowupOffer)) && (
           <section id="rapport1-oppfolging" className="scroll-mt-28 rounded-2xl border border-emerald-500/25 bg-[#21131c] p-5 space-y-4" aria-label="Videre oppfølging etter Rapport 1">
             <div>
               <p className="text-[10px] font-black uppercase tracking-wide text-emerald-300">Rapport 1 er publisert</p>
               <h2 className="mt-1 text-base font-black text-white">Velg videre oppfølging</h2>
               <p className="mt-1 text-xs text-slate-300">Publisert rapport beholdes uendret. Beslutninger lagres i Perun Core, og tilbud opprettes som egne utkast.</p>
             </div>
-            {savedFollowupChoice && showFollowupSelection && (
+            {showFollowupSelection && (
               <button type="button" onClick={() => { setShowFollowupSelection(false); setEditingFollowup(false); setFollowupChoice(null); }}
                 className="w-fit rounded-lg border border-slate-600 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800">Lukk valg av tiltak</button>
             )}
@@ -5975,7 +5998,7 @@ export default function InquiryDetail({
         {!isDigitalBefaring && (
           <div id="reports" className={`${adminCaseTab === "reports" ? "" : "hidden"} scroll-mt-6`}>
             <AdminReportReview inquiryId={inquiryId} requestedReport={requestedReport} onBack={requestedReport ? () => setAdminCaseTab("overview") : undefined} onChanged={() => {
-              setReportStatusBeforeRefresh(report?.status || null);
+              setReportStatusBeforeRefresh(requestedReport === "rapport2" || report?.status === "publisert" ? null : report?.status || null);
               void fetchFieldStatus();
             }} />
           </div>
