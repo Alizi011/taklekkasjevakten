@@ -2287,9 +2287,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         onBack={() => {
           setReviewInquiry(null);
           setReviewReportType(undefined);
-          setActiveTab("rapporter");
           fetchInquiries();
-          fetchReportArchive();
+          if(activeTab==="rapporter") void fetchReportArchive();
         }}
         onChanged={() => { void fetchInquiries(); void fetchReportArchive(); }}
       />
@@ -2765,7 +2764,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               </div>
 
               <div className="grid gap-3 md:grid-cols-2">
-                <button type="button" onClick={() => { setReportView("review"); setActiveTab("rapporter"); }} className="flex items-center justify-between gap-3 rounded-xl border border-[#71303f] bg-[#250c16]/80 p-4 text-left transition hover:border-rose-400/60 hover:bg-[#37131f]">
+                <button type="button" onClick={() => { const pending=inquiries.filter(i=>needsAdminReportAction(reportStatuses[String(i.id)])); if(pending.length===1){const inquiry=pending[0];setReviewReportType(reportStatuses[String(inquiry.id)]?.report_type);setReviewInquiry(inquiry);return;} openDashboardView("rapporter","rapporter_til_gjennomgang"); }} className="flex items-center justify-between gap-3 rounded-xl border border-[#71303f] bg-[#250c16]/80 p-4 text-left transition hover:border-rose-400/60 hover:bg-[#37131f]">
                   <div className="flex items-center gap-3">
                     <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-sky-400/10 text-sky-300"><FileText className="h-5 w-5" /></div>
                     <div>
