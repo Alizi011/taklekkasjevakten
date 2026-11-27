@@ -22,7 +22,7 @@ const agreementLabels: Record<string, string> = {
   cancelled: "Arbeidsavtale kansellert",
 };
 
-export default function AdminAgreementProgress({ inquiryId }: { inquiryId: number }) {
+export default function AdminAgreementProgress({ inquiryId, primary = false }: { inquiryId: number; primary?: boolean }) {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [agreements, setAgreements] = useState<Agreement[]>([]);
   const [agreementAvailable, setAgreementAvailable] = useState(false);
@@ -660,82 +660,13 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
     proposal ? `Datoforslag: ${proposal.status}` : "Arbeidsdato er ikke registrert";
 
   return (
-    <div className="space-y-4 border-t border-white/10 pt-4" aria-live="polite">
-      <details key={`contacts:${inquiryId}`} className="space-y-2 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
-        <summary className="cursor-pointer text-xs font-bold text-cyan-200">Kundekontakt og kontrollopplysninger</summary>
-
-        {customerAccessLoading ? (
-          <p className="text-xs text-slate-400">Henter registreringsstatus …</p>
-        ) : customerAccessError ? (
-          <p role="alert" className="text-xs text-amber-300">
-            Registreringsstatus er utilgjengelig: {customerAccessError}
-          </p>
-        ) : customerMembers.filter(m => m.access_role === "customer_admin").length === 0 ? (
-          <p className="text-xs text-amber-300">
-            Ingen kundeadministrator er registrert.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {customerMembers
-              .filter(m => m.access_role === "customer_admin")
-              .map(member => (
-                <div key={member.id} className="space-y-1 rounded-lg border border-slate-700/70 bg-slate-950/50 p-3 text-xs">
-                  <p className="font-bold text-white">
-                    {member.full_name || member.organisation_role || "Kundeadministrator"}
-                  </p>
-                  {(() => {
-                    const evidence = brregForMember(member.full_name || "");
-                    return evidence ? (
-                      <div className="space-y-1 rounded-lg border border-cyan-500/25 bg-cyan-500/[0.05] p-2 text-slate-200">
-                        <p>BRREG: {evidence.isChair ? "Registrert styreleder" : "Registrert styremedlem"}</p>
-                        <p>Signaturrett: {evidence.signsAlone
-                          ? "Registrert alene i BRREG"
-                          : "Ikke bekreftet som alene-signatar fra registrerte personkombinasjoner"}</p>
-                        <p className="text-[11px] text-slate-400">
-                          {evidence.checkedAt ? `Oppslag kontrollert: ${evidence.checkedAt}. ` : ""}
-                          Navnesamsvar er kun dokumentasjon. Signaturrett og identitet må fortsatt
-                          bekreftes i den serverstyrte avtaleprosessen.
-                        </p>
-                      </div>
-                    ) : brregError ? (
-                      <p className="text-[11px] text-slate-400">BRREG-status utilgjengelig for denne visningen.</p>
-                    ) : (
-                      representativeReviews[member.id]?.latest ? null : <p className="text-[11px] text-slate-400">Ingen eksakt navnetreff i BRREG.</p>
-                    );
-                  })()}
-                  {(() => {
-                    const review = representativeReviews[member.id];
-                    if (!review) return <p className="text-xs text-slate-400">Henter representantkontroll …</p>;
-                    if (review.error) return <p className="text-xs text-amber-300">Lagret BRREG-kontroll kunne ikke hentes.</p>;
-                    if (!review.latest) return <p className="text-xs text-slate-400">Representantrollen er ikke dokumentert ennå.</p>;
-                    return (
-                      <div className="mt-2 space-y-1 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.05] p-3">
-                        <p className="font-semibold text-emerald-300">BRREG-rolle dokumentert: {review.latest.role_name}</p>
-                        <p className="text-slate-200">{review.latest.brreg_person_name}</p>
-                        <p className="text-xs text-slate-400">
-                          {review.latest.match_mode === "manual" ? "Navnesamsvar vurdert manuelt" : "Eksakt navnesamsvar"}
-                          {" · "}Kontrollert {review.latest.checked_at.replace("T", " ").replace(/Z$/, "")}
-                        </p>
-                      </div>
-                    );
-                  })()}
-                  <p className="mt-2 text-xs text-slate-300">
-                    Kontaktpersonen kan følge opp forespørsler og tilbud gjennom eksisterende kundetilgang.
-                    {agreement ? (() => {
-                      const matches = customerSigners.filter(s => normalizePersonName(s.full_name || "") === normalizePersonName(member.full_name || "") && Boolean(s.email?.trim()) && s.email.trim().toLowerCase() === (member.email || "").trim().toLowerCase());
-                      const signer = matches.length === 1 ? matches[0] : null;
-                      return signingError ? " Avtalens signaturstatus er utilgjengelig." : signer ? ` Avtalens signaturfullmakt: ${signer.authority_verified_at ? "kontrollert" : "avventer kontroll"}. Signering: ${signer.status === "signed" ? "signert" : "ikke signert"}.` : " Se signaturfullmakt under den aktuelle arbeidsavtalen.";
-                    })() : " Signaturrett vurderes når arbeidsavtalen opprettes."}
-                  </p>
-                  <button type="button" onClick={() => void openRepresentativeReview(member)}
-                    className="mt-2 rounded-lg border border-cyan-500/40 px-3 py-2 font-bold text-cyan-200 hover:bg-cyan-500/10">
-                    {representativeReviews[member.id]?.latest ? "Se BRREG-kontroll" : "Kontroller representant i BRREG"}
-                  </button>
-                </div>
-              ))}
-          </div>
-        )}
-      </details>
+    <div className={`space-y-3 ${primary ? "" : "border-t border-white/10 pt-4"}`} aria-live="polite">
+      <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black uppercase tracking-wide text-cyan-300">{primary ? "Neste handling" : "Avtaleoppfølging"}</p>
+      <button type="button" onClick={() => { void load(); void loadCustomerAccess(); setReadinessRevision(v=>v+1); }} disabled={loading || customerAccessLoading}
+        className="inline-flex items-center gap-1.5 text-[11px] font-bold text-cyan-300 hover:underline disabled:opacity-50">
+        <RefreshCw className="h-3.5 w-3.5" /> Oppdater status
+      </button>
+      </div>
       {reviewMember && (
         <div role="dialog" aria-modal="true" aria-label="Kontroller representant i BRREG"
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4">
@@ -808,27 +739,6 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
 
       {loading ? <p className="text-xs text-slate-400">Henter avtaleoppfølging …</p> : error ?
         <p role="alert" className="text-xs text-amber-300">{error}</p> : <>
-          <div className="space-y-2">
-            <p className="text-[10px] font-black uppercase tracking-wide text-cyan-300">Avtalens fremdrift</p>
-            <div className="flex items-center gap-2 text-xs text-emerald-300"><CheckCircle2 className="h-4 w-4 shrink-0" />Pristilbud akseptert</div>
-            <div className={`flex items-center gap-2 text-xs ${dateReady ? "text-emerald-300" : "text-amber-200"}`}>
-              {dateReady ? <CheckCircle2 className="h-4 w-4 shrink-0"/> : <Clock3 className="h-4 w-4 shrink-0"/>}
-              {dateReady ? "Arbeidsplan godkjent" : "Godkjenning av arbeidsplan gjenstår"}
-            </div>
-            <div className={`flex items-center gap-2 text-xs ${isSigned ? "text-emerald-300" : "text-slate-400"}`}>
-              {isSigned ? <CheckCircle2 className="h-4 w-4 shrink-0"/> : agreement ? <FileCheck2 className="h-4 w-4 shrink-0"/> : <Circle className="h-4 w-4 shrink-0"/>}
-              {isSigned ? "Arbeidsavtale signert" : agreement ? (agreementLabels[agreement.status] || "Avtalestatus under behandling") : "Arbeidsavtale og signering gjenstår"}
-            </div>
-          </div>
-          <details className="rounded-xl border border-slate-700/70 bg-slate-950/50 p-3 space-y-2">
-            <summary className="cursor-pointer text-xs font-semibold text-slate-300">Arbeidsplan og avtaledetaljer</summary>
-            <p className="text-xs font-bold text-amber-200">{title}</p>
-            {proposal && <p className="text-xs text-slate-200">Registrert oppstart: {proposal.proposed_start_date} · Varighet: {proposal.estimated_duration}</p>}
-
-            {proposal?.status === "change_requested" && proposal.customer_response_note && <p className="text-xs text-slate-300">Kundens merknad: {proposal.customer_response_note}</p>}
-            {agreement?.agreement_number && <p className="text-xs text-slate-300">Avtale: {agreement.agreement_number}</p>}
-            {!agreementAvailable && <p className="text-[11px] text-slate-500">Signeringsstatus kunne ikke bekreftes fra avtale-API-et.</p>}
-          </details>
           {agreement && agreementAvailable && (
             <section className="space-y-4 rounded-xl border border-amber-500/30 bg-slate-950/60 p-4">
               <h3 className="text-sm font-black text-amber-200">
@@ -861,7 +771,7 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                       open={(agreement.status === "draft" && !signer.authority_verified_at) || (signer.party === "contractor" && customerSigningComplete && agreement.status === "partially_signed" && signer.status === "pending") ? true : undefined}
                       className="space-y-3 rounded-lg border border-slate-700 bg-slate-900/60 p-3"
                     >
-                      <summary className="cursor-pointer text-xs font-semibold text-slate-200">{signer.party === "customer" ? "Kunde" : "Perun AS"} · {signer.status === "signed" ? "Signert" : signer.status === "pending" || signer.status === "invited" ? "Avventer signatur" : signer.status === "declined" ? "Avvist" : signer.status === "expired" ? "Utløpt" : "Se status"} · Kontroll og handlinger</summary>
+                      <summary className="cursor-pointer text-xs font-semibold text-slate-200">{signer.party === "customer" ? "Kunde" : "Perun AS"} · {signer.status === "signed" ? "Signert" : signer.party === "contractor" && !customerSigningComplete && signer.status === "pending" ? "Signerer etter kunden" : signer.status === "pending" || signer.status === "invited" ? "Avventer signatur" : signer.status === "declined" ? "Avvist" : signer.status === "expired" ? "Utløpt" : "Se status"} · Kontroll og handlinger</summary>
                       <p className="text-sm font-bold text-white">{signer.full_name}</p>
 
                       {signer.party === "customer" && (() => {
@@ -1045,15 +955,106 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
               )}
             </div>
           )}
-          <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/[0.05] p-3 space-y-1">
-            <p className="text-xs font-bold text-cyan-200">Neste handling</p>
-            <p className="text-[11px] leading-5 text-slate-300">{signingNextStep}</p>
-          </div>
+          {!readyForCustomer && !(agreement && customerSigningComplete && agreement.status === "partially_signed") && !isSigned && <p className="text-xs leading-5 text-slate-300">{signingNextStep}</p>}
+          <details className="space-y-2 rounded-xl border border-slate-700/70 p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-300">Avtalens fremdrift</summary>
+            <div className="flex items-center gap-2 text-xs text-emerald-300"><CheckCircle2 className="h-4 w-4 shrink-0" />Pristilbud akseptert</div>
+            <div className={`flex items-center gap-2 text-xs ${dateReady ? "text-emerald-300" : "text-amber-200"}`}>
+              {dateReady ? <CheckCircle2 className="h-4 w-4 shrink-0"/> : <Clock3 className="h-4 w-4 shrink-0"/>}
+              {dateReady ? "Arbeidsplan godkjent" : "Godkjenning av arbeidsplan gjenstår"}
+            </div>
+            <div className={`flex items-center gap-2 text-xs ${isSigned ? "text-emerald-300" : "text-slate-400"}`}>
+              {isSigned ? <CheckCircle2 className="h-4 w-4 shrink-0"/> : agreement ? <FileCheck2 className="h-4 w-4 shrink-0"/> : <Circle className="h-4 w-4 shrink-0"/>}
+              {isSigned ? "Arbeidsavtale signert" : agreement ? (agreementLabels[agreement.status] || "Avtalestatus under behandling") : "Arbeidsavtale og signering gjenstår"}
+            </div>
+          </details>
+          <details className="rounded-xl border border-slate-700/70 bg-slate-950/50 p-3 space-y-2">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-300">Arbeidsplan og avtaledetaljer</summary>
+            <p className="text-xs font-bold text-amber-200">{title}</p>
+            {proposal && <p className="text-xs text-slate-200">Registrert oppstart: {proposal.proposed_start_date} · Varighet: {proposal.estimated_duration}</p>}
+
+            {proposal?.status === "change_requested" && proposal.customer_response_note && <p className="text-xs text-slate-300">Kundens merknad: {proposal.customer_response_note}</p>}
+            {agreement?.agreement_number && <p className="text-xs text-slate-300">Avtale: {agreement.agreement_number}</p>}
+            {!agreementAvailable && <p className="text-[11px] text-slate-500">Signeringsstatus kunne ikke bekreftes fra avtale-API-et.</p>}
+          </details>
         </>}
-      <button type="button" onClick={() => { void load(); void loadCustomerAccess(); setReadinessRevision(v=>v+1); }} disabled={loading || customerAccessLoading}
-        className="inline-flex items-center gap-1.5 text-[11px] font-bold text-cyan-300 hover:underline disabled:opacity-50">
-        <RefreshCw className="h-3.5 w-3.5" /> Oppdater status
-      </button>
+      <details key={`contacts:${inquiryId}`} className="space-y-2 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
+        <summary className="cursor-pointer text-xs font-bold text-cyan-200">Kundekontakt og kontrollopplysninger</summary>
+
+        {customerAccessLoading ? (
+          <p className="text-xs text-slate-400">Henter registreringsstatus …</p>
+        ) : customerAccessError ? (
+          <p role="alert" className="text-xs text-amber-300">
+            Registreringsstatus er utilgjengelig: {customerAccessError}
+          </p>
+        ) : customerMembers.filter(m => m.access_role === "customer_admin").length === 0 ? (
+          <p className="text-xs text-amber-300">
+            Ingen kundeadministrator er registrert.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {customerMembers
+              .filter(m => m.access_role === "customer_admin")
+              .map(member => (
+                <div key={member.id} className="space-y-1 rounded-lg border border-slate-700/70 bg-slate-950/50 p-3 text-xs">
+                  <p className="font-bold text-white">
+                    {member.full_name || member.organisation_role || "Kundeadministrator"}
+                  </p>
+                  {(() => {
+                    const evidence = brregForMember(member.full_name || "");
+                    return evidence ? (
+                      <div className="space-y-1 rounded-lg border border-cyan-500/25 bg-cyan-500/[0.05] p-2 text-slate-200">
+                        <p>BRREG: {evidence.isChair ? "Registrert styreleder" : "Registrert styremedlem"}</p>
+                        <p>Signaturrett: {evidence.signsAlone
+                          ? "Registrert alene i BRREG"
+                          : "Ikke bekreftet som alene-signatar fra registrerte personkombinasjoner"}</p>
+                        <p className="text-[11px] text-slate-400">
+                          {evidence.checkedAt ? `Oppslag kontrollert: ${evidence.checkedAt}. ` : ""}
+                          Navnesamsvar er kun dokumentasjon. Signaturrett og identitet må fortsatt
+                          bekreftes i den serverstyrte avtaleprosessen.
+                        </p>
+                      </div>
+                    ) : brregError ? (
+                      <p className="text-[11px] text-slate-400">BRREG-status utilgjengelig for denne visningen.</p>
+                    ) : (
+                      representativeReviews[member.id]?.latest ? null : <p className="text-[11px] text-slate-400">Ingen eksakt navnetreff i BRREG.</p>
+                    );
+                  })()}
+                  {(() => {
+                    const review = representativeReviews[member.id];
+                    if (!review) return <p className="text-xs text-slate-400">Henter representantkontroll …</p>;
+                    if (review.error) return <p className="text-xs text-amber-300">Lagret BRREG-kontroll kunne ikke hentes.</p>;
+                    if (!review.latest) return <p className="text-xs text-slate-400">Representantrollen er ikke dokumentert ennå.</p>;
+                    return (
+                      <div className="mt-2 space-y-1 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.05] p-3">
+                        <p className="font-semibold text-emerald-300">BRREG-rolle dokumentert: {review.latest.role_name}</p>
+                        <p className="text-slate-200">{review.latest.brreg_person_name}</p>
+                        <p className="text-xs text-slate-400">
+                          {review.latest.match_mode === "manual" ? "Navnesamsvar vurdert manuelt" : "Eksakt navnesamsvar"}
+                          {" · "}Kontrollert {review.latest.checked_at.replace("T", " ").replace(/Z$/, "")}
+                        </p>
+                      </div>
+                    );
+                  })()}
+                  <p className="mt-2 text-xs text-slate-300">
+                    Kontaktpersonen kan følge opp forespørsler og tilbud gjennom eksisterende kundetilgang.
+                    {agreement ? (() => {
+                      const matches = customerSigners.filter(s => normalizePersonName(s.full_name || "") === normalizePersonName(member.full_name || "") && Boolean(s.email?.trim()) && s.email.trim().toLowerCase() === (member.email || "").trim().toLowerCase());
+                      const signer = matches.length === 1 ? matches[0] : null;
+                      return signingError ? " Avtalens signaturstatus er utilgjengelig." : signer ? ` Avtalens signaturfullmakt: ${signer.authority_verified_at ? "kontrollert" : "avventer kontroll"}. Signering: ${signer.status === "signed" ? "signert" : "ikke signert"}.` : " Se signaturfullmakt under den aktuelle arbeidsavtalen.";
+                    })() : " Signaturrett vurderes når arbeidsavtalen opprettes."}
+                  </p>
+                  <button type="button" onClick={() => void openRepresentativeReview(member)}
+                    className="mt-2 rounded-lg border border-cyan-500/40 px-3 py-2 font-bold text-cyan-200 hover:bg-cyan-500/10">
+                    {representativeReviews[member.id]?.latest ? "Se BRREG-kontroll" : "Kontroller representant i BRREG"}
+                  </button>
+                </div>
+              ))}
+          </div>
+        )}
+      </details>
+
+
     </div>
   );
 }
