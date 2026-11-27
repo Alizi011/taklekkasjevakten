@@ -81,7 +81,17 @@ export default function AdminWorkOverride({ directWork = false, inquiryId, proje
     } catch(e) {setError(e instanceof Error?e.message:"Lagring feilet.");}
     finally {setBusy(false);}
   };
-  return <details id={`work-registration-${inquiryId}`} className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/5 p-3" data-testid="admin-work-override">
+  const taskStatus = task?.status;
+  const taskLabel = taskStatus === "open" ? "Etterspurt – avventer prosjektansvarlig" : taskStatus === "in_progress" ? "Kontrolliste under arbeid" : taskStatus === "completed" || taskStatus === "done" ? "Kontrollisteoppgaven er fullført" : taskStatus ? "Oppgavestatus: " + taskStatus : "";
+  return <>
+    <div className="mt-3 rounded-xl border border-cyan-500/25 bg-cyan-500/5 p-3" role="status">
+      <p className="text-xs font-bold text-cyan-200">Forespørsel om Rapport 2</p>
+      <p className="mt-1 text-xs text-slate-200">{busy ? "Henter forespørselsstatus …" : !available ? "Forespørselsstatus utilgjengelig" : task ? taskLabel : "Ingen registrert kontrollisteforespørsel funnet"}</p>
+      {available && task && <p className="mt-1 text-[11px] text-slate-400">Oppgave #{task.id}{projectManagerName ? " · Prosjektansvarlig: " + projectManagerName : ""}</p>}
+      {available && task && (taskStatus === "completed" || taskStatus === "done") && <p className="mt-1 text-[11px] text-slate-400">Fullført oppgave er ikke det samme som godkjent eller publisert rapport.</p>}
+      {!available && !busy && error && <p className="mt-1 text-xs text-rose-300">{error}</p>}
+    </div>
+    <details id={`work-registration-${inquiryId}`} className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/5 p-3" data-testid="admin-work-override">
     <summary className="cursor-pointer text-xs font-black text-amber-200">{directWork ? "Registrer utført arbeid / etterspør Rapport 2" : "Administrativ overstyring"}</summary>
     <div className="mt-3 space-y-3">
       {!directWork && <div className="space-y-2 border-b border-slate-700 pb-3">
@@ -118,5 +128,6 @@ export default function AdminWorkOverride({ directWork = false, inquiryId, proje
       {error && <p role="alert" className="text-xs text-rose-300">{error}</p>}
       {notice && <p role="status" className="text-xs text-emerald-300">{notice}</p>}
     </div>
-  </details>;
+  </details>
+  </>;
 }
