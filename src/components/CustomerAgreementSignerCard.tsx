@@ -30,10 +30,16 @@ export default function CustomerAgreementSignerCard({
   const [message, setMessage] = useState("");
   const [revision, setRevision] = useState(0);
   const [inlineAutoStart, setInlineAutoStart] = useState(false);
+  const [agreementStatus, setAgreementStatus] = useState("");
+  const [diagnostic, setDiagnostic] = useState<{ available: boolean; reason?: string | null; active_invitation?: boolean } | null>(null);
+  const [diagnosticError, setDiagnosticError] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
     setSigners([]);
+    setAgreementStatus("");
+    setDiagnostic(null);
+    setDiagnosticError("");
     setProposedName("");
     setMessage("");
     setError("");
@@ -64,6 +70,7 @@ export default function CustomerAgreementSignerCard({
           const result = await post("/admin_agreement_signing_control.php", {
             action: "list", inquiry_id: inquiryId, agreement_id: agreementId,
           });
+          if (!controller.signal.aborted) setAgreementStatus(String(result.agreement_status || ""));
           rows = (Array.isArray(result.signers) ? result.signers : [])
             .filter((item: Signer) => item.party === "customer");
         } else {
@@ -71,10 +78,19 @@ export default function CustomerAgreementSignerCard({
             action: "list", inquiry_id: inquiryId,
             agreement_id: agreementId, session_token: sessionToken,
           });
+          if (!controller.signal.aborted) setAgreementStatus(String(result.agreement_status || ""));
           rows = Array.isArray(result.signers) ? result.signers : [];
         }
         if (controller.signal.aborted) return;
         setSigners(rows);
+        if (previewMode && rows.length && rows.some(s => s.status !== "signed")) {
+          try {
+            const readiness = await post("/customer_agreement_signing_inline.php", { action: "diagnostics", inquiry_id: inquiryId, agreement_id: agreementId });
+            if (!controller.signal.aborted) setDiagnostic(readiness);
+          } catch (e) {
+            if (!controller.signal.aborted) setDiagnosticError(e instanceof Error ? e.message : "Kunne ikke kontrollere signeringsberedskap.");
+          }
+        }
         // Admin leser reelle BRREG-data, uten kundetoken eller skriveoperasjoner.
         if (previewMode && rows.length === 0) {
           const result = await post("/customer_board_candidates.php", {
@@ -191,6 +207,7 @@ export default function CustomerAgreementSignerCard({
   const signed = Boolean(signer && signer.status === "signed");
   const invited = Boolean(signer?.invitation_status);
   const verified = Boolean(signer?.authority_verified_at);
+  const agreementReady = ["ready_for_signature", "sent_for_signature", "partially_signed"].includes(agreementStatus);
   const status = signed ? "Signert" : invited ? "Invitasjon sendt" : verified
     ? "Signaturrett kontrollert" : signer ? "Avventer kontroll" : "Avventer signatar";
 
@@ -233,7 +250,7 @@ export default function CustomerAgreementSignerCard({
           <p className="text-xs leading-5 text-slate-400">
             {signed ? "Arbeidsavtalen er signert." : invited
               ? "Invitasjon til signering er sendt." : verified
-                ? "Signaturretten er kontrollert. Invitasjon sendes når den er klar."
+                ? agreementReady ? "Signaturretten er kontrollert og avtalen er klargjort." : "Signaturretten er kontrollert. Avventer klargjøring av avtalen."
                 : "Signataren er registrert. Vi kontrollerer signaturretten før invitasjon sendes."}
           </p>
         </div>
@@ -279,6 +296,16 @@ export default function CustomerAgreementSignerCard({
             : "Etter bekreftelse kontrollerer vi signaturretten før engangskoden sendes på SMS."}
         </p>
       )}
+      {!loading && previewMode && agreementId && signer && !signed && (
+        <div className="space-y-2 rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-3 text-xs">
+          <p className="font-bold text-cyan-200">Signeringsberedskap – kun admin</p>
+          <p>Arbeidsavtale: {agreementReady ? "Klargjort" : "Ikke klargjort"}</p>
+          <p>Signaturrett: {verified ? "Kontrollert" : "Avventer kontroll"}</p>
+          {diagnostic ? <><p className={diagnostic.available ? "text-emerald-300" : "text-amber-200"}>{diagnostic.available ? "Registrerte forutsetninger for direkte signering er oppfylt." : diagnostic.reason || "Direkte signering er ikke tilgjengelig."}</p><p className="text-slate-400">Kundens faktiske innloggingsøkt og SMS-levering er ikke testet.</p></> : <p className="text-amber-200">{diagnosticError || "Signeringsberedskap er ikke kontrollert."}</p>}
+          <button type="button" onClick={() => setRevision(v => v + 1)} className="rounded-lg border border-cyan-500/40 px-3 py-2 font-bold text-cyan-200">Kontroller på nytt</button>
+          <p className="text-slate-400">Ingen SMS sendes fra forhåndsvisningen.</p>
+        </div>
+      )}
       {!loading && agreementId && expectedDocumentHash && signer && signer.status !== "signed" && (
         <CustomerAgreementInlineSigning
           key={`${inquiryId}:${agreementId}:${expectedDocumentHash}`}
@@ -288,7 +315,7 @@ export default function CustomerAgreementSignerCard({
           sessionToken={sessionToken}
           signerName={signer.full_name}
           previewMode={previewMode}
-          authorityVerified={Boolean(signer.authority_verified_at)}
+          authorityVerified={Boolean(signer.authority_verified_at) && agreementReady}
           autoStart={inlineAutoStart}
           onAutoStartHandled={() => setInlineAutoStart(false)}
           onFinished={() => {
