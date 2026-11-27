@@ -47,6 +47,8 @@ export default function CustomerAgreementSigners({
   const [selectedAgreement, setSelectedAgreement] = useState(0);
   const [selected, setSelected] = useState<number[]>([]);
   const [existing, setExisting] = useState<string[]>([]);
+  const [liveSigners, setLiveSigners] = useState<PreviewSigner[] | null>(null);
+  const [liveSignerError, setLiveSignerError] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -168,25 +170,27 @@ export default function CustomerAgreementSigners({
   useEffect(() => {
     if (!selectedAgreement || !data || previewMode) {
       setExisting([]);
+      setLiveSigners(null);
+      setLiveSignerError("");
       return;
     }
 
     let cancelled = false;
+    setLiveSigners(null);
+    setLiveSignerError("");
 
     request("/customer_agreement_signers.php", {
       action: "list",
       agreement_id: selectedAgreement,
     }).then((result) => {
       if (!cancelled) {
-        setExisting(
-          (result.signers || []).map(
-            (s: { full_name: string }) => s.full_name
-          )
-        );
+        const rows = Array.isArray(result.signers) ? result.signers : [];
+        setLiveSigners(rows.map((s: PreviewSigner) => ({ ...s, party: "customer" })));
+        setExisting(rows.map((s: PreviewSigner) => s.full_name));
       }
     }).catch((e) => {
       if (!cancelled) {
-        setError(e instanceof Error ? e.message : "Kunne ikke hente signatarene.");
+        setLiveSignerError(e instanceof Error ? e.message : "Kunne ikke hente signatarene.");
       }
     });
 
@@ -292,6 +296,7 @@ export default function CustomerAgreementSigners({
 
       setExisting([chairProposal]);
       setChairProposal(null);
+      await load();
       setMessage(
         "Riktig signatar er registrert. Du får beskjed når avtalen er klar for sikker signering."
       );
@@ -343,19 +348,13 @@ export default function CustomerAgreementSigners({
   const available = (data?.members || []).filter(
     m => ["active", "invited"].includes(m.status)
   );
-  const customerSigners = previewMode
-    ? (previewSigners || []).filter(signer => signer.party === "customer")
-    : existing.map(name => ({ full_name: name }));
-  const signersKnown = !previewMode || (previewSigners !== null && !previewSignerError);
+  const customerSigners = (previewMode ? previewSigners || [] : liveSigners || []).filter(signer => signer.party === "customer");
+  const signersKnown = previewMode ? previewSigners !== null && !previewSignerError : liveSigners !== null && !liveSignerError;
   const customerSignerRegistered = signersKnown && customerSigners.length > 0;
-  const authorityChecked = previewMode && customerSignerRegistered &&
-    (previewSigners || []).filter(signer => signer.party === "customer")
-      .every(signer => Boolean(signer.authority_verified_at));
-  const signingInvited = previewMode && customerSignerRegistered &&
-    (previewSigners || []).some(signer => signer.party === "customer" && Boolean(signer.invitation_status));
-  const signingComplete = previewMode && customerSignerRegistered &&
-    (previewSigners || []).filter(signer => signer.party === "customer")
-      .every(signer => signer.status === "signed");
+  const authorityChecked = customerSignerRegistered && customerSigners.every(signer => Boolean(signer.authority_verified_at));
+  const signingInvited = customerSignerRegistered && customerSigners.some(signer => Boolean(signer.invitation_status));
+  const signingComplete = customerSignerRegistered && customerSigners.every(signer => signer.status === "signed");
+  const signingReady = Boolean(agreement && ["ready_for_signature", "sent_for_signature", "partially_signed"].includes(agreement.status));
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5 text-slate-100">
@@ -381,6 +380,7 @@ export default function CustomerAgreementSigners({
 
       {busy && <p className="text-sm text-slate-400">Laster …</p>}
       {error && <p role="alert" className="my-2 text-sm text-red-300">{error}</p>}
+      {!previewMode && liveSignerError && <p role="alert" className="my-2 text-sm text-amber-300">{liveSignerError}</p>}
       {message && <p role="status" className="my-2 text-sm text-amber-300">{message}</p>}
 
       {data && data.agreements.length === 0 && (
@@ -409,7 +409,7 @@ export default function CustomerAgreementSigners({
                 <span className={customerSignerRegistered ? "font-bold text-emerald-300" : "text-amber-300"}>
                   {customerSignerRegistered ? "✓" : "○"}
                 </span>
-                <span>{!signersKnown ? "Henter signatarstatus …" : customerSignerRegistered
+                <span>{!signersKnown ? (liveSignerError || previewSignerError ? "Signatarstatus utilgjengelig" : "Henter signatarstatus …") : customerSignerRegistered
                   ? "Kundesignatar registrert"
                   : "Kunden må bekrefte hvem som skal signere"}</span>
               </li>
@@ -424,7 +424,7 @@ export default function CustomerAgreementSigners({
                 <span className={signingInvited ? "font-bold text-emerald-300" : "text-slate-400"}>
                   {signingInvited ? "✓" : "○"}
                 </span>
-                <span>{signingInvited ? "Signeringsinvitasjon registrert" : "Signeringsinvitasjon sendes"}</span>
+                <span>{signingComplete ? "Kundens signering gjennomført" : signingInvited ? "Aktiv signeringsinvitasjon" : signingReady ? "Avtalen er klar for signering – avventer invitasjon" : "Avventer klargjøring av avtalen"}</span>
               </li>
               <li className="flex items-start gap-3">
                 <span className={signingComplete ? "font-bold text-emerald-300" : "text-slate-400"}>
@@ -522,7 +522,7 @@ export default function CustomerAgreementSigners({
             </div>
           )}
 
-          {!previewMode && agreement?.status === "draft" &&
+          {!previewMode && signersKnown && agreement?.status === "draft" &&
             agreement.document_sha256 && existing.length === 0 && (
             <div className="mb-5 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
               <h3 className="text-sm font-bold text-white">
@@ -577,7 +577,7 @@ export default function CustomerAgreementSigners({
 
           {existing.length > 0 && agreement?.status !== "signed" && (
             <p className="mb-4 text-xs text-slate-300">
-              Signataren er registrert. Når fullmakt og identitet er kontrollert, sendes signeringsinvitasjonen.
+              {signingComplete ? "Din parts signering er registrert. Avventer øvrige signatarer." : signingInvited ? "Bruk signeringslenken du har mottatt." : signingReady ? "Avtalen er klar. Vi følger opp signeringsinvitasjonen." : authorityChecked ? "Kundens signaturfullmakt er kontrollert. Avventer klargjøring." : "Avventer kontroll av signaturfullmakt."}
             </p>
           )}
 
