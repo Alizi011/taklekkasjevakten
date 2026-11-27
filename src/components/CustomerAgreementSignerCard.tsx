@@ -33,6 +33,9 @@ export default function CustomerAgreementSignerCard({
   const [agreementStatus, setAgreementStatus] = useState("");
   const [diagnostic, setDiagnostic] = useState<{ available: boolean; reason?: string | null; active_invitation?: boolean } | null>(null);
   const [diagnosticError, setDiagnosticError] = useState("");
+  const [notifying, setNotifying] = useState(false);
+  const [noticeResult, setNoticeResult] = useState("");
+  const [noticeSent, setNoticeSent] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -174,6 +177,27 @@ export default function CustomerAgreementSignerCard({
     return () => controller.abort();
   }, [agreementId, inquiryId, previewMode, sessionToken, revision]);
 
+  useEffect(() => { setNoticeResult(""); setNoticeSent(false); }, [inquiryId, agreementId, previewMode]);
+
+  async function notifyReady() {
+    if (!previewMode || !agreementId || !diagnostic?.available || notifying || noticeSent) return;
+    if (!window.confirm("Send SMS til registrert signatar om at arbeidsavtalen er klar? Ingen engangskode sendes.")) return;
+    setNotifying(true);
+    setNoticeResult("");
+    try {
+      const response = await fetch(apiUrl("/customer_agreement_signing_inline.php"), {
+        method: "POST", credentials: "include", cache: "no-store",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({action:"notify_ready", inquiry_id:inquiryId, agreement_id:agreementId, confirmed:true}),
+      });
+      const result = await response.json();
+      if (!response.ok || result.success !== true) throw new Error(result.message || "Varslingen kunne ikke bekreftes.");
+      setNoticeSent(true);
+      setNoticeResult(result.message || "Varsel sendt.");
+    } catch (e) { setNoticeResult(e instanceof Error ? e.message : "Varslingen kunne ikke bekreftes."); }
+    finally { setNotifying(false); }
+  }
+
   async function confirmSigner() {
     if (!agreementId || previewMode || !proposedName || saving || signers.length) return;
     if (!window.confirm(`Bekrefte ${proposedName} som foreslått signatar på arbeidsavtalen?`)) return;
@@ -303,7 +327,9 @@ export default function CustomerAgreementSignerCard({
           <p>Signaturrett: {verified ? "Kontrollert" : "Avventer kontroll"}</p>
           {diagnostic ? <><p className={diagnostic.available ? "text-emerald-300" : "text-amber-200"}>{diagnostic.available ? "Registrerte forutsetninger for direkte signering er oppfylt." : diagnostic.reason || "Direkte signering er ikke tilgjengelig."}</p><p className="text-slate-400">Kundens faktiske innloggingsøkt og SMS-levering er ikke testet.</p></> : <p className="text-amber-200">{diagnosticError || "Signeringsberedskap er ikke kontrollert."}</p>}
           <button type="button" onClick={() => setRevision(v => v + 1)} className="rounded-lg border border-cyan-500/40 px-3 py-2 font-bold text-cyan-200">Kontroller på nytt</button>
-          <p className="text-slate-400">Ingen SMS sendes fra forhåndsvisningen.</p>
+          <p className="text-slate-400">Kontrollen sender ingen SMS. Signering kan bare utføres av kunden.</p>
+          {diagnostic?.available && <button type="button" disabled={notifying || noticeSent} onClick={() => void notifyReady()} className="w-full rounded-lg bg-amber-400 px-3 py-3 font-bold text-slate-950 disabled:opacity-50">{notifying ? "Varsler …" : noticeSent ? "Varsel registrert" : "Varsle kunden – avtalen er klar"}</button>}
+          {noticeResult && <p role="status" className={noticeSent ? "text-emerald-300" : "text-amber-200"}>{noticeResult}</p>}
         </div>
       )}
       {!loading && agreementId && expectedDocumentHash && signer && signer.status !== "signed" && (
