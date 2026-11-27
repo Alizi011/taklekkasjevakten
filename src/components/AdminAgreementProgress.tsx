@@ -46,6 +46,12 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
   const [signingError, setSigningError] = useState("");
   const [signingMessage, setSigningMessage] = useState("");
   const [signingBusy, setSigningBusy] = useState(false);
+  const [readiness, setReadiness] = useState<{available: boolean; reason?: string | null} | null>(null);
+  const [readinessError, setReadinessError] = useState("");
+  const [noticeBusy, setNoticeBusy] = useState(false);
+  const [noticeResult, setNoticeResult] = useState("");
+  const [noticeSent, setNoticeSent] = useState(false);
+  const [readinessRevision, setReadinessRevision] = useState(0);
   const [canContractorSign, setCanContractorSign] = useState(false);
   const [contractorStage, setContractorStage] = useState<"start" | "verify" | "document">("start");
   const [contractorCode, setContractorCode] = useState("");
@@ -585,6 +591,41 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
     } catch(e) { setSigningError(e instanceof Error ? e.message : "Signering kunne ikke fortsette."); }
     finally { setSigningBusy(false); }
   }
+  const readyForCustomer = agreementAvailable && !!agreement && ["ready_for_signature", "sent_for_signature", "partially_signed"].includes(agreement.status) && customerSigners.length > 0 && !customerSigningComplete;
+  const [readinessCase, setReadinessCase] = useState("");
+  const readinessKey = `${inquiryId}:${agreement?.id || 0}`;
+  useEffect(() => { setNoticeResult(""); setNoticeSent(false); }, [readinessKey]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setReadiness(null); setReadinessError(""); setReadinessCase("");
+    if (!readyForCustomer || !agreement) return () => controller.abort();
+    fetch(apiUrl("/customer_agreement_signing_inline.php"), {
+      method:"POST", credentials:"include", cache:"no-store", signal:controller.signal,
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({action:"diagnostics", inquiry_id:inquiryId, agreement_id:agreement.id})
+    }).then(async response => {
+      const result = await response.json();
+      if (!response.ok || result.success !== true) throw new Error(result.message || "Kontroll kunne ikke gjennomføres.");
+      if (!controller.signal.aborted) {setReadiness(result);setReadinessCase(readinessKey);}
+    }).catch(e=>{if (!controller.signal.aborted) setReadinessError(e instanceof Error ? e.message : "Kontroll kunne ikke gjennomføres.");});
+    return () => controller.abort();
+  }, [readinessKey, readyForCustomer, readinessRevision]);
+
+  async function notifyCustomer() {
+    if (!agreement || !readyForCustomer || readinessCase !== readinessKey || !readiness?.available || noticeBusy || noticeSent) return;
+    if (!window.confirm("Varsle registrert signatar på SMS om at avtalen er klar? Ingen engangskode sendes.")) return;
+    setNoticeBusy(true); setNoticeResult("");
+    try {
+      const response = await fetch(apiUrl("/customer_agreement_signing_inline.php"), {
+        method:"POST", credentials:"include", cache:"no-store", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({action:"notify_ready", inquiry_id:inquiryId, agreement_id:agreement.id, confirmed:true})
+      });
+      const result = await response.json();
+      if (!response.ok || result.success !== true) throw new Error(result.message || "Varsling kunne ikke bekreftes.");
+      setNoticeSent(true); setNoticeResult(result.message || "Varsel registrert.");
+    } catch(e) {setNoticeResult(e instanceof Error ? e.message : "Varsling kunne ikke bekreftes.");}
+    finally {setNoticeBusy(false);}
+  }
   const missingAuthority = signers.filter(s => !s.authority_verified_at || !s.authority_basis?.trim());
   const signingNextStep = isSigned
     ? "Arbeidsavtalen er ferdig signert av begge parter. Ingen signeringshandling gjenstår."
@@ -602,6 +643,10 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
       ? `Mangler kontrollert signaturfullmakt: ${missingAuthority.map(s => s.full_name).join(", ")}.`
     : agreement.status === "draft"
       ? "Signaturfullmaktene er kontrollert. Klargjør arbeidsavtalen for signering."
+    : readyForCustomer
+      ? "Kunden signerer i kundeportalen. Perun AS signerer deretter."
+    : customerSigningComplete && agreement.status === "partially_signed"
+      ? "Kundens signering er fullført. Perun AS signerer nå."
     : signers.some(s => s.status === "pending" && s.invitation_status)
       ? "Signeringsinvitasjon er aktiv. Avvent signatur, eller kontakt signataren ved behov."
     : signers.some(s => s.status === "pending" && s.authority_verified_at)
@@ -616,10 +661,8 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
 
   return (
     <div className="space-y-4 border-t border-white/10 pt-4" aria-live="polite">
-      <section className="space-y-2 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
-        <p className="text-[10px] font-black uppercase tracking-wide text-cyan-300">
-          Kundekontakt og rettigheter
-        </p>
+      <details key={`contacts:${inquiryId}`} className="space-y-2 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
+        <summary className="cursor-pointer text-xs font-bold text-cyan-200">Kundekontakt og kontrollopplysninger</summary>
 
         {customerAccessLoading ? (
           <p className="text-xs text-slate-400">Henter registreringsstatus …</p>
@@ -692,7 +735,7 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
               ))}
           </div>
         )}
-      </section>
+      </details>
       {reviewMember && (
         <div role="dialog" aria-modal="true" aria-label="Kontroller representant i BRREG"
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4">
@@ -777,19 +820,27 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
               {isSigned ? "Arbeidsavtale signert" : agreement ? (agreementLabels[agreement.status] || "Avtalestatus under behandling") : "Arbeidsavtale og signering gjenstår"}
             </div>
           </div>
-          <div className="rounded-xl border border-slate-700/70 bg-slate-950/50 p-3 space-y-2">
+          <details className="rounded-xl border border-slate-700/70 bg-slate-950/50 p-3 space-y-2">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-300">Arbeidsplan og avtaledetaljer</summary>
             <p className="text-xs font-bold text-amber-200">{title}</p>
             {proposal && <p className="text-xs text-slate-200">Registrert oppstart: {proposal.proposed_start_date} · Varighet: {proposal.estimated_duration}</p>}
 
             {proposal?.status === "change_requested" && proposal.customer_response_note && <p className="text-xs text-slate-300">Kundens merknad: {proposal.customer_response_note}</p>}
             {agreement?.agreement_number && <p className="text-xs text-slate-300">Avtale: {agreement.agreement_number}</p>}
             {!agreementAvailable && <p className="text-[11px] text-slate-500">Signeringsstatus kunne ikke bekreftes fra avtale-API-et.</p>}
-          </div>
+          </details>
           {agreement && agreementAvailable && (
             <section className="space-y-4 rounded-xl border border-amber-500/30 bg-slate-950/60 p-4">
               <h3 className="text-sm font-black text-amber-200">
-                Signering av arbeidsavtale
+                {isSigned ? "Arbeidsavtale ferdig signert" : readyForCustomer ? "Avventer kundens signatur" : customerSigningComplete && agreement.status === "partially_signed" ? "Perun AS skal signere" : "Signering av arbeidsavtale"}
               </h3>
+              {readyForCustomer && <div className="space-y-2 text-xs">
+                {customerSigners.filter(s=>s.status !== "signed").map(s=><p key={s.id} className="font-semibold text-white">{s.full_name}</p>)}
+                <p className={readinessCase === readinessKey && readiness?.available ? "text-emerald-300" : "text-amber-200"}>{readinessError || (readinessCase === readinessKey && readiness ? (readiness.available ? "Registrerte forutsetninger for direkte signering er oppfylt." : readiness.reason || "Direkte signering er ikke tilgjengelig.") : "Kontrollerer signeringsberedskap …")}</p>
+                {readinessCase === readinessKey && readiness?.available && <button type="button" disabled={noticeBusy || noticeSent} onClick={()=>void notifyCustomer()} className="w-full rounded-xl bg-amber-400 px-3 py-3 font-bold text-slate-950 disabled:opacity-50">{noticeBusy ? "Varsler …" : noticeSent ? "Varsel registrert" : "Varsle kunden om signering"}</button>}
+                {noticeResult && <p role="status" className={noticeSent ? "text-emerald-300" : "text-amber-200"}>{noticeResult}</p>}
+                <p className="text-slate-400">Perun AS signerer etter kunden.</p>
+              </div>}
 
               {signingError && (
                 <p role="alert" className="text-xs text-red-300">{signingError}</p>
@@ -805,17 +856,13 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
               ) : (
                 <div className="space-y-4">
                   {signers.map(signer => (
-                    <div
-                      key={signer.id}
+                    <details
+                      key={`${signer.id}:${agreement.status}:${customerSigningComplete}`}
+                      open={(agreement.status === "draft" && !signer.authority_verified_at) || (signer.party === "contractor" && customerSigningComplete && agreement.status === "partially_signed" && signer.status === "pending") ? true : undefined}
                       className="space-y-3 rounded-lg border border-slate-700 bg-slate-900/60 p-3"
                     >
-                      <p className="text-sm font-bold text-white">
-                        {signer.full_name}
-                      </p>
-                      <p className="text-xs text-slate-400">
-                        {signer.party === "customer" ? "Kundens signatar" : "Perun AS"}
-                        {" · "}Status: {signer.status}
-                      </p>
+                      <summary className="cursor-pointer text-xs font-semibold text-slate-200">{signer.party === "customer" ? "Kunde" : "Perun AS"} · {signer.status === "signed" ? "Signert" : signer.status === "pending" || signer.status === "invited" ? "Avventer signatur" : signer.status === "declined" ? "Avvist" : signer.status === "expired" ? "Utløpt" : "Se status"} · Kontroll og handlinger</summary>
+                      <p className="text-sm font-bold text-white">{signer.full_name}</p>
 
                       {signer.party === "customer" && (() => {
                         // Koble kun en dokumentert BRREG-vurdering til signataren
@@ -953,7 +1000,7 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
                           </button>
                         </div>
                       )}
-                    </div>
+                    </details>
                   ))}
 
                   {agreement.status === "draft" &&
@@ -1003,7 +1050,7 @@ export default function AdminAgreementProgress({ inquiryId }: { inquiryId: numbe
             <p className="text-[11px] leading-5 text-slate-300">{signingNextStep}</p>
           </div>
         </>}
-      <button type="button" onClick={() => { void load(); void loadCustomerAccess(); }} disabled={loading || customerAccessLoading}
+      <button type="button" onClick={() => { void load(); void loadCustomerAccess(); setReadinessRevision(v=>v+1); }} disabled={loading || customerAccessLoading}
         className="inline-flex items-center gap-1.5 text-[11px] font-bold text-cyan-300 hover:underline disabled:opacity-50">
         <RefreshCw className="h-3.5 w-3.5" /> Oppdater status
       </button>
