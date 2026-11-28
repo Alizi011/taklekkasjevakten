@@ -1061,37 +1061,10 @@ export default function InquiryDetail({
         </span>
       );
     } else if (
-      currentOfferStatus === "akseptert" ||
-      currentInquiryStatus === "tilbud_akseptert"
-    ) {
-      statusBadge = (
-        <span className="px-3 py-1 bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-bold inline-flex items-center gap-1.5">
-          <CheckCircle2 className="w-4 h-4" />
-          Tilbud: Akseptert
-        </span>
-      );
-    } else if (
-      currentOfferStatus === "publisert" ||
-      currentInquiryStatus === "tilbud_sendt"
-    ) {
-      statusBadge = (
-        <span className="px-3 py-1 bg-purple-500/10 text-purple-300 border border-purple-500/30 rounded-xl text-xs font-bold inline-flex items-center gap-1.5">
-          <Clock3 className="w-4 h-4" />
-          Tilbud: Sendt
-        </span>
-      );
-    } else if (
-      currentOfferStatus === "avvist" ||
-      currentInquiryStatus === "tilbud_avvist"
+      ["akseptert", "publisert", "avvist", "utkast"].includes(currentOfferStatus) ||
+      ["tilbud_akseptert", "tilbud_sendt", "tilbud_avvist"].includes(currentInquiryStatus)
     ) {
       statusBadge = null;
-    } else if (currentOfferStatus === "utkast") {
-      statusBadge = (
-        <span className="px-3 py-1 bg-slate-500/10 text-slate-300 border border-slate-500/30 rounded-xl text-xs font-bold inline-flex items-center gap-1.5">
-          <FileText className="w-4 h-4" />
-          Tilbud: Utkast
-        </span>
-      );
     } else if (currentInquiryStatus === "planlagt") {
       statusBadge = (
         <span className="px-3 py-1 bg-blue-500/10 text-blue-300 border border-blue-500/30 rounded-xl text-xs font-bold inline-flex items-center gap-1.5">
