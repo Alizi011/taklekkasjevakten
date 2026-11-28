@@ -46,7 +46,7 @@ export default function AdminAgreementProgress({ inquiryId, primary = false }: {
   const [signingError, setSigningError] = useState("");
   const [signingMessage, setSigningMessage] = useState("");
   const [signingBusy, setSigningBusy] = useState(false);
-  const [readiness, setReadiness] = useState<{available: boolean; reason?: string | null} | null>(null);
+  const [readiness, setReadiness] = useState<{available: boolean; reason?: string | null; can_notify?: boolean; signing_stage?: string; last_notice?: {status:string; created_at:string; sent_at?:string|null; employee_name?:string|null; cooldown:boolean; retry_after:string}|null} | null>(null);
   const [readinessError, setReadinessError] = useState("");
   const [noticeBusy, setNoticeBusy] = useState(false);
   const [noticeResult, setNoticeResult] = useState("");
@@ -612,7 +612,7 @@ export default function AdminAgreementProgress({ inquiryId, primary = false }: {
   }, [readinessKey, readyForCustomer, readinessRevision]);
 
   async function notifyCustomer() {
-    if (!agreement || !readyForCustomer || readinessCase !== readinessKey || !readiness?.available || noticeBusy || noticeSent) return;
+    if (!agreement || !readyForCustomer || readinessCase !== readinessKey || !readiness?.available || readiness.can_notify !== true || noticeBusy || noticeSent) return;
     if (!window.confirm("Varsle registrert signatar på SMS om at avtalen er klar? Ingen engangskode sendes.")) return;
     setNoticeBusy(true); setNoticeResult("");
     try {
@@ -622,7 +622,7 @@ export default function AdminAgreementProgress({ inquiryId, primary = false }: {
       });
       const result = await response.json();
       if (!response.ok || result.success !== true) throw new Error(result.message || "Varsling kunne ikke bekreftes.");
-      setNoticeSent(true); setNoticeResult(result.message || "Varsel registrert.");
+      setNoticeSent(true); setNoticeResult(result.message || "Varsel registrert."); setReadinessRevision(v=>v+1);
     } catch(e) {setNoticeResult(e instanceof Error ? e.message : "Varsling kunne ikke bekreftes.");}
     finally {setNoticeBusy(false);}
   }
@@ -747,7 +747,9 @@ export default function AdminAgreementProgress({ inquiryId, primary = false }: {
               {readyForCustomer && <div className="space-y-2 text-xs">
                 {customerSigners.filter(s=>s.status !== "signed").map(s=><p key={s.id} className="font-semibold text-white">{s.full_name}</p>)}
                 <p className={readinessCase === readinessKey && readiness?.available ? "text-emerald-300" : "text-amber-200"}>{readinessError || (readinessCase === readinessKey && readiness ? (readiness.available ? "Registrerte forutsetninger for direkte signering er oppfylt." : readiness.reason || "Direkte signering er ikke tilgjengelig.") : "Kontrollerer signeringsberedskap …")}</p>
-                {readinessCase === readinessKey && readiness?.available && <button type="button" disabled={noticeBusy || noticeSent} onClick={()=>void notifyCustomer()} className="w-full rounded-xl bg-amber-400 px-3 py-3 font-bold text-slate-950 disabled:opacity-50">{noticeBusy ? "Varsler …" : noticeSent ? "Varsel registrert" : "Varsle kunden om signering"}</button>}
+                {readinessCase === readinessKey && readiness?.last_notice && <div className="rounded-lg border border-slate-700 p-2 space-y-1"><p className={readiness.last_notice.status === "sent" ? "text-emerald-300 font-semibold" : "text-amber-200"}>{readiness.last_notice.status === "sent" ? "Kunden er varslet" : "Varsling ikke bekreftet"}</p><p className="text-slate-300">{readiness.last_notice.sent_at || readiness.last_notice.created_at} (servertid){readiness.last_notice.employee_name ? ` · ${readiness.last_notice.employee_name}` : ""}</p>{readiness.last_notice.status === "sent" && readiness.last_notice.cooldown && <p className="text-slate-400">Ny påminnelse tidligst {readiness.last_notice.retry_after} (servertid).</p>}{readiness.last_notice.status !== "sent" && <p className="text-amber-200">Kontroller SMS-historikken før ny utsendelse.</p>}</div>}
+                {readinessCase === readinessKey && readiness?.signing_stage && readiness.signing_stage !== "not_started" && <p className="text-cyan-200">{readiness.signing_stage === "otp_verified" ? "SMS-kode bekreftet – avventer signatur" : readiness.signing_stage === "otp_requested" ? "SMS-kode forespurt" : "Signeringsinvitasjon opprettet"}</p>}
+                {readinessCase === readinessKey && readiness?.available && readiness.can_notify === true && <button type="button" disabled={noticeBusy || noticeSent} onClick={()=>void notifyCustomer()} className="w-full rounded-xl bg-amber-400 px-3 py-3 font-bold text-slate-950 disabled:opacity-50">{noticeBusy ? "Varsler …" : noticeSent ? "Varsel registrert" : readiness.last_notice ? "Send signeringspåminnelse" : "Varsle kunden om signering"}</button>}
                 {noticeResult && <p role="status" className={noticeSent ? "text-emerald-300" : "text-amber-200"}>{noticeResult}</p>}
                 <p className="text-slate-400">Perun AS signerer etter kunden.</p>
               </div>}
