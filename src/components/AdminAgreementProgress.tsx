@@ -22,7 +22,7 @@ const agreementLabels: Record<string, string> = {
   cancelled: "Arbeidsavtale kansellert",
 };
 
-export default function AdminAgreementProgress({ inquiryId, primary = false }: { inquiryId: number; primary?: boolean }) {
+export default function AdminAgreementProgress({ inquiryId, primary = false, compact = false, onOpenDetails }: { inquiryId: number; primary?: boolean; compact?: boolean; onOpenDetails?: () => void }) {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [agreements, setAgreements] = useState<Agreement[]>([]);
   const [agreementAvailable, setAgreementAvailable] = useState(false);
@@ -761,6 +761,8 @@ export default function AdminAgreementProgress({ inquiryId, primary = false }: {
                 <p role="status" className="text-xs text-emerald-300">{signingMessage}</p>
               )}
 
+              {compact && <button type="button" onClick={onOpenDetails} className="text-xs font-bold text-cyan-300 hover:underline">Signatarer og kontrollopplysninger →</button>}
+              <div className={compact && (readyForCustomer || isSigned) ? "hidden" : "space-y-3"}>
               {signers.length === 0 ? (
                 <p className="text-xs text-slate-400">
                   Ingen signatarer er registrert på avtalen ennå.
@@ -930,6 +932,7 @@ export default function AdminAgreementProgress({ inquiryId, primary = false }: {
                   )}
                 </div>
               )}
+              </div>
             </section>
           )}
           {pending && !agreement && agreementAvailable && (
@@ -958,7 +961,9 @@ export default function AdminAgreementProgress({ inquiryId, primary = false }: {
             </div>
           )}
           {!readyForCustomer && !(agreement && customerSigningComplete && agreement.status === "partially_signed") && !isSigned && <p className="text-xs leading-5 text-slate-300">{signingNextStep}</p>}
-          <details className="space-y-2 rounded-xl border border-slate-700/70 p-3">
+          {compact && !agreement && <button type="button" onClick={onOpenDetails} className="text-xs font-bold text-cyan-300 hover:underline">Åpne arbeidsplan og kontrollopplysninger →</button>}
+          {compact && <div className="rounded-xl border border-slate-700/70 p-3 space-y-2 text-xs"><p className="font-bold text-slate-300">Arbeidsavtalens steg</p><p className="text-emerald-300">✓ Pristilbud akseptert</p><p className={dateReady ? "text-emerald-300" : "text-amber-200"}>{dateReady ? "✓ Arbeidsplan godkjent" : "○ Arbeidsplan avventer"}</p><p className={isSigned ? "text-emerald-300" : "text-amber-200"}>{isSigned ? "✓ Signering fullført" : "○ " + title}</p></div>}
+          <details className={compact ? "hidden" : "space-y-2 rounded-xl border border-slate-700/70 p-3"}>
             <summary className="cursor-pointer text-xs font-semibold text-slate-300">Avtalens fremdrift</summary>
             <div className="flex items-center gap-2 text-xs text-emerald-300"><CheckCircle2 className="h-4 w-4 shrink-0" />Pristilbud akseptert</div>
             <div className={`flex items-center gap-2 text-xs ${dateReady ? "text-emerald-300" : "text-amber-200"}`}>
@@ -970,7 +975,7 @@ export default function AdminAgreementProgress({ inquiryId, primary = false }: {
               {isSigned ? "Arbeidsavtale signert" : agreement ? (agreementLabels[agreement.status] || "Avtalestatus under behandling") : "Arbeidsavtale og signering gjenstår"}
             </div>
           </details>
-          <details className="rounded-xl border border-slate-700/70 bg-slate-950/50 p-3 space-y-2">
+          <details className={compact ? "hidden" : "rounded-xl border border-slate-700/70 bg-slate-950/50 p-3 space-y-2"}>
             <summary className="cursor-pointer text-xs font-semibold text-slate-300">Arbeidsplan og avtaledetaljer</summary>
             <p className="text-xs font-bold text-amber-200">{title}</p>
             {proposal && <p className="text-xs text-slate-200">Registrert oppstart: {proposal.proposed_start_date} · Varighet: {proposal.estimated_duration}</p>}
@@ -980,7 +985,7 @@ export default function AdminAgreementProgress({ inquiryId, primary = false }: {
             {!agreementAvailable && <p className="text-[11px] text-slate-500">Signeringsstatus kunne ikke bekreftes fra avtale-API-et.</p>}
           </details>
         </>}
-      <details key={`contacts:${inquiryId}`} className="space-y-2 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
+      <details key={`contacts:${inquiryId}`} className={compact ? "hidden" : "space-y-2 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3"}>
         <summary className="cursor-pointer text-xs font-bold text-cyan-200">Kundekontakt og kontrollopplysninger</summary>
 
         {customerAccessLoading ? (
