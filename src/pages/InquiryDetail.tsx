@@ -842,7 +842,7 @@ export default function InquiryDetail({
   const [showDocumentsInOverview, setShowDocumentsInOverview] = useState(false);
   // Separate read-only tabs inside the existing case overview; do not switch adminCaseTab.
   const [overviewInlineMedia, setOverviewInlineMedia] = useState<"overview" | "photos" | "report" | "offers" | "messages" | "organisations">("overview");
-  const [rightPanelTab, setRightPanelTab] = useState<"process" | "activity" | "override" | "offers" | "finance">("process");
+  const [rightPanelTab, setRightPanelTab] = useState<"process" | "details" | "activity" | "override" | "offers" | "finance">("process");
   const [repairOfferTab, setRepairOfferTab] = useState<"akseptert" | "avvist" | "ovrige">("akseptert");
 
   const [brregOrgNumber, setBrregOrgNumber] = useState("");
@@ -3724,7 +3724,7 @@ export default function InquiryDetail({
                               <span className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300">{item.data ? reportStatusLabel(item.data.status || undefined) : "Ikke registrert"}</span>
                             </div>
                             {item.data?.status === "publisert" && item.key === "rapport-1" && <button type="button" onClick={() => openReportEditor("rapport1")} className="text-xs font-semibold text-slate-400 hover:text-white">Administrer revisjon av Rapport 1</button>}
-                            {!item.data ? <><p className="text-xs text-slate-400">Rapporten er ikke opprettet.</p>{item.key === "rapport-2" && directProcessOffer?.status === "akseptert" && <button type="button" onClick={() => { if (actualWork) { openSpecificReport("rapport2"); } else { setRightPanelTab("process"); requestAnimationFrame(() => { const el = document.getElementById(`work-registration-${inquiryId}`) as HTMLDetailsElement | null; if (el) { el.open = true; el.scrollIntoView({behavior:"smooth",block:"start"}); } }); } }} className="text-xs font-bold text-cyan-300">{actualWork ? "Åpne rapportarbeid →" : "Registrer utført arbeid →"}</button>}</> :
+                            {!item.data ? <><p className="text-xs text-slate-400">Rapporten er ikke opprettet.</p>{item.key === "rapport-2" && directProcessOffer?.status === "akseptert" && <button type="button" onClick={() => { if (actualWork) { openSpecificReport("rapport2"); } else { setRightPanelTab("override"); requestAnimationFrame(() => { const el = document.getElementById(`work-registration-${inquiryId}`) as HTMLDetailsElement | null; if (el) { el.open = true; el.scrollIntoView({behavior:"smooth",block:"start"}); } }); } }} className="text-xs font-bold text-cyan-300">{actualWork ? "Åpne rapportarbeid →" : "Registrer utført arbeid →"}</button>}</> :
                               item.data.pdf_url ? (
                                 <div className="space-y-2">
                                   {item.data.status !== "publisert" && <iframe src={customerAttachmentUrl(item.data.pdf_url)} title={`${item.label} for sak ${inquiry.id}`} loading="lazy" className="h-[520px] w-full rounded-lg border border-slate-700 bg-white" />}
@@ -3792,6 +3792,7 @@ export default function InquiryDetail({
               <div role="tablist" aria-label="Saksoversikt" className="mb-5 grid grid-cols-2 gap-2">
                 {([
                   ["process", "Saksprosess"],
+                  ["details", "Saksdetaljer"],
                   ["activity", "Siste aktivitet"],
                   ["override", "Admin overstyring"],
                   ["offers", "Tilbud og avtaler"],
@@ -3799,7 +3800,7 @@ export default function InquiryDetail({
                 ] as const).map(([key, label]) => (
                   <button key={key} type="button" role="tab" aria-selected={rightPanelTab === key}
                     onClick={() => setRightPanelTab(key)}
-                    className={`${key === "finance" ? "col-span-2 " : ""}min-w-0 min-h-12 rounded-xl border px-3 py-2.5 text-center text-xs font-bold leading-5 transition ${rightPanelTab === key
+                    className={`min-w-0 min-h-12 rounded-xl border px-3 py-2.5 text-center text-xs font-bold leading-5 transition ${rightPanelTab === key
                       ? "border-cyan-400/50 bg-cyan-500/15 text-cyan-200"
                       : "border-slate-700 bg-slate-950/40 text-slate-300 hover:border-cyan-500/30 hover:text-white"}`}>
                     {label}
@@ -3820,8 +3821,11 @@ export default function InquiryDetail({
                   }
                 />
               </div>
-              {rightPanelTab === "override" && (
-                <button type="button" onClick={() => setRightPanelTab("process")} className="mt-3 w-full rounded-xl border border-amber-500/35 p-3 text-xs font-bold text-amber-200">Åpne administrativ arbeidsregistrering i saksprosessen</button>
+
+              {adminCaseTab === "overview" && !directProcessOffer && acceptedRepairOffer && (
+                <div className={rightPanelTab === "details" || (rightPanelTab === "process" && !followupAlreadyExecuted && !isAdminPaused) ? "mb-4" : "hidden"}>
+                  <AdminAgreementProgress key={`primary-agreement-${inquiryId}`} inquiryId={inquiryId} primary={rightPanelTab === "process"} compact={rightPanelTab === "process"} onOpenDetails={() => setRightPanelTab("details")} />
+                </div>
               )}
               {adminCaseTab === "overview" && rightPanelTab === "process" && (
                 <div role="tabpanel">
@@ -3847,29 +3851,21 @@ export default function InquiryDetail({
     actualWorkOverride={actualWork}
     reportStatus={completionReport?.status}
     closed={isCaseClosed}
-    onRegisterWork={() => { const el = document.getElementById(`work-registration-${inquiryId}`) as HTMLDetailsElement | null; if (el) { el.open = true; el.scrollIntoView({behavior:"smooth",block:"start"}); } }}
+    onRegisterWork={() => { setRightPanelTab("override"); requestAnimationFrame(() => { const el = document.getElementById(`work-registration-${inquiryId}`) as HTMLDetailsElement | null; if (el) { el.open = true; el.scrollIntoView({behavior:"smooth",block:"start"}); } }); }}
     onOpenReport2={() => openSpecificReport("rapport2")}
     onOpenOffer={() => setAdminCaseTab("offer")}
   />
 ) : (
   <>
 
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-cyan-300">Saksprosess</p>
-              {acceptedRepairOffer && !followupAlreadyExecuted && !isAdminPaused ? (
-                <div className="mt-3"><AdminAgreementProgress key={`primary-agreement-${inquiryId}`} inquiryId={inquiryId} primary /></div>
-              ) : <>
+              {!(acceptedRepairOffer && !followupAlreadyExecuted && !isAdminPaused) && <>
                 <h2 className="mt-3 text-lg font-extrabold leading-snug text-white">{nextStepLabel}</h2>
                 <p className="mt-2 text-xs leading-5 text-slate-400">{nextStepSubtitle}</p>
+                {!acceptedRepairOffer && !isCaseClosed && !isAdminPaused && <button type="button" onClick={() => setRightPanelTab("offers")} className="mt-3 text-xs font-bold text-cyan-300 hover:underline">Opprett eller administrer tilbud →</button>}
               </>}
-              <button
-                type="button"
-                onClick={() => setShowDirectOfferGenerator(true)}
-                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-400/50 bg-cyan-500/15 px-4 py-3 text-sm font-bold text-cyan-100 hover:bg-cyan-500/25"
-              >
-                <FileText className="h-4 w-4" />
-                Opprett nytt tilbud
-              </button>
-              <div className="mt-5 space-y-4 border-t border-white/10 pt-4">
+
+              <div className="mt-4 space-y-3 border-t border-white/10 pt-3">
+                <p className="text-[10px] font-black uppercase tracking-wide text-cyan-300">Sakens steg</p>
                 <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,42%)] items-start gap-2 border-b border-white/[0.06] pb-3"><div className="flex min-w-0 items-start gap-2"><CheckCircle2 className={`mt-0.5 h-5 w-5 shrink-0 ${actualLeakDate || isReportPublished ? "text-emerald-300" : "text-amber-300"}`} /><div className="min-w-0"><p className="text-sm font-bold text-white">{orderedService} {actualLeakDate ? "utført" : isReportPublished ? "gjennomført" : "bestilt"}</p><p className="mt-1 text-[11px] text-slate-400">{actualLeakDate ? `Utført ${formatDate(actualLeakDate)}` : leakStatusError ? "Utførelsesstatus kunne ikke hentes" : hasRecordedSchedule ? displayedSchedule : "Tidspunkt ikke registrert"}</p></div></div><div className="flex min-w-0 flex-col items-end gap-1.5 pt-0.5 text-right"><button type="button" onClick={() => setAdminCaseTab("checklists")} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">Åpne sjekkliste →</button><button type="button" onClick={() => setAdminCaseTab("field")} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">Feltdokumentasjon →</button></div></div>
               {[inquiry.inquiry_type, inquiry.recommended_service].some(value => String(value || "").toLowerCase() === "lekkasjesok") && !isReportPublished && (
                 <button type="button" onClick={() => setAdminCaseTab("checklists")}
@@ -3883,9 +3879,19 @@ export default function InquiryDetail({
                 
   </>
 )}
-                  <AdminWorkOverride key={`admin-work-override-${inquiryId}`} directWork={Boolean(directProcessOffer?.status === "akseptert")} inquiryId={inquiryId} projectManagerName={currentProjectManager?.name} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>
+
                   {actualWork && !directProcessOffer && <div className="mt-4 grid grid-cols-[minmax(0,1fr)_minmax(0,42%)] items-start gap-2 rounded-xl border border-emerald-500/30 p-3"><div className="min-w-0"><p className="text-sm font-bold text-emerald-300">Arbeid utført</p><p className="mt-1 text-[11px] text-slate-400">{formatDate(actualWork.completed_on)}</p></div><button type="button" onClick={()=>openSpecificReport("rapport2")} className="max-w-full break-words text-right text-xs font-semibold leading-snug text-cyan-300 hover:underline">{completionReport?.status === "publisert" && completionReport.pdf_url ? "Rapport 2 – PDF →" : "Rapport 2 – Utførelsesrapport →"}</button></div>}
-                  {!directProcessOffer && <div className="mt-6 space-y-4 border-t border-white/10 pt-5">
+                  <button type="button" onClick={() => setRightPanelTab("details")} className="mt-4 text-xs font-bold text-cyan-300 hover:underline">Se saksdetaljer →</button>
+</div>
+              )}
+              {adminCaseTab === "overview" && (
+                <div className={rightPanelTab === "process" || rightPanelTab === "override" ? "" : "hidden"}>
+                  <AdminWorkOverride key={`admin-work-override-${inquiryId}`} compact={rightPanelTab !== "override"} onOpenOverride={() => { setRightPanelTab("override"); requestAnimationFrame(() => { const el = document.getElementById(`work-registration-${inquiryId}`) as HTMLDetailsElement | null; if (el) el.open = true; }); }} directWork={Boolean(directProcessOffer?.status === "akseptert")} inquiryId={inquiryId} projectManagerName={currentProjectManager?.name} onSaved={setActualWork} onAcceptance={setPhoneAcceptance}/>
+                </div>
+              )}
+              {adminCaseTab === "overview" && rightPanelTab === "details" && (
+                <div role="tabpanel" className="space-y-4">
+                  {!directProcessOffer && <div className="space-y-4">
                   {(() => {
                     const current = acceptedRepairOffer;
                     const otherOffers = caseOffers.filter(item => item.id !== current?.id).length;
@@ -3902,7 +3908,6 @@ export default function InquiryDetail({
                           <summary className="cursor-pointer font-semibold">Tilbudsbeskrivelse</summary>
                           <p className="mt-2 leading-5">{current.title}</p>
                         </details>
-                        {(followupAlreadyExecuted || isAdminPaused) && <details className="rounded-xl border border-slate-700/70 p-3"><summary className="cursor-pointer text-xs font-semibold text-cyan-200">Arbeidsavtale og signeringshistorikk</summary><AdminAgreementProgress inquiryId={inquiryId} /></details>}
                         <button type="button" onClick={() => setAdminCaseTab("offer")}
                           className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-3 py-2.5 text-xs font-bold text-cyan-200 hover:bg-cyan-500/20">
                           <FileText className="h-4 w-4" />Vis tilbud, PDF og avtale
@@ -3922,8 +3927,10 @@ export default function InquiryDetail({
                     );
                   })()}
                   </div>}
+                  {directProcessOffer && <button type="button" onClick={() => setRightPanelTab("offers")} className="text-xs font-bold text-cyan-300 hover:underline">Vis tilbud og avtaler →</button>}
+                  <button type="button" onClick={() => setRightPanelTab("override")} className="text-xs font-bold text-amber-200 hover:underline">Åpne administrativ overstyring →</button>
                   <CaseClosureControl key={`case-closure-${inquiryId}`} inquiryId={inquiryId} coreStatus={coreCaseStatus} offers={caseOffers} pendingAdminSignature={adminSignaturePending} />
-</div>
+                </div>
               )}
               {rightPanelTab === "finance" && <AdminCaseFinance key={inquiryId} inquiryId={Number(inquiryId)} />}
               {rightPanelTab === "activity" && (
@@ -3940,6 +3947,16 @@ export default function InquiryDetail({
               )}
               {adminCaseTab === "overview" && rightPanelTab === "offers" && (
                 <section role="tabpanel" className="space-y-4">
+                  {!directProcessOffer && (<> 
+              <button
+                type="button"
+                onClick={() => setShowDirectOfferGenerator(true)}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-400/50 bg-cyan-500/15 px-4 py-3 text-sm font-bold text-cyan-100 hover:bg-cyan-500/25"
+              >
+                <FileText className="h-4 w-4" />
+                Opprett nytt tilbud
+              </button>
+                  </>)}
                   {renderOfferHistory(true)}
                   <div className="space-y-3">
                     <h3 className="text-sm font-black text-amber-300">
