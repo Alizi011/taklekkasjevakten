@@ -7,8 +7,8 @@ export type WorkOverride = { work_type: WorkType; started_on: string; completed_
 export type PhoneAcceptance = { accepted_on: string | null; received_by: string; scope: string; note?: string | null; recorded_at: string };
 export const phoneScopeLabels: Record<string,string> = { lekkasjesok:"Lekkasjesøk", service:"Service", vedlikehold:"Vedlikehold", varig_utbedring:"Varig utbedring", lekkasjesok_og_service:"Lekkasjesøk og service" };
 type Result = { acceptance?: PhoneAcceptance | null; success?: boolean; message?: string; work?: WorkOverride | null; task?: { id: number; status: string } | null };
-type Props = { directWork?: boolean; inquiryId: number; projectManagerName?: string | null; onSaved?: (work: WorkOverride | null) => void; onAcceptance?: (value: PhoneAcceptance | null) => void };
-export default function AdminWorkOverride({ directWork = false, inquiryId, projectManagerName, onSaved, onAcceptance }: Props) {
+type Props = { compact?: boolean; onOpenOverride?: () => void; directWork?: boolean; inquiryId: number; projectManagerName?: string | null; onSaved?: (work: WorkOverride | null) => void; onAcceptance?: (value: PhoneAcceptance | null) => void };
+export default function AdminWorkOverride({ compact = false, onOpenOverride, directWork = false, inquiryId, projectManagerName, onSaved, onAcceptance }: Props) {
   const [acceptance,setAcceptance]=useState<PhoneAcceptance|null>(null);
   const [scope,setScope]=useState("");
   const [receiverOverride,setReceiverOverride]=useState<string | null>(null);
@@ -91,7 +91,8 @@ export default function AdminWorkOverride({ directWork = false, inquiryId, proje
       {available && task && (taskStatus === "completed" || taskStatus === "done") && <p className="mt-1 text-[11px] text-slate-400">Fullført oppgave er ikke det samme som godkjent eller publisert rapport.</p>}
       {!available && !busy && error && <p className="mt-1 text-xs text-rose-300">{error}</p>}
     </div>}
-    <details id={`work-registration-${inquiryId}`} className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/5 p-3" data-testid="admin-work-override">
+    {compact && (directWork || work || task) && <button type="button" onClick={onOpenOverride} className="mt-3 text-xs font-bold text-amber-200 hover:underline">Registrer arbeid / følg opp Rapport 2 →</button>}
+    <details id={`work-registration-${inquiryId}`} className={compact ? "hidden" : "mt-3 rounded-xl border border-amber-500/35 bg-amber-500/5 p-3"} data-testid="admin-work-override">
     <summary className="cursor-pointer text-xs font-black text-amber-200">{directWork ? "Registrer utført arbeid / etterspør Rapport 2" : "Administrativ overstyring"}</summary>
     <div className="mt-3 space-y-3">
       {!directWork && <div className="space-y-2 border-b border-slate-700 pb-3">
