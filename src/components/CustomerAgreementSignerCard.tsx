@@ -31,7 +31,7 @@ export default function CustomerAgreementSignerCard({
   const [revision, setRevision] = useState(0);
   const [inlineAutoStart, setInlineAutoStart] = useState(false);
   const [agreementStatus, setAgreementStatus] = useState("");
-  const [diagnostic, setDiagnostic] = useState<{ available: boolean; reason?: string | null; active_invitation?: boolean } | null>(null);
+  const [diagnostic, setDiagnostic] = useState<{available: boolean; reason?: string | null; can_notify?: boolean; signing_stage?: string; last_notice?: {status:string; created_at:string; sent_at?:string|null; employee_name?:string|null; cooldown:boolean; retry_after:string}|null} | null>(null);
   const [diagnosticError, setDiagnosticError] = useState("");
   const [notifying, setNotifying] = useState(false);
   const [noticeResult, setNoticeResult] = useState("");
@@ -180,7 +180,7 @@ export default function CustomerAgreementSignerCard({
   useEffect(() => { setNoticeResult(""); setNoticeSent(false); }, [inquiryId, agreementId, previewMode]);
 
   async function notifyReady() {
-    if (!previewMode || !agreementId || !diagnostic?.available || notifying || noticeSent) return;
+    if (!previewMode || !agreementId || !diagnostic?.available || diagnostic.can_notify !== true || notifying || noticeSent) return;
     if (!window.confirm("Send SMS til registrert signatar om at arbeidsavtalen er klar? Ingen engangskode sendes.")) return;
     setNotifying(true);
     setNoticeResult("");
@@ -194,6 +194,7 @@ export default function CustomerAgreementSignerCard({
       if (!response.ok || result.success !== true) throw new Error(result.message || "Varslingen kunne ikke bekreftes.");
       setNoticeSent(true);
       setNoticeResult(result.message || "Varsel sendt.");
+      setRevision(v => v + 1);
     } catch (e) { setNoticeResult(e instanceof Error ? e.message : "Varslingen kunne ikke bekreftes."); }
     finally { setNotifying(false); }
   }
@@ -328,7 +329,9 @@ export default function CustomerAgreementSignerCard({
           {diagnostic ? <><p className={diagnostic.available ? "text-emerald-300" : "text-amber-200"}>{diagnostic.available ? "Registrerte forutsetninger for direkte signering er oppfylt." : diagnostic.reason || "Direkte signering er ikke tilgjengelig."}</p><p className="text-slate-400">Kundens faktiske innloggingsøkt og SMS-levering er ikke testet.</p></> : <p className="text-amber-200">{diagnosticError || "Signeringsberedskap er ikke kontrollert."}</p>}
           <button type="button" onClick={() => setRevision(v => v + 1)} className="rounded-lg border border-cyan-500/40 px-3 py-2 font-bold text-cyan-200">Kontroller på nytt</button>
           <p className="text-slate-400">Kontrollen sender ingen SMS. Signering kan bare utføres av kunden.</p>
-          {diagnostic?.available && <button type="button" disabled={notifying || noticeSent} onClick={() => void notifyReady()} className="w-full rounded-lg bg-amber-400 px-3 py-3 font-bold text-slate-950 disabled:opacity-50">{notifying ? "Varsler …" : noticeSent ? "Varsel registrert" : "Varsle kunden – avtalen er klar"}</button>}
+          {diagnostic?.last_notice && <div className="space-y-1 rounded-lg border border-slate-700 p-2"><p className={diagnostic.last_notice.status === "sent" ? "text-emerald-300 font-semibold" : "text-amber-200"}>{diagnostic.last_notice.status === "sent" ? "Kunden er varslet" : "Varsling ikke bekreftet"}</p><p className="text-slate-300">{diagnostic.last_notice.sent_at || diagnostic.last_notice.created_at} (servertid){diagnostic.last_notice.employee_name ? ` · ${diagnostic.last_notice.employee_name}` : ""}</p>{diagnostic.last_notice.status === "sent" && diagnostic.last_notice.cooldown && <p className="text-slate-400">Ny påminnelse tidligst {diagnostic.last_notice.retry_after} (servertid).</p>}{diagnostic.last_notice.status !== "sent" && <p className="text-amber-200">Kontroller SMS-historikken før ny utsendelse.</p>}</div>}
+          {diagnostic?.signing_stage && diagnostic.signing_stage !== "not_started" && <p className="text-cyan-200">{diagnostic.signing_stage === "otp_verified" ? "SMS-kode bekreftet – avventer signatur" : diagnostic.signing_stage === "otp_requested" ? "SMS-kode forespurt" : "Signeringsinvitasjon opprettet"}</p>}
+          {diagnostic?.available && diagnostic.can_notify === true && <button type="button" disabled={notifying || noticeSent} onClick={() => void notifyReady()} className="w-full rounded-lg bg-amber-400 px-3 py-3 font-bold text-slate-950 disabled:opacity-50">{notifying ? "Varsler …" : noticeSent ? "Varsel registrert" : diagnostic.last_notice ? "Send signeringspåminnelse" : "Varsle kunden – avtalen er klar"}</button>}
           {noticeResult && <p role="status" className={noticeSent ? "text-emerald-300" : "text-amber-200"}>{noticeResult}</p>}
         </div>
       )}
